@@ -143,10 +143,8 @@ DATASET_DIR = Path("dataset_manual")
 WINDOW_NAME = "Hough Viewer"
 DATASET_STATS_TOP = 46      # 통계 4줄 시작
 DATASET_STATS_PITCH = 22
-DATASET_FORMAT_TOP = DATASET_STATS_TOP + DATASET_STATS_PITCH * 4 + 10   # 144
-DATASET_EXPORT_TOP = DATASET_FORMAT_TOP + 36                            # 180
-DATASET_ROWS_TOP = DATASET_EXPORT_TOP + 32 + 44                         # 256
-SEG_POLYGON_POINTS = 24     # 원을 다각형으로 근사할 때 쓰는 점 개수
+DATASET_EXPORT_TOP = DATASET_STATS_TOP + DATASET_STATS_PITCH * 4 + 10   # 144
+DATASET_ROWS_TOP = DATASET_EXPORT_TOP + 32 + 44                         # 220
 MAIN_TOOLS = [("open", "영상 열기"), ("label_mode", "학습 데이터 선택 / 해제"),
               ("clear_pick", "이 프레임 전체 해제")]
 MENU_ROW_HEIGHT = 34
@@ -642,23 +640,6 @@ def detect_label(cx: int, cy: int, r: int, width: int, height: int) -> str:
             f"{min(1.0, box / width):.6f} {min(1.0, box / height):.6f}")
 
 
-def segment_label(cx: int, cy: int, r: int, width: int, height: int) -> str:
-    """YOLO 세그멘테이션 라벨: class x1 y1 x2 y2 ... (정규화).
-
-    공은 원이므로 중심과 반지름만으로 마스크를 정확히 만들 수 있다.
-    추가 라벨링 없이 같은 클릭에서 세그멘테이션 데이터가 나온다.
-    """
-    import math
-
-    points = []
-    for step in range(SEG_POLYGON_POINTS):
-        angle = 2 * math.pi * step / SEG_POLYGON_POINTS
-        px = min(max(cx + r * math.cos(angle), 0), width - 1)
-        py = min(max(cy + r * math.sin(angle), 0), height - 1)
-        points.append(f"{px / width:.6f} {py / height:.6f}")
-    return "0 " + " ".join(points)
-
-
 def load_roi(viewer) -> None:
     if not SETTINGS_PATH.exists():
         return
@@ -736,7 +717,6 @@ class HoughViewer:
         self.scrubbing = False
         self.box_start = None
         self.box_now = None
-        self.export_seg = False
         self._stage_cache = None
         self._stage_key = None
         self.last_refined: list = []
@@ -991,8 +971,7 @@ class HoughViewer:
                 name = f"{stem}_{index:06d}"
                 cv2.imwrite(str(DATASET_DIR / "images" / split / f"{name}.jpg"),
                             frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
-                make_label = segment_label if self.export_seg else detect_label
-                lines = [make_label(cx, cy, r, width, height) for cx, cy, r in frames[index]]
+                lines = [detect_label(cx, cy, r, width, height) for cx, cy, r in frames[index]]
                 (DATASET_DIR / "labels" / split / f"{name}.txt").write_text("\n".join(lines) + "\n")
                 counts[split] += 1
                 boxes += len(frames[index])
@@ -1007,12 +986,10 @@ class HoughViewer:
         )
         self.status = f"train {counts['train']} / val {counts['val']}"
         self.status_ticks = 150
-        task = "segment" if self.export_seg else "detect"
-        model = "yolo11n-seg.pt" if self.export_seg else "yolo11n.pt"
         print(f"내보내기 완료: {DATASET_DIR}  train {counts['train']}장 / "
-              f"val {counts['val']}장 / 객체 {boxes}개 / 형식 {task}")
-        print(f"  학습:  yolo {task} train data={DATASET_DIR}/data.yaml "
-              f"model={model} imgsz=1280 epochs=100")
+              f"val {counts['val']}장 / 박스 {boxes}개")
+        print(f"  학습:  yolo detect train data={DATASET_DIR}/data.yaml "
+              f"model=yolo11n.pt imgsz=1280 epochs=100")
 
     def main_to_frame(self, x: int, y: int) -> tuple[int, int] | None:
         """본문 화면 좌표를 원본 프레임 좌표로 되돌린다."""
@@ -1150,16 +1127,6 @@ class HoughViewer:
         return (self.controls_left + SLIDER_MARGIN, DATASET_EXPORT_TOP,
                 self.width - SLIDER_MARGIN, DATASET_EXPORT_TOP + 32)
 
-    def format_box(self):
-        return (self.controls_left + SLIDER_MARGIN, DATASET_FORMAT_TOP,
-                self.width - SLIDER_MARGIN, DATASET_FORMAT_TOP + 26)
-
-    def format_button_at(self, x: int, y: int) -> bool:
-        if self.panel_tab != "dataset":
-            return False
-        left, top, right, bottom = self.format_box()
-        return left <= x <= right and top <= y <= bottom
-
     def export_button_at(self, x: int, y: int) -> bool:
         if self.panel_tab != "dataset":
             return False
@@ -1198,12 +1165,6 @@ class HoughViewer:
         ]:
             self.text.add(line, (left, y), 12, color)
             y += DATASET_STATS_PITCH
-
-        fl, ft, fr, fb = self.format_box()
-        cv2.rectangle(canvas, (fl, ft), (fr, fb), (44, 44, 60), -1)
-        cv2.rectangle(canvas, (fl, ft), (fr, fb), (120, 120, 190), 1)
-        self.text.add(f"형식:  {'마스크 (segment)' if self.export_seg else '박스 (detect)'}",
-                      (fl + 12, ft + 5), 12, (215, 215, 255))
 
         bl, bt, br, bb = self.export_box()
         enabled = bool(self.datasets and any(self.datasets.values()))
@@ -1487,12 +1448,6 @@ class HoughViewer:
             self.panel_tab = tab
             self.hover = None
             self.hover_frame = None
-            return
-
-        if self.format_button_at(x, y):
-            self.export_seg = not self.export_seg
-            self.status = "마스크 형식" if self.export_seg else "박스 형식"
-            self.status_ticks = 90
             return
 
         if self.export_button_at(x, y):
