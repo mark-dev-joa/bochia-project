@@ -12,10 +12,105 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from video_player import find_video_files
+
+# --------------------------------------------------------------------------
+# video_player.py 에서 가져온 부분. 이 파일 하나로 실행되도록 인라인했다.
+# --------------------------------------------------------------------------
+SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv"}
+DEFAULT_POSE_WEIGHT = "yolov8n-pose.pt"
+YOLO_POSE_EDGES = [
+    (5, 6),
+    (5, 7),
+    (7, 9),
+    (6, 8),
+    (8, 10),
+    (5, 11),
+    (6, 12),
+    (11, 12),
+    (11, 13),
+    (13, 15),
+    (12, 14),
+    (14, 16),
+    (0, 1),
+    (0, 2),
+    (1, 3),
+    (2, 4),
+]
+
+
+def find_video_files(directory: Path) -> list[Path]:
+    return sorted(
+        (
+            path
+            for path in directory.iterdir()
+            if path.is_file() and path.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS
+        ),
+        key=lambda path: path.name.lower(),
+    )
+
+
+def find_local_pose_weight(search_roots: Sequence[Path] | None = None) -> Path | None:
+    if search_roots is None:
+        home = Path.home()
+        search_roots = [
+            Path.cwd(),
+            home / "Downloads",
+            home / ".cache" / "ultralytics",
+            home / ".config" / "Ultralytics",
+            home / "Library" / "Application Support" / "Ultralytics",   # macOS
+            home / "AppData" / "Roaming" / "Ultralytics",               # Windows
+            home / "work",
+        ]
+
+    candidates: list[Path] = []
+    for root in search_roots:
+        if not root.exists():
+            continue
+        root_depth = len(root.parts)
+        for directory, subdirectories, files in os.walk(root):
+            directory_path = Path(directory)
+            if len(directory_path.parts) - root_depth >= 5:
+                subdirectories[:] = []
+            for filename in files:
+                lowercase_name = filename.lower()
+                if (
+                    lowercase_name.endswith(".pt")
+                    and (
+                        "pose" in lowercase_name
+                        or lowercase_name.startswith("yolov8")
+                        or lowercase_name.startswith("yolo11")
+                    )
+                ):
+                    candidates.append(directory_path / filename)
+
+    def weight_priority(path: Path) -> tuple[int, str]:
+        name = path.name.lower()
+        if "n-pose" in name:
+            return (0, name)
+        if "s-pose" in name:
+            return (1, name)
+        if "m-pose" in name:
+            return (2, name)
+        if "pose" in name:
+            return (3, name)
+        return (4, name)
+
+    unique_candidates = sorted(set(candidates), key=weight_priority)
+    pose_candidates = [
+        candidate
+        for candidate in unique_candidates
+        if "pose" in candidate.name.lower()
+    ]
+    if pose_candidates:
+        return pose_candidates[0]
+    if unique_candidates:
+        return unique_candidates[0]
+    return None
+
 
 SETTINGS_PATH = Path("hough_viewer_settings.json")
 STAGE_COUNT = 5
@@ -499,8 +594,6 @@ def draw_skeleton(canvas, people, confidence_threshold: float):
     """YOLO 포즈 키포인트를 뼈대로 이어 그린다."""
     import cv2
 
-    from video_player import YOLO_POSE_EDGES
-
     for person in people:
         for start, end in YOLO_POSE_EDGES:
             if start >= len(person) or end >= len(person):
@@ -705,8 +798,6 @@ class HoughViewer:
 
         if self.pose_model is None:
             from ultralytics import YOLO
-
-            from video_player import DEFAULT_POSE_WEIGHT, find_local_pose_weight
 
             weight = find_local_pose_weight()
             weight = str(weight) if weight else DEFAULT_POSE_WEIGHT

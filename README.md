@@ -237,9 +237,9 @@ Actions 탭에서 수동 실행하세요.
 
 | 파일 | 설명 |
 |---|---|
-| `hough_viewer.py` | 메인 GUI |
-| `ball_detector.py` | 검출 파이프라인 (코트 마스크 + 원근 + 구 음영 + 발목 veto) |
-| `ball_finder.py` | 간단한 검출 전용 뷰어 |
-| `auto_label.py` | 전체 영상 자동 라벨링 (사람 검수용) |
-| `video_player.py` | 영상 재생 기본 도구 |
+| `hough_viewer.py` | **전부**. 이 파일 하나로 실행됩니다 |
+| `requirements.txt` | 의존성 |
+| `hough_viewer.spec` | 윈도우 exe 빌드 설정 |
 | `make_package.py` | 배포용 압축 |
+
+외부 모듈 의존이 없어 `hough_viewer.py` 하나만 있으면 동작합니다.

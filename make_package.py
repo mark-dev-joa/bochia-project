@@ -15,14 +15,11 @@ from pathlib import Path
 
 SOURCE_FILES = [
     "hough_viewer.py",
-    "ball_detector.py",
-    "ball_finder.py",
-    "auto_label.py",
-    "video_player.py",
     "requirements.txt",
     "hough_viewer.spec",
+    "README.md",
 ]
-OPTIONAL_FILES = ["hough_viewer_settings.json", "ball_finder_config.json"]
+OPTIONAL_FILES = ["hough_viewer_settings.json"]
 VIDEO_SUFFIXES = {".mp4", ".avi", ".mov", ".mkv"}
 
 
