@@ -1,0 +1,36 @@
+name: Build Windows exe
+
+# 맥에서는 윈도우 exe 를 만들 수 없다. 윈도우 러너에서 빌드해 산출물을 받는다.
+on:
+  workflow_dispatch:
+    inputs:
+      skip_yolo:
+        description: "스켈레톤(YOLO) 제외 - 용량 대폭 감소"
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 의존성 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install opencv-python pillow pyinstaller
+          if ("${{ inputs.skip_yolo }}" -ne "true") { pip install ultralytics }
+
+      - name: 빌드
+        env:
+          BOCHIA_NO_YOLO: ${{ inputs.skip_yolo && '1' || '0' }}
+        run: pyinstaller hough_viewer.spec
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BochiaBallFinder-windows
+          path: dist/BochiaBallFinder/
