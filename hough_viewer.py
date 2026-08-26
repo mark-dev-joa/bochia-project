@@ -732,6 +732,8 @@ class HoughViewer:
         self.box_start = None
         self.box_now = None
         self.export_seg = False
+        self._stage_cache = None
+        self._stage_key = None
         self.last_refined: list = []
         self.panel_tab = "params"                          # params | dataset
         self.dataset_rows: list[tuple[int, int, int]] = []
@@ -1011,7 +1013,10 @@ class HoughViewer:
         """본문 화면 좌표를 원본 프레임 좌표로 되돌린다."""
         if self.frame is None:
             return None
-        if not (self.main_left <= x < self.controls_left and 0 <= y < self.main_height):
+        # 상단 툴바와 하단 스크러버는 영상 위에 겹쳐 그린 UI 다.
+        # 여기를 이미지 좌표로 바꾸면 버튼 클릭이 라벨링 드래그로 새어 나간다.
+        if not (self.main_left <= x < self.controls_left
+                and MAIN_TOOLBAR_HEIGHT <= y < self.main_height - SCRUB_HEIGHT):
             return None
         frame_height, frame_width = self.frame.shape[:2]
         return (int((x - self.main_left) * frame_width / self.main_width),
@@ -1274,7 +1279,12 @@ class HoughViewer:
         cv2 = self.cv2
         import numpy as np
 
-        stages, circles, refined = build_stages(self.frame, self.params, self.roi_points)
+        key = (self.frame_index, tuple(s.value for s in self.sliders), tuple(self.roi_points))
+        if key == self._stage_key and self._stage_cache is not None:
+            stages, circles, refined = self._stage_cache
+        else:
+            stages, circles, refined = build_stages(self.frame, self.params, self.roi_points)
+            self._stage_cache, self._stage_key = (stages, circles, refined), key
         self.circle_count = len(refined) if refined else len(circles)
         show_hough = bool(self.params.raw("show_hough"))
         show_ransac = bool(self.params.raw("show_ransac"))
