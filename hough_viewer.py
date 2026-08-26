@@ -141,6 +141,11 @@ MANUAL_BOX_COLOR = (255, 255, 255)  # 직접 그리는 중인 박스
 MAIN_TOOLBAR_HEIGHT = 44
 DATASET_DIR = Path("dataset_manual")
 WINDOW_NAME = "Hough Viewer"
+DATASET_STATS_TOP = 46      # 통계 4줄 시작
+DATASET_STATS_PITCH = 22
+DATASET_FORMAT_TOP = DATASET_STATS_TOP + DATASET_STATS_PITCH * 4 + 10   # 144
+DATASET_EXPORT_TOP = DATASET_FORMAT_TOP + 36                            # 180
+DATASET_ROWS_TOP = DATASET_EXPORT_TOP + 32 + 44                         # 256
 SEG_POLYGON_POINTS = 24     # 원을 다각형으로 근사할 때 쓰는 점 개수
 MAIN_TOOLS = [("open", "영상 열기"), ("label_mode", "학습 데이터 선택 / 해제"),
               ("clear_pick", "이 프레임 전체 해제")]
@@ -1142,16 +1147,12 @@ class HoughViewer:
         ]
 
     def export_box(self):
-        left = self.controls_left + SLIDER_MARGIN
-        right = self.width - SLIDER_MARGIN
-        top = 142
-        return left, top, right, top + 32
+        return (self.controls_left + SLIDER_MARGIN, DATASET_EXPORT_TOP,
+                self.width - SLIDER_MARGIN, DATASET_EXPORT_TOP + 32)
 
     def format_box(self):
-        left = self.controls_left + SLIDER_MARGIN
-        right = self.width - SLIDER_MARGIN
-        top = 108
-        return left, top, right, top + 26
+        return (self.controls_left + SLIDER_MARGIN, DATASET_FORMAT_TOP,
+                self.width - SLIDER_MARGIN, DATASET_FORMAT_TOP + 26)
 
     def format_button_at(self, x: int, y: int) -> bool:
         if self.panel_tab != "dataset":
@@ -1187,7 +1188,7 @@ class HoughViewer:
         frames_total = sum(len(f) for f in self.datasets.values())
         boxes = sum(len(p) for f in self.datasets.values() for p in f.values())
 
-        y = 48
+        y = DATASET_STATS_TOP
         for line, color in [
             (f"모은 프레임  {frames_total}장 (현재 {len(self.dataset)})", (235, 235, 235)),
             (f"공 라벨      {boxes}개", (235, 235, 235)),
@@ -1196,7 +1197,7 @@ class HoughViewer:
              SELECTED_COLOR if self.labeling else (150, 150, 150)),
         ]:
             self.text.add(line, (left, y), 12, color)
-            y += 22
+            y += DATASET_STATS_PITCH
 
         fl, ft, fr, fb = self.format_box()
         cv2.rectangle(canvas, (fl, ft), (fr, fb), (44, 44, 60), -1)
@@ -1216,10 +1217,10 @@ class HoughViewer:
                       (255, 255, 255) if enabled else (130, 130, 130))
         self.text.add(f"-> {DATASET_DIR}/", (left, bb + 6), 10, (140, 140, 140))
 
-        y = bb + 26
+        y = DATASET_ROWS_TOP - 28
         cv2.line(canvas, (left, y), (right, y), (68, 68, 68), 1)
         self.text.add("프레임별 (클릭하면 이동)", (left, y + 6), 11, (150, 200, 255))
-        y += 28
+        y = DATASET_ROWS_TOP
 
         rows = sorted(self.dataset.items())
         room = (self.height - HELP_BOX_HEIGHT - y - 22) // 20
