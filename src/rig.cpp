@@ -43,6 +43,8 @@ void RigCapture::stop(){for(auto& c:captures)c.stop();}
 void RigCapture::tick(double now){for(auto& c:captures)c.tick(now);}
 bool RigCapture::running()const{return !captures.empty()&&std::all_of(captures.begin(),captures.end(),[](const auto& c){return c.running();});}
 float RigCapture::progress()const{float p=1;for(const auto& c:captures)p=std::min(p,c.progress());return captures.empty()?0:p;}
+CaptureStatus RigCapture::status(size_t camera)const{return camera<captures.size()?captures[camera].status():CaptureStatus::Stopped;}
+float RigCapture::progress(size_t camera)const{return camera<captures.size()?captures[camera].progress():0;}
 bool RigCapture::observe(const RigSample& sample,const BoardConfig& board,const std::vector<RigSample>& existing,const std::vector<double>& times,double now){
     if(!running())return false;
     bool valid=times.size()==captures.size()&&usableRigTiming(times,now);

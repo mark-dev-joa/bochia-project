@@ -33,4 +33,11 @@ struct SceneOptions {
     double gridStep=.1,gridExtent=2,frustumLength=.3;
     void validate()const;
 };
-SceneMesh makeSceneMesh(const std::vector<SceneCamera>& cameras,const SceneOptions& options,int selected=-1);
+struct SceneMeasurement {
+    int id=0;
+    cv::Vec3d position;
+    std::array<cv::Vec3d,2> origins{},closest{};
+    double gapM=0;
+};
+SceneMesh makeSceneMesh(const std::vector<SceneCamera>& cameras,const SceneOptions& options,int selected=-1,
+                        const std::vector<SceneMeasurement>& measurements={},int selectedPoint=-1);

@@ -62,7 +62,7 @@ void SceneOptions::validate()const{
     if(!std::isfinite(gridStep)||gridStep<.01||gridStep>2||!std::isfinite(gridExtent)||gridExtent<.2||gridExtent>50||
        !std::isfinite(frustumLength)||frustumLength<.01||frustumLength>10)throw std::runtime_error("Invalid 3D display settings.");
 }
-SceneMesh makeSceneMesh(const std::vector<SceneCamera>& cameras,const SceneOptions& o,int selected){
+SceneMesh makeSceneMesh(const std::vector<SceneCamera>& cameras,const SceneOptions& o,int selected,const std::vector<SceneMeasurement>& measurements,int selectedPoint){
     o.validate();SceneMesh mesh;
     auto vertex=[](cv::Vec3d p,cv::Vec3d c){return SceneVertex{float(p[0]),float(p[1]),float(p[2]),float(c[0]),float(c[1]),float(c[2])};};
     auto line=[&](cv::Vec3d a,cv::Vec3d b,cv::Vec3d c){mesh.lines.push_back(vertex(a,c));mesh.lines.push_back(vertex(b,c));};
@@ -94,5 +94,20 @@ SceneMesh makeSceneMesh(const std::vector<SceneCamera>& cameras,const SceneOptio
         if(o.frusta){for(int j=0;j<4;++j){auto end=c.center+c.cornerRays[j]*o.frustumLength;
             line(c.center,end,color*.6);line(end,c.center+c.cornerRays[(j+1)%4]*o.frustumLength,color*.8);}}
         if(o.directions)arrow(c.center,c.center+c.forward()*.08,color);
-    }return mesh;
+    }
+    for(const auto& measurement:measurements){
+        const auto p=measurement.position;if(!finite(p))throw std::runtime_error("Invalid measured 3D point.");
+        bool active=measurement.id==selectedPoint;
+        const double radius=active?.006:.004;std::array<cv::Vec3d,4> ring{p+cv::Vec3d(radius,0,0),p+cv::Vec3d(0,radius,0),p+cv::Vec3d(-radius,0,0),p+cv::Vec3d(0,-radius,0)};
+        auto color=active?cv::Vec3d(1,.9,.25):cv::Vec3d(.3,1,.65);
+        for(int i=0;i<4;++i){triangle(p+cv::Vec3d(0,0,radius),ring[i],ring[(i+1)%4],color);triangle(p-cv::Vec3d(0,0,radius),ring[(i+1)%4],ring[i],color*.6);}
+        if(active){
+            for(int side=0;side<2;++side){auto origin=measurement.origins[side],closest=measurement.closest[side];
+                if(!finite(origin)||!finite(closest))throw std::runtime_error("Invalid measurement ray.");
+                // Extend slightly past the closest point without moving either endpoint of the measured gap.
+                arrow(origin,origin+(closest-origin)*1.05,colors[side]);}
+            line(measurement.closest[0],measurement.closest[1],{1,.35,.85});
+        }
+    }
+    return mesh;
 }

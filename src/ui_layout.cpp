@@ -35,6 +35,7 @@ static void validate(const UiLayout& s){
     if(s.comparisonMode<1||s.comparisonMode>2||s.comparisonLineCount<1||s.comparisonLineCount>12)
         throw std::runtime_error("Invalid stereo comparison options.");
     for(const auto& serial:s.comparisonSerials)if(serial.size()>256)throw std::runtime_error("Invalid comparison camera identity.");
+    for(const auto& serial:s.triangulationSerials)if(serial.size()>256)throw std::runtime_error("Invalid triangulation camera identity.");
 }
 UiLayout loadUiLayout(const std::filesystem::path& path){
     UiLayout s;if(!std::filesystem::exists(path))return s;
@@ -47,6 +48,11 @@ UiLayout loadUiLayout(const std::filesystem::path& path){
     s.originVisible=j.value("origin_visible",false);
     s.sceneVisible=j.value("scene_visible",false);
     s.processingVisible=j.value("processing_visible",false);s.recordingVisible=j.value("recording_visible",false);
+    s.triangulationVisible=j.value("triangulation_visible",false);
+    if(j.contains("triangulation_serials")){
+        const auto& pair=j.at("triangulation_serials");if(!pair.is_array()||pair.size()!=2)throw std::runtime_error("Invalid triangulation camera pair.");
+        s.triangulationSerials=pair.get<std::array<std::string,2>>();
+    }
     if(j.contains("scene_view")){const auto& v=j.at("scene_view");auto eye=v.at("eye_m").get<std::vector<double>>();
         if(eye.size()!=3)throw std::runtime_error("Invalid saved 3D viewpoint.");s.sceneView.eye={eye[0],eye[1],eye[2]};
         s.sceneView.yaw=v.at("yaw");s.sceneView.pitch=v.at("pitch");s.sceneView.speed=v.at("speed_m_s");s.sceneView.initialized=v.at("initialized");}
@@ -86,6 +92,7 @@ std::string serializeUiLayout(const UiLayout& s){
     return json{{"schema_version",1},{"main_window",{{"x",r.x},{"y",r.y},{"width",r.width},{"height",r.height},{"maximized",s.maximized}}},
         {"devices_visible",s.devicesVisible},{"calibration_visible",s.calibrationVisible},{"stereo_visible",s.stereoVisible},{"origin_visible",s.originVisible},{"camera_windows",s.cameraWindows},{"imgui",s.imgui},
         {"camera_display",display},{"comparison_visible",s.comparisonVisible},{"processing_visible",s.processingVisible},{"recording_visible",s.recordingVisible},
+        {"triangulation_visible",s.triangulationVisible},{"triangulation_serials",s.triangulationSerials},
         {"comparison",{{"serials",s.comparisonSerials},{"mode",s.comparisonMode},{"lines",s.comparisonLines},{"line_count",s.comparisonLineCount}}},
         {"scene_visible",s.sceneVisible},{"scene_view",{{"eye_m",{s.sceneView.eye[0],s.sceneView.eye[1],s.sceneView.eye[2]}},{"yaw",s.sceneView.yaw},{"pitch",s.sceneView.pitch},{"speed_m_s",s.sceneView.speed},{"initialized",s.sceneView.initialized}}},
         {"scene_options",{{"grid",s.sceneOptions.grid},{"axes",s.sceneOptions.axes},{"frusta",s.sceneOptions.frusta},{"directions",s.sceneOptions.directions},

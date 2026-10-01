@@ -5,6 +5,7 @@ int sceneSelected=-1;
 ImVec2 sceneCanvasCenter;
 void drawScene(){
     ImGui::SetNextWindowSize({1200,820},ImGuiCond_FirstUseEver);
+    if(triangulationSmoke){ImGui::SetNextWindowPos({10,510});ImGui::SetNextWindowSize({1410,415});}
     if(!ImGui::Begin("3D View###3D 공간 / 카메라",&layout.sceneVisible)){ImGui::End();return;}
     if(!settings.originCurrent()){
         sceneCameras.clear();sceneRevision.clear();
@@ -44,7 +45,7 @@ void drawScene(){
         auto matrix=view.matrix(available.x/available.y);auto draw=ImGui::GetWindowDrawList();
         auto end=ImVec2(start.x+available.x,start.y+available.y);
         try{
-            auto mesh=makeSceneMesh(sceneCameras,options,sceneSelected);float dpi=ImGui::GetWindowViewport()->DpiScale;
+            auto mesh=makeSceneMesh(sceneCameras,options,sceneSelected,pointSceneMeasurements(),pointSelected);float dpi=ImGui::GetWindowViewport()->DpiScale;
             auto texture=sceneRenderer.render(mesh,matrix,int(available.x*dpi),int(available.y*dpi));
             draw->AddImage(ImTextureRef(ImTextureID(texture)),start,end,{0,1},{1,0});
         }catch(const std::exception& e){sceneError=e.what();}
@@ -56,6 +57,24 @@ void drawScene(){
             if(auto p=point({0,0,0}))draw->AddText({p->x+7,p->y+7},IM_COL32(235,240,250,255),"O (0,0,0)");
         }
         const ImU32 colors[]={IM_COL32(65,205,255,255),IM_COL32(255,175,70,255),IM_COL32(205,125,255,255)};
+        for(const auto& measured:pointList)if(measured.world){const auto& geometry=*measured.world;bool selected=measured.id==pointSelected;
+            if(auto p=point(geometry.position)){
+                char label[160];if(selected)snprintf(label,sizeof(label),"P%d Midpoint  (%.1f, %.1f, %.1f) mm",measured.id,geometry.position[0]*1000,geometry.position[1]*1000,geometry.position[2]*1000);
+                else snprintf(label,sizeof(label),"P%d",measured.id);
+                auto color=selected?IM_COL32(255,230,65,255):IM_COL32(80,250,170,255);
+                draw->AddCircle(*p,selected?6.f:4.f,color,24,2);draw->AddText({p->x+10,p->y+8},color,label);
+                if(selected){char gap[80];snprintf(gap,sizeof(gap),"Gap %.3f mm",geometry.gapM*1000);
+                    draw->AddText({p->x+10,p->y+28},IM_COL32(255,90,215,255),gap);}
+            }
+            if(selected)for(int side=0;side<2;++side)if(auto p=point(geometry.closest[side])){
+                // Endpoint dots stay at true scale even when the gap is subpixel on screen.
+                draw->AddCircleFilled(*p,2.5f,colors[side]);}
+        }
+        if(auto measured=selectedPoint();measured&&measured->world){
+            draw->AddText({start.x+12,start.y+30},colors[0],("L · "+cameraName(layout.triangulationSerials[0])).c_str());
+            draw->AddText({start.x+12,start.y+50},colors[1],("R · "+cameraName(layout.triangulationSerials[1])).c_str());
+            draw->AddText({start.x+12,start.y+70},IM_COL32(255,90,215,255),"Shortest segment");
+        }
         for(size_t i=0;i<sceneCameras.size();++i)if(auto p=point(sceneCameras[i].center)){
             auto label=cameraName(sceneCameras[i].serial);
             auto size=ImGui::CalcTextSize(label.c_str());float x=std::clamp(p->x-size.x*.5f,start.x+8,std::max(start.x+8,end.x-size.x-10));

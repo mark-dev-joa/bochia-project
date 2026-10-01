@@ -75,6 +75,35 @@ static void checkRectification(const Calibration& a,const Calibration& b,const S
     rejects([&]{rectifiedFrame(cv::Mat(),maps,0);});
     rejects([&]{rectifiedFrame(cv::Mat(a.imageSize,CV_8UC3),maps,2);});
 }
+static void checkTriangulation(const Calibration& a,const Calibration& b,const StereoCalibration& relation){
+    auto maps=makeStereoRectification(a,b,relation);
+    for(const cv::Point3d object:std::vector<cv::Point3d>{{-.03,.02,.8},{.04,-.04,1.5},{.12,.08,3}}){
+        std::array<cv::Point2d,2> raw;
+        for(int side=0;side<2;++side){const auto& c=side?b:a;std::vector<cv::Point2d> pixels;
+            cv::projectPoints(std::vector<cv::Point3d>{object},side?relation.R:cv::Mat(cv::Mat::eye(3,3,CV_64F)),
+                side?relation.T:cv::Mat(cv::Mat::zeros(3,1,CV_64F)),c.K,c.distortion,pixels);raw[side]=pixels[0];}
+        for(int mode=0;mode<3;++mode){std::array<cv::Point2d,2> recovered;
+            for(int side=0;side<2;++side){const auto& c=side?b:a;
+                auto pixel=stereoRawToPixel(c,raw[side],mode,maps.R[side],maps.P[side]);
+                recovered[side]=stereoPixelToRaw(c,pixel,mode,maps.R[side],maps.P[side]);
+                require(cv::norm(recovered[side]-raw[side])<1e-5,"Display pixels round-trip to native distorted pixels, including rotated rectification");}
+            auto result=triangulateStereoPoint(a,b,relation,recovered[0],recovered[1]);
+            require(cv::norm(result.cameraPoint-cv::Vec3d(object.x,object.y,object.z))<1e-6,"Two clicked pixels recover the known 3D point in metres");
+            require(result.reprojectionErrorPx[0]<1e-5&&result.reprojectionErrorPx[1]<1e-5&&result.rayAngleDeg>0,"Point reprojection diagnostics use native pixels");
+            require(result.rayGapM<1e-7&&cv::norm(result.cameraPoint-(result.closestPoints[0]+result.closestPoints[1])*.5)<1e-12,"Exact correspondences intersect at the reported midpoint");
+            auto noisy=triangulateStereoPoint(a,b,relation,recovered[0],recovered[1]+cv::Point2d(.2,1.));
+            auto connector=noisy.closestPoints[1]-noisy.closestPoints[0];
+            for(int side=0;side<2;++side){auto ray=noisy.closestPoints[side]-noisy.rayOrigins[side];
+                require(std::abs(connector.dot(ray)/cv::norm(ray))<1e-10,"Shortest connector is perpendicular to both viewing rays");}
+            require(noisy.rayGapM>1e-8&&std::abs(noisy.rayGapM-cv::norm(connector))<1e-12,"Metric gap is the true shortest distance for noisy clicks");
+            require(cv::norm(noisy.cameraPoint-(noisy.closestPoints[0]+noisy.closestPoints[1])*.5)<1e-12,"Reported reconstruction is the connector midpoint, including skew rays");
+            StereoCalibration reversed;reversed.R=relation.R.t();reversed.T=-reversed.R*relation.T;
+            auto reversePoint=triangulateStereoPoint(b,a,reversed,recovered[1]+cv::Point2d(.2,1.),recovered[0]);
+            cv::Mat reverseInFirst=relation.R.t()*(cv::Mat(reversePoint.cameraPoint)-relation.T);
+            require(cv::norm(reverseInFirst-cv::Mat(noisy.cameraPoint))<1e-8&&std::abs(reversePoint.rayGapM-noisy.rayGapM)<1e-10,"Swapping camera order preserves metric midpoint and ray gap");
+        }
+    }
+}
 int main(){try{
     Calibration a,b;a.imageSize=b.imageSize={1280,960};
     a.K=(cv::Mat_<double>(3,3)<<1000,0,640,0,980,480,0,0,1);b.K=(cv::Mat_<double>(3,3)<<1050,0,632,0,1020,475,0,0,1);
@@ -135,8 +164,10 @@ int main(){try{
     RigCapture capture;AutoCaptureConfig config{10,1.0,1.5};capture.start(3,config);
     auto observe=[&](const RigSample& group,double t){return capture.observe(group,board,{}, {t,t+.01,t+.02},t+.03);};
     require(!observe(groups[0],10)&&!observe(groups[0],10.4),"All-camera collection waits for stable hold");
+    require(capture.status(0)==CaptureStatus::Hold&&capture.progress(0)>0&&capture.status(2)==CaptureStatus::Hold,"Per-camera hold status is available to explain collection readiness");
     auto invisible=groups[0];invisible.cameras[2].imagePoints.clear();
     require(!observe(invisible,10.8)&&capture.progress()==0,"Third-camera board loss resets all holds");
+    require(capture.status(0)==CaptureStatus::Waiting&&capture.status(2)==CaptureStatus::Waiting,"Missing board prevents partial group collection");
     require(!observe(groups[0],11.2)&&!observe(groups[0],11.6)&&!observe(groups[0],12.0)&&observe(groups[0],12.4),"Only three stable valid cameras produce one complete group");
     capture.captured(12.43,10);require(!capture.running(),"Group target stops all cameras together");
     capture.start(3,config);require(!capture.observe(groups[0],board,{}, {20,20.01,19.0},20.03),"Stale third camera cannot generate two-camera subset");
@@ -170,6 +201,7 @@ int main(){try{
         cv::Mat expectedR=nativeR[j]*nativeR[i].t(),expectedT=nativeT[j]-expectedR*nativeT[i];
         require(cv::norm(relation.R-expectedR)<1e-10&&cv::norm(relation.T-expectedT)<1e-10,"All rig pairs and reversed orders compose from camera extrinsics");
         checkRectification(settings.cameras.at(serials[i]).calibration,settings.cameras.at(serials[j]).calibration,relation);
+        checkTriangulation(settings.cameras.at(serials[i]).calibration,settings.cameras.at(serials[j]).calibration,relation);
     }
     auto reverse=savedStereoTransform(legacy,"B","A");
     require(cv::norm(reverse.R*result.R-cv::Mat::eye(3,3,CV_64F))<1e-8&&cv::norm(reverse.T+reverse.R*result.T)<1e-8,"Legacy reverse pair inverts both rotation and translation");
@@ -185,6 +217,16 @@ int main(){try{
     auto wide=color;wide.imageSize={1600,900};wide.K=wide.K.clone();wide.K.at<double>(1,2)=450;
     StereoCalibration vertical;vertical.R=R.clone();vertical.T=(cv::Mat_<double>(3,1)<<.007,-.17,.002);
     checkRectification(a,wide,vertical,true);
+    checkTriangulation(a,wide,vertical);
     StereoCalibration horizontal;horizontal.R=R.clone();horizontal.T=T.clone();checkRectification(a,wide,horizontal);
+    checkTriangulation(a,wide,horizontal);
+    auto simple=a;simple.distortion=cv::Mat::zeros(1,5,CV_64F);StereoCalibration parallel;
+    parallel.R=cv::Mat::eye(3,3,CV_64F);parallel.T=(cv::Mat_<double>(3,1)<<-.15,0,0);
+    rejects([&]{triangulateStereoPoint(simple,simple,parallel,{640,480},{640,480});}); // No disparity / parallel rays.
+    rejects([&]{triangulateStereoPoint(simple,simple,parallel,{640,480},{740,480});}); // Behind the cameras.
+    rejects([&]{triangulateStereoPoint(simple,simple,parallel,{640,480},{540,540});}); // Wrong epipolar correspondence.
+    rejects([&]{triangulateStereoPoint(simple,simple,parallel,{-1,480},{540,480});});
+    rejects([&]{stereoPixelToRaw(simple,{100000,100000},1);}); // Black/out-of-source display area.
+    rejects([&]{stereoPixelToRaw(simple,{640,480},2);}); // Missing rectification matrices.
     std::cout<<"PASS: stereo recovery, correspondence, timing, cancellation, archives, all rig pairs, mixed-resolution horizontal rectification, native frame preservation and stale dependency checks\n";return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<"\n";return 1;}}

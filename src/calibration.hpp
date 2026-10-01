@@ -30,6 +30,8 @@ struct Calibration {
     std::vector<double> perViewErrors;
 };
 Observation detectBoard(const cv::Mat& image, const BoardConfig& config, const BrightnessOptions& brightness={});
+// Returns a separate preview; never draws into a captured calibration image.
+cv::Mat drawBoardOverlay(const cv::Mat& image, const Observation& observation, const BoardConfig& config);
 void validateSample(const Observation& sample, const std::vector<Observation>& existing);
 Calibration calibrate(const std::vector<Observation>& samples);
 cv::Mat undistortFrame(const cv::Mat& image,const Calibration& calibration);

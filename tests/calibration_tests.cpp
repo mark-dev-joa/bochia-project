@@ -31,6 +31,14 @@ int main(){try{
     cv::Mat chess(560,800,CV_8UC3,cv::Scalar(220,220,220));
     for(int y=0;y<7;++y)for(int x=0;x<10;++x)cv::rectangle(chess,{100+x*55,75+y*55,55,55},(x+y)%2?cv::Scalar(255,255,255):cv::Scalar(0,0,0),cv::FILLED);
     auto observation=detectBoard(chess,board);require(observation.imagePoints.size()==54,"Chessboard detection");
+    auto chessOriginal=chess.clone();auto overlay=drawBoardOverlay(chess,observation,board);
+    const auto horizontal=(observation.imagePoints[0]+observation.imagePoints[1])*.5f;
+    const auto vertical=(observation.imagePoints[0]+observation.imagePoints[board.columns])*.5f;
+    auto gridVisible=[&](cv::Point2f p){auto pixel=overlay.at<cv::Vec3b>(cvRound(p.y),cvRound(p.x));return pixel[1]>pixel[0]+50&&pixel[1]>pixel[2]+50;};
+    require(gridVisible(horizontal)&&gridVisible(vertical),"Detected chessboard preview includes both horizontal and vertical grid edges");
+    require(overlay.data!=chess.data&&cv::norm(chess,chessOriginal,cv::NORM_INF)==0,"Board overlay preserves calibration and acquisition originals");
+    auto incomplete=observation;incomplete.imagePoints.pop_back();auto partialOverlay=drawBoardOverlay(chess,incomplete,board);
+    require(partialOverlay.at<cv::Vec3b>(cvRound(horizontal.y),cvRound(horizontal.x))==chess.at<cv::Vec3b>(cvRound(horizontal.y),cvRound(horizontal.x)),"Incomplete board cannot draw a misleading connected grid");
     cv::Mat dim;chess.convertTo(dim,CV_8UC3,80.0/255,30);
     auto dimOriginal=dim.clone();auto dimBoard=detectBoard(dim,board);
     auto brightness=estimateBoardBrightness(dimBoard);

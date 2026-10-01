@@ -76,3 +76,4 @@ SavedPoseView savedPoseView(const Settings& settings,const std::string& serial);
 SavedPoseView savedWorldPoseView(const Settings& settings,const std::string& serial);
 // Geometry only: composed pairs have no independently measured reprojection error.
 StereoCalibration savedStereoTransform(const Settings& settings,const std::string& first,const std::string& second);
+std::optional<cv::Vec3d> cameraPointToWorld(const Settings& settings,const std::string& camera,cv::Vec3d point);

@@ -40,8 +40,10 @@ int main(){try{
     state.cameraDisplay={{"serial-A",{1,24.f,1.75f}},{"serial-B",{0,-17.f,.75f}}};
     state.comparisonVisible=true;state.comparisonSerials={"serial-B","serial-A"};state.comparisonMode=2;
     state.comparisonLines=false;state.comparisonLineCount=7;
+    state.triangulationVisible=true;state.triangulationSerials={"serial-A","serial-B"};
     writeUiLayout(path,state);ImGui::DestroyContext();
     auto restored=loadUiLayout(path);
+    require(restored.triangulationVisible&&restored.triangulationSerials==state.triangulationSerials,"Triangulation panel and selected camera identities persist");
     require(restored.mainWindow.x==-1700&&restored.mainWindow.width==1300&&restored.maximized,"Main geometry and maximize persist");
     require(!restored.devicesVisible&&restored.calibrationVisible&&restored.stereoVisible&&restored.originVisible&&!restored.cameraWindows.at("serial-B"),"Panel visibility persists");
     require(restored.imgui==state.imgui,"Complete ImGui settings persist losslessly");

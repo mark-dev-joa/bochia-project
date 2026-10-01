@@ -19,6 +19,8 @@ struct UiLayout {
     bool stereoVisible=false,originVisible=false;
     bool sceneVisible=false;
     bool processingVisible=false,recordingVisible=false;
+    bool triangulationVisible=false;
+    std::array<std::string,2> triangulationSerials;
     FpsView sceneView;
     SceneOptions sceneOptions;
     std::map<std::string,bool> cameraWindows;

@@ -83,7 +83,7 @@ struct Texture{
 struct ImportResult{std::vector<Observation> samples;std::vector<std::string> errors;};
 struct DetectionResult{Observation observation;std::string identity;Clock::time_point capturedAt;};
 struct ReconnectResult{std::vector<Device> devices;std::vector<std::unique_ptr<Camera>> cameras;std::string warnings;};
-struct StereoDetection {RigSample sample;std::vector<std::string> serials;std::vector<Clock::time_point> receivedAt;};
+struct StereoDetection {RigSample sample;std::vector<std::string> serials;std::vector<Clock::time_point> receivedAt;double detectionMs=0;};
 struct ViewState{
     bool visible=true;uint64_t generation=0;Texture texture;BrightnessOptions brightness;
     Clock::time_point updated{};std::string mapKey,error;cv::Mat mapX,mapY;
@@ -109,7 +109,7 @@ public:
     void releaseThumbnails(){for(auto& t:thumbnails)t.release();thumbnails.clear();}
     void releaseTextures(){sceneRenderer.release();for(auto& t:comparisonTextures)t.release();for(auto& t:originPreview)t.release();preview.release();correctedPreview.release();releaseThumbnails();releaseStereoThumbnails();for(auto& t:stereoPreview)t.release();for(auto& v:views)v.texture.release();}
     void draw(){
-        pollJobs();pollSource();pollBalls();
+        pollJobs();pollSource();pollBalls();pollPoint();
         ImGui::DockSpaceOverViewport(0,ImGui::GetMainViewport());
         if(ImGui::BeginMainMenuBar()){
             if(ImGui::BeginMenu("도구")){
@@ -118,6 +118,7 @@ public:
                 if(ImGui::MenuItem("원점 설정",nullptr,false,!saveFuture.valid()&&!replay&&!sourceBusy()))openOrigin();
                 ImGui::Separator();ImGui::MenuItem("Ball Detection",nullptr,&showProcessing);
                 ImGui::MenuItem("Recording / Playback",nullptr,&showRecording);
+                ImGui::MenuItem("Triangulation",nullptr,&layout.triangulationVisible);
                 ImGui::EndMenu();}
             if(ImGui::BeginMenu("보기")){
                 ImGui::MenuItem("장치 / 설정",nullptr,&showDevices);
@@ -144,6 +145,7 @@ public:
         if(showDevices)drawDevices();
         if(showRecording)drawRecording();
         if(showProcessing)drawProcessing();
+        if(layout.triangulationVisible)drawTriangulation();
         for(size_t i=0;i<cameras.size();++i)drawCamera(i);
         if(layout.comparisonVisible)drawComparison();
         rememberCameraWindows();
@@ -221,9 +223,23 @@ public:
         for(int side=0;side<3;++side)stereoSmokeFrames[side]={stereoSmokeSamples[0].cameras[side].image,1,0,1,Clock::now()};
         stereoSmokeOriginal=stereoSmokeSamples.back().cameras[0].image.clone();stereoMessage="Synthetic UI test";
     }
+    bool stereoSmokeCollected=false,stereoSmokeFolded=false;int stereoSmokeResumeFrame=0;
     void stereoInputSmoke(int frame){
         auto require=[](bool ok,const char* text){if(!ok)throw std::runtime_error(text);};
-        if(frame==10){require(stereoPreview[0].id&&stereoPreview[1].id&&stereoPreview[2].id&&!stereoConfirmed&&stereoSamples.empty(),"Stereo raw live preview must precede detection");beginStereoCapture();require(stereoWorkflow&&stereoCapture.running(),"Start must begin automatic rig collection");stereoSamples.assign(stereoSmokeSamples.begin(),stereoSmokeSamples.begin()+8);stereoGenerations={1,1,1};}
+        if(frame>=10&&!stereoSmokeCollected){
+            stereoSmokeFolded=frame>10;
+            for(auto& source:stereoSmokeFrames){source.receivedAt=Clock::now();++source.generation;++source.id;}
+            if(frame==10){require(stereoPreview[0].id&&stereoPreview[1].id&&stereoPreview[2].id&&!stereoConfirmed&&stereoSamples.empty(),"Stereo raw live preview must precede detection");
+                beginStereoCapture();require(stereoWorkflow&&stereoCapture.running(),"Start must begin automatic rig collection");}
+            if(stereoSamples.empty())return;
+            require(stereoSamples.size()==1&&stereoSamples[0].cameras.size()==3,"Actual detection and stable hold must automatically append a complete group");
+            for(const auto& observation:stereoSamples[0].cameras)require(observation.imagePoints.size()==48,"All three real detector results must have every board corner");
+            require(stereoWorkflow&&stereoSmokeFolded,"Folding the relative-calibration window must not cancel automatic capture");
+            stereoSmokeCollected=true;stereoSmokeFolded=false;stereoSmokeResumeFrame=frame-10;
+            std::cout<<"PASS: actual three-camera detection-to-automatic-capture loop while the calibration window is folded\n";
+            stereoSamples.assign(stereoSmokeSamples.begin(),stereoSmokeSamples.begin()+8);stereoGenerations={};
+        }
+        frame-=stereoSmokeResumeFrame;
         if(frame==18){cancelStereo();require(stereoSamples.size()==8&&!stereoWorkflow&&!stereoBrightnessActive()&&!stereoSmokeFrames[0].image.empty(),"Cancel must preserve rig samples and live Grab");}
         if(frame==23){beginStereoCapture();stereoGenerations={1,1,1};require(stereoWorkflow&&stereoSamples.size()==8,"Restart must resume partial rig samples");}
         if(frame==27){stereoSamples=stereoSmokeSamples;advanceStereoCalibration();require(stereoCalTask.pending()&&!stereoWorkflow&&!stereoDetectionEnabled&&!stereoBrightnessActive(),"Rig target must automatically solve and restore brightness");advanceStereoCalibration();}
@@ -332,6 +348,15 @@ public:
     void monoInputSmoke(int frame){
         auto require=[](bool ok,const char* message){if(!ok)throw std::runtime_error(message);};
         if(frame==12){require(preview.id&&!confirmed&&samples.empty(),"Raw live preview must precede board setup/detection");startMonoCalibration();require(monoWorkflow&&autoCapture.running(),"Start must collect automatically");samples.assign(monoSmokeSamples.begin(),monoSmokeSamples.begin()+8);sessionGeometry={};}
+        if(frame==14){
+            detected=detectBoard(monoSmokeFrame.image,board,liveBrightness(identity));
+            require(detected.imagePoints.size()==54,"Mono overlay requires a real complete detector result");
+            detected.source="live:"+identity;detected.frameId=monoSmokeFrame.id;detectedAt=Clock::now();
+            // The next Grab frame is a different pose: the overlay must still use the detection image.
+            monoSmokeFrame.image=monoSmokeSamples[1].image;++monoSmokeFrame.id;++monoSmokeFrame.generation;
+            require(monoSmokeFrame.id!=detected.frameId,"Overlay smoke must exercise mismatched live/detection frame IDs");
+            previewDirty=true;
+        }
         if(frame==20){cancelWork();require(liveRunning()&&samples.size()==8&&!monoWorkflow&&!calibrationBrightnessActive(),"Cancel must preserve Grab/samples and restore brightness");}
         if(frame==25){startMonoCalibration();require(monoWorkflow&&samples.size()==8,"Restart must resume partial samples");}
         if(frame==30){samples=monoSmokeSamples;advanceMonoCalibration();require(calTask.pending()&&!detectionEnabled&&!monoWorkflow&&!calibrationBrightnessActive(),"Target must launch solver once and restore brightness");advanceMonoCalibration();}
@@ -362,6 +387,76 @@ public:
         if(frame==50){require(comparisonError.empty(),"Restored rig failed");std::swap(layout.comparisonSerials[0],layout.comparisonSerials[1]);comparisonDirty=true;}
         if(frame==54){require(comparisonError.empty(),"Reversed stereo pair failed");layout.comparisonSerials={"SYNTHETIC-B","SYNTHETIC-C"};comparisonDirty=true;}
         if(frame==60){require(comparisonError.empty()&&cv::norm(videoSmokeOriginal,videoSmokeFrames[0].image,cv::NORM_INF)==0,"Arbitrary pair/raw preservation failed");std::cout<<"PASS: camera display options, comparison modes, reversed/arbitrary pairs, stale gating and raw preservation\n";}
+    }
+    bool triangulationSmoke=false;
+    std::array<cv::Point2d,2> pointSmokePixels;
+    const cv::Vec3d pointSmokeExpected{.08,.035,.5};
+    void prepareTriangulationSmoke(){
+        prepareVideoSmoke();triangulationSmoke=true;showRecording=showProcessing=false;settings.ball.run=false;settings.softwareBrightness.clear();
+        layout.triangulationVisible=true;layout.triangulationSerials={};layout.sceneView={};layout.sceneVisible=true;
+        settings.origin=Settings::SavedOrigin{settings.rig->archive,"synthetic-origin",*originCandidate};
+        for(int side=0;side<3;++side){auto id=cameras[side]->device.serial;cameras[side]->settings["PixelFormat"]=side<2?"Mono8":"BayerRG8";
+            if(side==2)continue;settings.cameraNames[id]=side?"Mono B":"Mono A";views[side].visible=true;layout.cameraDisplay[id]={};
+            auto& c=settings.cameras[id].calibration;c.distortion=(cv::Mat_<double>(1,5)<<-.16,.04,.002,-.001,0);
+            std::vector<cv::Point3d> object{{pointSmokeExpected[0],pointSmokeExpected[1],pointSmokeExpected[2]}};std::vector<cv::Point2d> pixels;
+            cv::Mat r=cv::Mat::eye(3,3,CV_64F),t=cv::Mat::zeros(3,1,CV_64F);if(side){r=settings.rig->calibration.fromReference[0].R;t=settings.rig->calibration.fromReference[0].T;}
+            cv::projectPoints(object,r,t,c.K,c.distortion,pixels);pointSmokePixels[side]=pixels[0];
+            auto& frame=videoSmokeFrames[side];frame.image=cv::Mat(c.imageSize,CV_8UC3,cv::Scalar(28,32,38));
+            for(int x=0;x<c.imageSize.width;x+=100)cv::line(frame.image,{x,0},{x,c.imageSize.height},{45,48,55});
+            for(int y=0;y<c.imageSize.height;y+=100)cv::line(frame.image,{0,y},{c.imageSize.width,y},{45,48,55});
+            cv::circle(frame.image,pixels[0],20,{230,230,230},-1,cv::LINE_AA);cv::circle(frame.image,pixels[0],2,{30,30,30},-1);
+        }
+        videoSmokeOriginal=videoSmokeFrames[0].image.clone();
+    }
+    void triangulationInputSmoke(int frame){
+        auto require=[](bool ok,const char* text){if(!ok)throw std::runtime_error(text);};
+        for(auto& image:videoSmokeFrames)image.receivedAt=Clock::now();
+        auto click=[&](int side,int mode){const auto& c=settings.cameras.at(layout.triangulationSerials[side]).calibration;
+            auto p=stereoRawToPixel(c,pointSmokePixels[side],mode,mode==2?comparisonMaps.R[side]:cv::Mat(),mode==2?comparisonMaps.P[side]:cv::Mat());
+            auto a=pointCanvas[side][0],b=pointCanvas[side][1];auto shape=mode==2?comparisonMaps.outputSize:c.imageSize;
+            require(b.x>a.x&&b.y>a.y,"Point image hit area missing");auto& io=ImGui::GetIO();io.AddFocusEvent(true);
+            io.AddMousePosEvent(a.x+float(p.x+.5)*(b.x-a.x)/shape.width,a.y+float(p.y+.5)*(b.y-a.y)/shape.height);io.AddMouseButtonEvent(0,true);};
+        auto check=[&]{auto p=selectedPoint();require(p&&p->world.has_value(),"Point solve/world result missing");
+            // ImGui floors mouse events to screen pixels; these small previews magnify that quantization in depth.
+            if(cv::norm(p->result.cameraPoint-pointSmokeExpected)>=.01){std::ostringstream diagnostic;diagnostic<<"Clicked 3D point differs at smoke frame "<<frame<<": "<<p->result.cameraPoint;throw std::runtime_error(diagnostic.str());}
+            require(sceneError.empty(),"Point scene failed to render");};
+        if(frame==3){freezePointPair();require(pointFrozen&&layout.triangulationSerials[1]=="SYNTHETIC-B","Mono pair freeze/default selection failed");
+            require(pointFrames[0].image.data!=videoSmokeFrames[0].image.data,"Frozen pair must own its pixels");}
+        if(frame==6)click(0,0);if(frame==10)click(1,0);
+        if(frame==14){check();videoSmokeFrames[0].image=videoSmokeFrames[0].image.clone();videoSmokeFrames[0].image.setTo(cv::Scalar(40,50,60));++videoSmokeFrames[0].generation;}
+        if(frame==16){require(displayFrame(0).generation==1&&sourceFrame(0).generation==2,"Grab must advance while selected pair stays frozen");
+            for(int side=0;side<2;++side)layout.cameraDisplay[layout.triangulationSerials[side]].mode=1;refreshPointViews();}
+        if(frame==18)click(0,1);if(frame==22)click(1,1);
+        if(frame==26){check();require(pointList.size()==2&&pointNextId==3&&!pointPixels[0]&&!pointPixels[1],"Pairs append automatically and reset the draft");}
+        if(frame==28){views[0].visible=views[1].visible=false;layout.comparisonVisible=true;layout.comparisonMode=2;comparisonDirty=true;}
+        if(frame==34)click(0,2);if(frame==38)click(1,2);
+        if(frame==40){for(auto& frozen:pointFrames)frozen.receivedAt=Clock::now()-std::chrono::seconds(5);comparisonDirty=true;}
+        if(frame==42){check();require(pointList.size()==3&&comparisonError.empty(),"Three points persist and frozen comparison does not expire");}
+        if(frame==43){auto p=pointRowCenters.at(1);ImGui::GetIO().AddMousePosEvent(p.x,p.y);ImGui::GetIO().AddMouseButtonEvent(0,true);}
+        if(frame==45){require(pointSelected==1,"Clicking a point list row selects its rays");editSelectedPoint();
+            pickPointPixel(0,pointSmokePixels[0]+cv::Point2d(0,100),0);require(pointList.size()==3&&!pointError.empty(),"Bad edit preserves the existing valid point");
+            pickPointPixel(0,pointSmokePixels[0],0);require(pointList.size()==3&&pointSelected==1&&pointEditing==-1,"Valid edit replaces a point without duplicating it");
+            selectPoint(2);deleteSelectedPoint();require(pointList.size()==2&&pointList[1].id==3&&pointNextId==4,"Deleting a point preserves remaining IDs");}
+        if(frame==46){resumePointLive();require(!pointFrozen&&pointList.size()==2&&displayFrame(0).generation==sourceFrame(0).generation,"Live must resume without losing measured points");
+            cameras[0]->settings["Width"]="wrong";}
+        if(frame==48){require(pointList.empty()&&!pointError.empty(),"Changed camera geometry must invalidate every point");cameras[0]->settings.erase("Width");freezePointPair();++sourceEpoch;}
+        if(frame==50){require(!pointFrozen&&pointList.empty()&&!pointError.empty(),"Changed source must invalidate frozen pair");freezePointPair();pickPointPixel(0,pointSmokePixels[0],0);pickPointPixel(1,pointSmokePixels[1],0);check();layout.triangulationVisible=false;}
+        if(frame==53){require(!pointFrozen&&pointList.size()==1,"Closing point panel must resume images and preserve results");layout.triangulationVisible=true;
+            videoSmokeFrames[0].image=videoSmokeOriginal.clone();freezePointPair();pickPointPixel(0,pointSmokePixels[0],0);pickPointPixel(1,pointSmokePixels[1],0);
+            for(auto object:std::vector<cv::Point3d>{{.02,.06,.55},{.10,-.03,.52}}){
+                for(int side=0;side<2;++side){const auto& c=settings.cameras.at(layout.triangulationSerials[side]).calibration;std::vector<cv::Point2d> pixels;
+                    auto relation=savedStereoTransform(settings,layout.triangulationSerials[0],layout.triangulationSerials[1]);
+                    cv::projectPoints(std::vector<cv::Point3d>{object},side?relation.R:cv::Mat(cv::Mat::eye(3,3,CV_64F)),side?relation.T:cv::Mat(cv::Mat::zeros(3,1,CV_64F)),c.K,c.distortion,pixels);
+                    pickPointPixel(side,pixels[0]+cv::Point2d(0,side?2.:0),0);}}
+            require(pointList.size()==3,"New pair supports multiple distinct points");
+            views[0].visible=views[1].visible=false;layout.sceneView.aimAt(pointList.front().world->position);}
+        if(frame==56){auto p=pointRowCenters.at(1);ImGui::GetIO().AddMousePosEvent(p.x,p.y);ImGui::GetIO().AddMouseButtonEvent(0,true);}
+        if(frame==58){check();require(pointSelected==1&&pointSceneMeasurements().size()==3,"List selection retains all world markers");
+            // Give the selected pair a small skew so the shortest segment is nonzero in the preview.
+            editSelectedPoint();pickPointPixel(1,pointSmokePixels[1]+cv::Point2d(0,3),0);require(pointList.size()==3&&selectedPoint()->result.rayGapM>0,"Selected ray gap retained in mm");}
+        if(frame==64){check();clearPoint();require(pointList.empty()&&pointSelected==-1&&!pointFrozen,"Clear All removes measurements and rays");
+            std::cout<<"PASS: multi-point raw/undistorted/rectified clicks, list selection, edit/delete, mm gap, midpoint/rays, continuing Grab and stale-source/calibration invalidation\n";}
+        if(frame==7||frame==11||frame==19||frame==23||frame==35||frame==39||frame==44||frame==57)ImGui::GetIO().AddMouseButtonEvent(0,false);
     }
     bool processingSmokeActive=false;int processingSmokeStep=0,processingRoiTick=0;uint64_t processingSmokeGeneration=0;cv::Mat processingSmokeOriginal;
     void prepareProcessingSmoke(){
@@ -415,6 +510,14 @@ public:
         }else if(processingSmokeStep==7&&replayProcessed()){
             require(replayGeneration==processingSmokeGeneration,"Pause retains the source frame");
             auto frame=displayFrame(0);require(displayedBall(0)->frame.image.data==frame.image.data,"Overlay corresponds to the displayed frame");
+            layout.triangulationSerials={"REC-0","REC-2"};freezePointPair();
+            require(pointFrozen&&!replayPlaying&&std::abs(pointSkewMs-.2)<1e-6,"Replay point capture uses recorded timing and pauses playback");
+            std::vector<cv::Point3d> object{{.03,.02,1.}};
+            for(int side=0;side<2;++side){const auto& c=settings.cameras.at(layout.triangulationSerials[side]).calibration;std::vector<cv::Point2d> pixels;
+                cv::Mat r=cv::Mat::eye(3,3,CV_64F),t=cv::Mat::zeros(3,1,CV_64F);if(side){auto relation=savedStereoTransform(settings,"REC-0","REC-2");r=relation.R;t=relation.T;}
+                cv::projectPoints(object,r,t,c.K,c.distortion,pixels);pickPointPixel(side,pixels[0],0);}
+            require(pointList.size()==1&&!pointList[0].world&&cv::norm(pointList[0].result.cameraPoint-cv::Vec3d(.03,.02,1))<1e-8,"Replay triangulates in camera frame without inventing a world origin");
+            resumePointLive();layout.triangulationVisible=false;
             ballOptions(0).brightness=22;markBallChanged();saveBallOptions();
             require(liveSettings->ball.cameras.at("REC-0").brightness==22&&!liveSettings->cameras.contains("REC-0"),"Processing edits preserve live calibration profile");
             layout.comparisonVisible=false;roiCamera=0;roiFrame=sourceFrame(0);roiPoints.clear();layout.cameraDisplay["REC-0"].mode=0;views[0].generation=0;processingSmokeStep=8;
@@ -425,9 +528,10 @@ public:
             else {require(roiCamera==-1&&ballOptions(0).roi.size()==4,"Four video clicks commit ROI");for(int i=0;i<4;++i)require(cv::norm(ballOptions(0).roi[i]-corners[i])<.01,"ROI screen clicks retain native normalized coordinates");
                 replayReference=1;seekReplay(9);processingSmokeStep=9;}
         }else if(processingSmokeStep==9&&replayFrameIndex==9&&replayProcessed()){
+            require(pointList.empty()&&!pointFrozen,"Replay seek clears previous-frame triangulation");
             require(sourceFrame(0).id==109&&sourceFrame(1).id==109,"Changing timeline reference preserves paired replay");
             returnLive();require(!replay&&settings.cameraNames.contains("LIVE-ONLY")&&!settings.cameras.contains("REC-0"),"Return Live restores profile");
-            std::cout<<"PASS: offline 3-camera source, detector, color, stage, undistort, rectification, seek, play/pause, ROI clicks, timeline reference, restart on paused frame, raw preservation and live profile isolation\n";return true;
+            std::cout<<"PASS: offline 3-camera source, detector, color, stage, undistort, rectification, triangulation, seek, play/pause, ROI clicks, timeline reference, restart on paused frame, raw preservation and live profile isolation\n";return true;
         }
         return false;
     }
@@ -487,9 +591,11 @@ private:
     cv::Mat stereoSmokeOriginal;
     bool stereoPreviewDirty=true,stereoPreviewEnhanced=false;
     std::string stereoMessage="각 카메라를 보정한 뒤 시작하세요.";
+    std::string stereoWaitReason;
      #include "origin_panel.inl"
      #include "scene_panel.inl"
      #include "processing_panel.inl"
+     #include "triangulation_panel.inl"
     void openCalibration(){
         cancelOrigin();showOrigin=false;cancelStereo();showStereo=false;showCalibration=true;
         if(samples.empty()){
@@ -768,6 +874,7 @@ private:
     bool displayRunning(int i)const{return displayConnected(i)&&((smoke&&videoSmoke)||cameras[i]->running());}
     CameraFrame sourceFrame(int i){return smoke&&videoSmoke?videoSmokeFrames.at(i):cameras.at(i)->latest();}
     CameraFrame displayFrame(int i){
+        if(pointFrameActive(i))return pointFrames[pointSide(i)];
         auto frame=roiCamera==i?roiFrame:displayedBall(i)?displayedBall(i)->frame:sourceFrame(i);
         if(replay&&replayTimes.size()==cameras.size()){auto latest=*std::max_element(replayTimes.begin(),replayTimes.end());frame.receivedAt=Clock::now()-std::chrono::nanoseconds(latest-replayTimes[i]);}
         return frame;
@@ -800,10 +907,10 @@ private:
         auto& c=*cameras[i];auto& v=views[i];if(!v.visible)return;
         std::string title="영상 / "+cameraName(c.device.serial)+"###영상 / "+c.device.serial;
         ImGui::SetNextWindowSize({740,580},ImGuiCond_FirstUseEver);
-        if(processingSmokeActive){ImGui::SetNextWindowPos({10.f+float(i%2)*452.f,35.f+float(i/2)*412.f});ImGui::SetNextWindowSize({445,405});}
+        if(processingSmokeActive||triangulationSmoke){ImGui::SetNextWindowPos({10.f+float(i%2)*452.f,35.f+float(i/2)*412.f});ImGui::SetNextWindowSize({445,405});}
         if(ImGui::Begin(title.c_str(),&v.visible)){
             auto frame=displayConnected(int(i))?displayFrame(int(i)):CameraFrame{};auto stats=c.statistics();
-            ImGui::Text("%s  |  %.1f fps  |  %d × %d  |  Drop %llu",replay?"Playback":displayRunning(int(i))?"Grabbing":displayConnected(int(i))?"Stopped":"Disconnected",stats.fps,
+            ImGui::Text("%s  |  %.1f fps  |  %d × %d  |  Drop %llu",pointFrameActive(int(i))?"Frozen":replay?"Playback":displayRunning(int(i))?"Grabbing":displayConnected(int(i))?"Stopped":"Disconnected",stats.fps,
                 frame.image.cols,frame.image.rows,(unsigned long long)stats.gaps);
             if(ImGui::IsItemHovered())ImGui::SetTooltip("Frame %llu · Timestamp %llu\n수신 %llu · 오류 %llu%s",(unsigned long long)frame.id,(unsigned long long)frame.timestamp,(unsigned long long)stats.received,(unsigned long long)stats.invalid,replay?"\nFPS: 녹화 원본 속도":"");
             auto& options=layout.cameraDisplay[c.device.serial];auto light=liveBrightness(c.device.serial);
@@ -820,7 +927,9 @@ private:
             }catch(const std::exception& e){v.error=e.what();ready=false;}
             float reserve=ImGui::GetContentRegionAvail().x<620?142.f:64.f;
             ImGui::BeginChild("video-image",{0,std::max(50.f,ImGui::GetContentRegionAvail().y-reserve)});
-            if(ready&&v.error.empty()){v.texture.draw();auto a=ImGui::GetItemRectMin(),b=ImGui::GetItemRectMax();drawBallOverlay(int(i),v.generation,a,{b.x-a.x,b.y-a.y},frame.image.size(),options.mode);}
+            if(ready&&v.error.empty()){v.texture.draw();auto a=ImGui::GetItemRectMin(),b=ImGui::GetItemRectMax();
+                if(!pointFrameActive(int(i)))drawBallOverlay(int(i),v.generation,a,{b.x-a.x,b.y-a.y},frame.image.size(),options.mode);
+                drawPointOverlay(int(i),a,{b.x-a.x,b.y-a.y},frame.image.size(),options.mode);}
             else ImGui::TextWrapped("%s",!v.error.empty()?v.error.c_str():displayRunning(int(i))?"프레임 대기 중":"장치 패널에서 Grab을 시작하세요.");
             ImGui::EndChild();ImGui::Separator();drawDisplayOptions(int(i));
             if(!stats.error.empty())ImGui::TextWrapped("%s",stats.error.c_str());
@@ -835,13 +944,14 @@ private:
         try{
             for(int j=0;j<2;++j){
                 if(!displayConnected(index[j]))throw std::runtime_error("두 카메라를 연결하세요.");
-                if(!displayRunning(index[j]))throw std::runtime_error("두 카메라의 Grab을 시작하세요.");
+                if(!displayRunning(index[j])&&!pointFrameActive(index[j]))throw std::runtime_error("두 카메라의 Grab을 시작하세요.");
                 if(frames[j].image.empty())throw std::runtime_error("프레임 대기 중");
                 if(layout.comparisonMode&&(!compatible(*cameras[index[j]])||frames[j].image.size()!=settings.cameras.at(cameras[index[j]]->device.serial).calibration.imageSize))
                     throw std::runtime_error("현재 영상에 맞는 개별 보정이 필요합니다.");
             }
             if(index[0]==index[1])throw std::runtime_error("서로 다른 카메라를 선택하세요.");
-            if(!usableStereoTiming(seconds(frames[0].receivedAt),seconds(frames[1].receivedAt),seconds(Clock::now())))throw std::runtime_error("새 프레임 대기 · 두 카메라의 Grab을 확인하세요.");
+            bool frozenPair=pointFrameActive(index[0])&&pointFrameActive(index[1]);
+            if(!frozenPair&&!usableStereoTiming(seconds(frames[0].receivedAt),seconds(frames[1].receivedAt),seconds(Clock::now())))throw std::runtime_error("새 프레임 대기 · 두 카메라의 Grab을 확인하세요.");
             std::string key=std::to_string(layout.comparisonMode)+"|"+displayCalibrationKey(index[0])+"|"+displayCalibrationKey(index[1]);
             comparisonGuideError.clear();
             if(layout.comparisonMode==2||layout.comparisonLines)try{
@@ -878,7 +988,7 @@ private:
         float scale=std::min(box.x/texture.size.width,box.y/texture.size.height);
         ImVec2 size(texture.size.width*scale,texture.size.height*scale),a(start.x+(box.x-size.x)*.5f,start.y+(box.y-size.y)*.5f),b(a.x+size.x,a.y+size.y);
         auto draw=ImGui::GetWindowDrawList();draw->AddImage(ImTextureRef(ImTextureID(texture.id)),a,b);
-        int index=deviceCamera(layout.comparisonSerials[camera]);if(index>=0)drawBallOverlay(index,comparisonGenerations[camera],a,size,comparisonImageSizes[camera],layout.comparisonMode,camera);
+        int index=deviceCamera(layout.comparisonSerials[camera]);if(index>=0&&!pointFrameActive(index))drawBallOverlay(index,comparisonGenerations[camera],a,size,comparisonImageSizes[camera],layout.comparisonMode,camera);
         if(layout.comparisonLines&&comparisonGuideError.empty()){
             static const ImU32 colors[]={IM_COL32(255,100,80,255),IM_COL32(50,210,255,255),IM_COL32(255,210,40,255),IM_COL32(180,115,255,255),
                 IM_COL32(65,235,130,255),IM_COL32(255,125,210,255),IM_COL32(255,160,50,255),IM_COL32(50,240,215,255),
@@ -894,16 +1004,18 @@ private:
                 }
             }draw->PopClipRect();
         }
+        if(index>=0)drawPointOverlay(index,a,size,comparisonImageSizes[camera],layout.comparisonMode,camera);
     }
     void drawComparison(){
         ImGui::SetNextWindowSize({1160,650},ImGuiCond_FirstUseEver);
+        if(triangulationSmoke){ImGui::SetNextWindowPos({10,35});ImGui::SetNextWindowSize({905,405});}
         if(ImGui::Begin("Stereo Compare",&layout.comparisonVisible)){
             comparisonDefaults();std::array<int,2> index{deviceCamera(layout.comparisonSerials[0]),deviceCamera(layout.comparisonSerials[1])};
             std::array<CameraFrame,2> frames;for(int j=0;j<2;++j)if(displayConnected(index[j]))frames[j]=displayFrame(index[j]);
             bool ready=prepareComparison(index,frames);
             if(ready){auto a=cameras[index[0]]->statistics(),b=cameras[index[1]]->statistics();
-                ImGui::Text("%s  |  %.1f / %.1f fps  |  %d × %d / %d × %d  |  Δt %.1f ms",replay?"Playback":"Grabbing",a.fps,b.fps,comparisonImageSizes[0].width,comparisonImageSizes[0].height,comparisonImageSizes[1].width,comparisonImageSizes[1].height,
-                    std::abs(seconds(comparisonReceivedAt[0])-seconds(comparisonReceivedAt[1]))*1000);
+                ImGui::Text("%s  |  %.1f / %.1f fps  |  %d × %d / %d × %d  |  Δt %.1f ms",pointFrameActive(index[0])&&pointFrameActive(index[1])?"Frozen":replay?"Playback":"Grabbing",a.fps,b.fps,comparisonImageSizes[0].width,comparisonImageSizes[0].height,comparisonImageSizes[1].width,comparisonImageSizes[1].height,
+                    pointFrameActive(index[0])&&pointFrameActive(index[1])?pointSkewMs:std::abs(seconds(comparisonReceivedAt[0])-seconds(comparisonReceivedAt[1]))*1000);
                 if(ImGui::IsItemHovered())ImGui::SetTooltip("Δt: PC 수신 시각 차이 · 노출 동기 오차가 아닙니다.");}
             else ImGui::TextDisabled("%s",comparisonError.c_str());
             float height=std::max(80.f,ImGui::GetContentRegionAvail().y-110.f);
@@ -1154,19 +1266,23 @@ private:
         CameraFrame live;
         const Observation* sample=selectedSample>=0&&selectedSample<int(samples.size())?&samples[selectedSample]:nullptr;
         if(!sample)live=monoFrame();
-        cv::Mat input=sample?sample->image:live.image;
+        const Observation* detectionPreview=nullptr;
+        // Keep overlay coordinates on the exact detection image even when Grab runs at 200 FPS.
+        if(!sample&&!result&&detectionEnabled&&detected.source=="live:"+identity&&
+            !detected.image.empty()&&Clock::now()-detectedAt<=std::chrono::milliseconds(1500))detectionPreview=&detected;
+        cv::Mat input=sample?sample->image:detectionPreview?detectionPreview->image:live.image;
         if(input.empty()&&smoke)input=detected.image;
         if(!sample&&live.generation!=monoPreviewGeneration&&Clock::now()-monoPreviewUpdated>std::chrono::milliseconds(70))previewDirty=true;
         if(input.empty()){ImGui::TextDisabled(liveRunning()?"프레임 대기 중":"장치 패널에서 Grab을 시작하세요.");return;}
         if(previewDirty)try{
             auto light=enhanced?(sample?sample->softwareBrightness:savedBrightness(identity)):BrightnessOptions{};
-            cv::Mat display=applySoftwareBrightness(input,light).clone();
+            cv::Mat display=applySoftwareBrightness(input,light);
             if(result){
                 preview.update(input);correctedPreview.update(undistortFrame(input,*result));
             }else{
-                const Observation* corners=sample;
+                const Observation* corners=sample?sample:detectionPreview;
                 if(!corners&&live.id==detected.frameId&&detected.source=="live:"+identity)corners=&detected;
-                if(corners)for(auto p:corners->imagePoints)cv::circle(display,p,4,{70,230,110},1);
+                if(corners)display=drawBoardOverlay(display,*corners,board);
                 preview.update(display);
             }
             monoPreviewGeneration=live.generation;monoPreviewUpdated=Clock::now();previewDirty=false;
@@ -1227,7 +1343,7 @@ private:
     void releaseStereoThumbnails(){for(auto& group:stereoThumbnails)for(auto& t:group)t.release();stereoThumbnails.clear();}
     void cancelStereo(){
         stereoWorkflow=false;stereoDetectionEnabled=false;stereoCapture.stop();stereoDetectTask.cancel();stereoCalTask.cancel();
-        stereoPreviewDirty=true;stereoMessage="취소됨";
+        stereoPreviewDirty=true;stereoMessage="취소됨";stereoWaitReason.clear();
     }
     void resetStereo(){
         cancelStereo();stereoSamples.clear();stereoDetected={};stereoResult.reset();stereoExported=false;
@@ -1262,7 +1378,7 @@ private:
         next.stereoSerials=stereoSerials();next.relativeCameraCount=stereoCount;
         if(!smoke)writeSettings(profile,next);settings=std::move(next);
         if(stereoSamples.empty()){stereoSessionSerials=stereoSerials();stereoSessionArchives.clear();for(const auto& id:stereoSessionSerials)stereoSessionArchives.push_back(settings.cameras.at(id).archive);}
-        stereoDetectTask.cancel();stereoDetected={};stereoGenerations={};
+        stereoDetectTask.cancel();stereoDetected={};stereoGenerations={};stereoWaitReason.clear();
         stereoResult.reset();stereoExported=false;stereoSelected=-1;stereoPreviewDirty=true;stereoDetectionEnabled=true;
         stereoWorkflow=true;stereoCapture.start(stereoCount,stereoAutoOptions);
         stereoMessage="모든 카메라에 보드를 보여주세요.";advanceStereoCalibration();
@@ -1291,20 +1407,23 @@ private:
         if(!showStereo||!stereoDetectionEnabled||busy()||stereoDetectTask.pending()||!stereoReadiness().empty())return;
         auto indices=stereoIndices();std::vector<CameraFrame> frames;std::vector<double> times;std::vector<BrightnessOptions> lights;
         for(size_t i=0;i<indices.size();++i){
-            auto f=stereoFrame(int(i));if(f.image.empty()||f.generation==stereoGenerations[i])return;
+            auto f=stereoFrame(int(i));
+            if(f.image.empty()||seconds(Clock::now())-seconds(f.receivedAt)>1.5){stereoWaitReason=cameraName(cameras[indices[i]]->device.serial)+": 새 프레임 대기";return;}
+            if(f.generation==stereoGenerations[i])return;
             times.push_back(seconds(f.receivedAt));frames.push_back(f);lights.push_back(liveBrightness(cameras[indices[i]]->device.serial));
         }
-        if(!usableRigTiming(times,seconds(Clock::now())))return;
+        if(!usableRigTiming(times,seconds(Clock::now()))){stereoWaitReason="카메라 수신 시각 차이가 100 ms를 넘습니다.";return;}
+        stereoWaitReason.clear();
         for(size_t i=0;i<frames.size();++i)stereoGenerations[i]=frames[i].generation;
         auto boardCopy=stereoBoard;auto ids=stereoSerials();
         stereoDetectTask.start([frames,boardCopy,ids,lights,times](std::stop_token stop){
-            StereoDetection d;d.serials=ids;auto [lo,hi]=std::minmax_element(times.begin(),times.end());d.sample.receiptSkewMs=(*hi-*lo)*1000;
+            auto started=Clock::now();StereoDetection d;d.serials=ids;auto [lo,hi]=std::minmax_element(times.begin(),times.end());d.sample.receiptSkewMs=(*hi-*lo)*1000;
             for(size_t i=0;i<frames.size();++i){
                 if(stop.stop_requested())return d;
                 auto o=detectBoard(frames[i].image,boardCopy,lights[i]);o.source="live:"+ids[i];o.frameId=frames[i].id;o.timestamp=frames[i].timestamp;
                 d.sample.cameras.push_back(std::move(o));d.receivedAt.push_back(frames[i].receivedAt);
             }
-            return d;
+            d.detectionMs=std::chrono::duration<double,std::milli>(Clock::now()-started).count();return d;
         });
     }
     void pollStereo(){
@@ -1407,9 +1526,10 @@ private:
     void drawStereo(){
         if(!smoke){ImGuiWindowClass cls;cls.ViewportFlagsOverrideSet=ImGuiViewportFlags_NoAutoMerge|ImGuiViewportFlags_TopMost;ImGui::SetNextWindowClass(&cls);}
         ImGui::SetNextWindowSize({1240,900},ImGuiCond_FirstUseEver);
+        if(smoke&&stereoSmokeLive)ImGui::SetNextWindowCollapsed(stereoSmokeFolded);
         bool expanded=ImGui::Begin("상대 위치 보정###스테레오 상대 위치 보정",&showStereo,ImGuiWindowFlags_NoDocking);
         if(!showStereo){cancelStereo();ImGui::End();return;}
-        if(!expanded){if(stereoActive())cancelStereo();ImGui::End();return;}
+        if(!expanded){ImGui::End();advanceStereoCalibration();scheduleStereoDetection();return;}
         if(stereoActive()&&!saveFuture.valid()&&ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)&&!ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId)&&!ImGui::GetIO().WantTextInput&&ImGui::IsKeyPressed(ImGuiKey_Escape))cancelStereo();
         float controlsHeight=32.f+ImGui::GetFrameHeightWithSpacing()*4.f+ImGui::GetTextLineHeightWithSpacing()*2.f+30.f;
         float height=std::max(180.f,ImGui::GetContentRegionAvail().y-controlsHeight);
@@ -1427,7 +1547,8 @@ private:
         if(saveFuture.valid())ImGui::TextDisabled("저장 중...");
         else if(stereoCalTask.active())ImGui::TextDisabled("계산 중...");
         else if(stereoCalTask.pending())ImGui::TextDisabled("작업 종료 중...");
-        else if(stereoWorkflow)ImGui::Text("%d / %d · 보드 위치·기울기를 바꾸고 고정하세요",int(stereoSamples.size()),stereoAutoOptions.target);
+        else if(stereoWorkflow){ImGui::Text("Auto  %d / %d",int(stereoSamples.size()),stereoAutoOptions.target);ImGui::SameLine();
+            ImGui::ProgressBar(stereoCapture.progress(),{130,0},"Hold");}
         else if(stereoResult){double worst=0;for(const auto& edge:stereoResult->fromReference)worst=std::max(worst,edge.rms);ImGui::Text("RMS %.4f px · %s",worst,stereoExported?"저장됨":"저장 전");}
         else ImGui::TextDisabled("%d / %d",int(stereoSamples.size()),stereoAutoOptions.target);
         bool storedRig=settings.rig&&settings.rig->serials==stereoSerials()&&settings.rig->matches(settings.cameras);
@@ -1439,8 +1560,26 @@ private:
         if(ImGui::BeginPopupModal("replace-stereo",nullptr,ImGuiWindowFlags_AlwaysAutoResize)){
             ImGui::TextUnformatted("저장된 상대 위치를 새 결과로 교체합니다.");if(ImGui::Button("Save")){saveStereo();ImGui::CloseCurrentPopup();}ImGui::SameLine();if(ImGui::Button("Cancel"))ImGui::CloseCurrentPopup();ImGui::EndPopup();}
         ImGui::Separator();drawStereoOptions();
-        if(!readiness.empty()&&!smoke)ImGui::TextColored({1,.7f,.3f,1},"%s",readiness.c_str());else ImGui::TextWrapped("%s",stereoMessage.c_str());
+        if(!readiness.empty()&&!smoke)ImGui::TextColored({1,.7f,.3f,1},"%s",readiness.c_str());
+        else if(stereoWorkflow){ImGui::TextWrapped("%s",stereoWaitReason.empty()?"선택한 모든 카메라에서 보드를 검출하고 고정하면 자동 수집합니다.":stereoWaitReason.c_str());
+            if(stereoDetected.detectionMs>1000)ImGui::TextColored({1,.7f,.3f,1},"검출 %.0f ms · 검출이 느려 고정 시간이 초기화될 수 있습니다.",stereoDetected.detectionMs);}
+        else ImGui::TextWrapped("%s",stereoMessage.c_str());
         advanceStereoCalibration();ImGui::End();scheduleStereoDetection();
+    }
+    std::string stereoCameraCaptureStatus(int side)const{
+        if(side>=int(stereoDetected.sample.cameras.size()))return "보드 검출 중...";
+        if(side>=int(stereoDetected.receivedAt.size())||seconds(Clock::now())-seconds(stereoDetected.receivedAt[side])>1.5)return "검출 결과 지연 · 새 결과 대기";
+        const auto& cameraDetection=stereoDetected.sample.cameras[side];auto count=cameraDetection.imagePoints.size();
+        if(count<6||(stereoBoard.pattern==Pattern::Chessboard&&count!=size_t(stereoBoard.columns*stereoBoard.rows)))return "보드 미검출 · 코너 수와 전체 보드 확인";
+        std::string state;
+        switch(stereoCapture.status(side)){
+            case CaptureStatus::Hold:state="고정 "+std::to_string(int(stereoCapture.progress(side)*100))+"%";break;
+            case CaptureStatus::MoveBoard:state="기존 자세 · 위치/각도 변경";break;
+            case CaptureStatus::Cooldown:state="다음 자세로 이동";break;
+            case CaptureStatus::Stale:state="새 프레임 대기";break;
+            default:state="다른 카메라 검출/수신 대기";break;
+        }
+        return "코너 "+std::to_string(count)+" · "+state;
     }
     void drawStereoImages(){
         bool enhanced=stereoBrightnessActive();
@@ -1450,14 +1589,19 @@ private:
             for(int side=0;side<stereoCount;++side){ImGui::TableNextColumn();int index=side==0?stereoA:side==1?stereoB:stereoC;
                 bool valid=index>=0&&index<int(cameras.size());std::string name=valid?cameraName(cameras[index]->device.serial):"Camera "+std::string(1,char('A'+side));
                 ImGui::TextUnformatted(name.c_str());
+                if(stereoWorkflow)ImGui::TextWrapped("%s",stereoCameraCaptureStatus(side).c_str());
                 auto f=group?CameraFrame{}:stereoFrame(side);const Observation* observation=group&&side<int(group->cameras.size())?&group->cameras[side]:nullptr;
+                // Show the completed detection on its own frame. At high FPS the newest live frame
+                // almost never has the same ID, which previously hid all detected corners.
+                if(!group&&stereoWorkflow&&side<int(stereoDetected.sample.cameras.size())&&side<int(stereoDetected.receivedAt.size())&&
+                    seconds(Clock::now())-seconds(stereoDetected.receivedAt[side])<=1.5)observation=&stereoDetected.sample.cameras[side];
                 cv::Mat input=observation?observation->image:f.image;
                 if(!input.empty()){
                     if(stereoPreviewDirty||(!group&&stereoPreviewGenerations[side]!=f.generation))try{
                         auto light=enhanced?(observation?observation->softwareBrightness:valid?savedBrightness(cameras[index]->device.serial):BrightnessOptions{}):BrightnessOptions{};
-                        auto display=applySoftwareBrightness(input,light).clone();const Observation* corners=observation;
+                        auto display=applySoftwareBrightness(input,light);const Observation* corners=observation;
                         if(!corners&&side<int(stereoDetected.sample.cameras.size())&&stereoDetected.sample.cameras[side].frameId==f.id)corners=&stereoDetected.sample.cameras[side];
-                        if(!stereoResult&&corners)for(auto p:corners->imagePoints)cv::circle(display,p,4,{70,230,110},1);
+                        if(!stereoResult&&corners)display=drawBoardOverlay(display,*corners,stereoBoard);
                         stereoPreview[side].update(display);stereoPreviewGenerations[side]=f.generation;
                     }catch(const std::exception& e){stereoMessage=e.what();}
                     stereoPreview[side].draw(std::max(40.f,ImGui::GetContentRegionAvail().y-38));
@@ -1518,7 +1662,8 @@ static int runApplication(int argc,char** argv){
     bool hiddenMono=argc>1&&std::string(argv[1])=="--smoke-mono-hidden";
     bool hiddenVideo=argc>1&&std::string(argv[1])=="--smoke-video-hidden";
     bool hiddenProcessing=argc>1&&std::string(argv[1])=="--smoke-processing-hidden";
-    bool smoke=hiddenProcessing||hiddenVideo||hiddenMono||hiddenDevices||hiddenStereo||hiddenOrigin||hiddenScene||(argc>1&&std::string(argv[1])=="--smoke");
+    bool hiddenTriangulation=argc>1&&std::string(argv[1])=="--smoke-triangulation-hidden";
+    bool smoke=hiddenTriangulation||hiddenProcessing||hiddenVideo||hiddenMono||hiddenDevices||hiddenStereo||hiddenOrigin||hiddenScene||(argc>1&&std::string(argv[1])=="--smoke");
     if(argc>1&&std::string(argv[1]).starts_with("--smoke")&&!smoke)throw std::runtime_error("Unknown smoke mode; camera/profile startup was not run.");
     UiLayout layout;bool hasLayout=false,layoutWritable=true;std::string layoutWarning;
     if(!smoke)try{
@@ -1529,12 +1674,12 @@ static int runApplication(int argc,char** argv){
     for(int i=0;i<monitorCount;++i){WindowRect area;glfwGetMonitorWorkarea(monitors[i],&area.x,&area.y,&area.width,&area.height);if(area.width>0&&area.height>0)workAreas.push_back(area);}
     if(hasLayout)layout.mainWindow=fitToWorkArea(layout.mainWindow,workAreas);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,3);glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,3);glfwWindowHint(GLFW_OPENGL_PROFILE,GLFW_OPENGL_CORE_PROFILE);
-    if(hiddenProcessing||hiddenVideo||hiddenMono||hiddenDevices||hiddenStereo||hiddenOrigin||hiddenScene)glfwWindowHint(GLFW_VISIBLE,GLFW_FALSE);
+    if(hiddenTriangulation||hiddenProcessing||hiddenVideo||hiddenMono||hiddenDevices||hiddenStereo||hiddenOrigin||hiddenScene)glfwWindowHint(GLFW_VISIBLE,GLFW_FALSE);
     auto window=glfwCreateWindow(layout.mainWindow.width,layout.mainWindow.height,"Boccia | Stereo Calibration",nullptr,nullptr);if(!window){glfwTerminate();return 2;}
     if(hasLayout){glfwSetWindowPos(window,layout.mainWindow.x,layout.mainWindow.y);if(layout.maximized)glfwMaximizeWindow(window);}
     glfwMakeContextCurrent(window);glfwSwapInterval(1);if(!gladLoadGL((GLADloadfunc)glfwGetProcAddress))return 3;
     IMGUI_CHECKVERSION();ImGui::CreateContext();auto& io=ImGui::GetIO();io.ConfigFlags|=ImGuiConfigFlags_DockingEnable|ImGuiConfigFlags_ViewportsEnable;
-    if(hiddenProcessing||hiddenVideo||hiddenMono||hiddenDevices||hiddenStereo||hiddenOrigin||hiddenScene)io.ConfigFlags&=~ImGuiConfigFlags_ViewportsEnable;
+    if(hiddenTriangulation||hiddenProcessing||hiddenVideo||hiddenMono||hiddenDevices||hiddenStereo||hiddenOrigin||hiddenScene)io.ConfigFlags&=~ImGuiConfigFlags_ViewportsEnable;
     // Store ImGui's complete docking/window state in our UTF-8 JSON, alongside
     // native window geometry and panel visibility, independent of calibration saves.
     io.IniFilename=nullptr;io.ConfigViewportsNoAutoMerge=false;
@@ -1547,6 +1692,7 @@ static int runApplication(int argc,char** argv){
         if(hiddenMono)app.prepareMonoSmoke();
         if(hiddenVideo)app.prepareVideoSmoke();
         if(hiddenProcessing)app.prepareProcessingSmoke();
+        if(hiddenTriangulation)app.prepareTriangulationSmoke();
         auto monoSmokeStarted=Clock::now();bool monoDone=false,stereoDone=false,processingDone=false;
         if(hiddenStereo)app.prepareStereoWorkflowSmoke();
         if(hiddenRectangle)app.prepareRectangleOriginSmoke();else if(hiddenOrigin)app.prepareOriginSmoke();
@@ -1557,12 +1703,19 @@ static int runApplication(int argc,char** argv){
             if(hiddenDevices)app.deviceInputSmoke(frame);
             if(hiddenMono)app.monoInputSmoke(frame);
             if(hiddenVideo)app.videoInputSmoke(frame);
+            if(hiddenTriangulation)app.triangulationInputSmoke(frame);
             if(hiddenProcessing)processingDone=app.processingInputSmoke();
             if(hiddenStereo)app.stereoInputSmoke(frame);
             if(hiddenRectangle)app.rectangleOriginInputSmoke(frame);
             ImGui::NewFrame();app.draw();ImGui::Render();
             int w,h;glfwGetFramebufferSize(window,&w,&h);glViewport(0,0,w,h);glClearColor(.04f,.055f,.07f,1);glClear(GL_COLOR_BUFFER_BIT);
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            if(hiddenStereo&&app.stereoSmokeCollected&&frame==app.stereoSmokeResumeFrame+12){
+                cv::Mat pixels(h,w,CV_8UC3);glPixelStorei(GL_PACK_ALIGNMENT,1);glReadPixels(0,0,w,h,GL_BGR,GL_UNSIGNED_BYTE,pixels.data);cv::flip(pixels,pixels,0);
+                cv::imwrite(utf8(dataDirectory(true)/"ui-stereo-grid-smoke.png"),pixels);
+            }
+            if(hiddenTriangulation&&(frame==26||frame==60)){cv::Mat pixels(h,w,CV_8UC3);glPixelStorei(GL_PACK_ALIGNMENT,1);glReadPixels(0,0,w,h,GL_BGR,GL_UNSIGNED_BYTE,pixels.data);cv::flip(pixels,pixels,0);
+                fs::create_directories(dataDirectory(true));cv::imwrite(utf8(dataDirectory(true)/(frame==26?"ui-triangulation-views-smoke.png":"ui-triangulation-smoke.png")),pixels);}
             monoDone=hiddenMono&&frame>35&&app.monoSmokePassed();
             stereoDone=hiddenStereo&&frame>30&&app.stereoSmokePassed();
             if(hiddenProcessing&&(app.processingSmokeStep==7||app.processingSmokeStep==8||processingDone)){cv::Mat pixels(h,w,CV_8UC3);glPixelStorei(GL_PACK_ALIGNMENT,1);glReadPixels(0,0,w,h,GL_BGR,GL_UNSIGNED_BYTE,pixels.data);cv::flip(pixels,pixels,0);cv::imwrite(utf8(dataDirectory(true)/(processingDone?"ui-processing-complete-smoke.png":app.processingSmokeStep==8?"ui-processing-roi-smoke.png":"ui-processing-smoke.png")),pixels);}
@@ -1576,7 +1729,7 @@ static int runApplication(int argc,char** argv){
             else if(hiddenStereo){if(stereoDone){std::cout<<"PASS: stereo live preview, automatic collection-to-solve, cancel/resume and raw preservation\n";glfwSetWindowShouldClose(window,true);}
                 else if(Clock::now()-monoSmokeStarted>std::chrono::seconds(15))throw std::runtime_error("Stereo UI smoke timed out.");}
             else if(hiddenProcessing){if(processingDone)glfwSetWindowShouldClose(window,true);else if(Clock::now()-monoSmokeStarted>std::chrono::seconds(30))throw std::runtime_error("Processing UI smoke timed out at "+std::to_string(app.processingSmokeStep));}
-            else if(smoke&&frame>(hiddenVideo?62:55))glfwSetWindowShouldClose(window,true);
+            else if(smoke&&frame>(hiddenTriangulation?66:hiddenVideo?62:55))glfwSetWindowShouldClose(window,true);
         }
         app.saveLayout(true);
         app.releaseTextures();

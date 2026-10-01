@@ -24,6 +24,8 @@ public:
     void tick(double now);
     bool running() const;
     float progress() const;
+    CaptureStatus status(size_t camera) const;
+    float progress(size_t camera) const;
     bool observe(const RigSample& sample,const BoardConfig& board,const std::vector<RigSample>& existing,
                  const std::vector<double>& receiptTimes,double now);
     void captured(double now,size_t count);

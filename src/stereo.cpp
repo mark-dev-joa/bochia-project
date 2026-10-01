@@ -23,6 +23,76 @@ void StereoCalibration::validate() const{
     for(int r:secondRotations)if(r<0||r>3)throw std::runtime_error("Invalid board correspondence rotation.");
 }
 cv::Mat StereoCalibration::secondCenterInFirst()const{validate();return -R.t()*T;}
+namespace {
+void validateIntrinsics(const Calibration& c){
+    if(c.imageSize.width<=0||c.imageSize.height<=0||c.K.type()!=CV_64F||c.K.size()!=cv::Size(3,3)||
+       c.distortion.type()!=CV_64F||c.distortion.total()!=5||!cv::checkRange(c.K)||!cv::checkRange(c.distortion)||
+       c.K.at<double>(0,0)<=0||c.K.at<double>(1,1)<=0||std::abs(cv::determinant(c.K))<1e-12)
+        throw std::runtime_error("유효한 개별 보정값이 필요합니다.");
+}
+void validateRawPixel(const Calibration& c,cv::Point2d p){
+    if(!std::isfinite(p.x)||!std::isfinite(p.y)||p.x<0||p.y<0||p.x>c.imageSize.width-1||p.y>c.imageSize.height-1)
+        throw std::runtime_error("원본 영상 안의 점을 선택하세요. 보정 영상의 검은 여백은 사용할 수 없습니다.");
+}
+cv::Point2d normalizedPixel(const Calibration& c,cv::Point2d raw){
+    std::vector<cv::Point2d> in{raw},out;
+    cv::undistortPoints(in,out,c.K,c.distortion,cv::noArray(),cv::noArray(),{cv::TermCriteria::COUNT|cv::TermCriteria::EPS,30,1e-12});
+    if(!std::isfinite(out[0].x)||!std::isfinite(out[0].y))throw std::runtime_error("점의 렌즈 왜곡을 보정할 수 없습니다.");
+    return out[0];
+}
+void validateRectifiedProjection(const cv::Mat& r,const cv::Mat& p){
+    if(r.type()!=CV_64F||r.size()!=cv::Size(3,3)||p.type()!=CV_64F||p.rows!=3||(p.cols!=3&&p.cols!=4)||
+       !cv::checkRange(r)||!cv::checkRange(p)||std::abs(cv::determinant(p(cv::Rect(0,0,3,3))))<1e-12)
+        throw std::runtime_error("렉티피케이션 좌표 변환이 없습니다.");
+}
+}
+cv::Point2d stereoPixelToRaw(const Calibration& c,cv::Point2d pixel,int mode,const cv::Mat& r,const cv::Mat& p){
+    validateIntrinsics(c);
+    if(mode<0||mode>2||!std::isfinite(pixel.x)||!std::isfinite(pixel.y))throw std::runtime_error("Invalid image point.");
+    if(!mode){validateRawPixel(c,pixel);return pixel;}
+    cv::Mat ray;
+    if(mode==2){validateRectifiedProjection(r,p);ray=r.t()*p(cv::Rect(0,0,3,3)).inv()*(cv::Mat_<double>(3,1)<<pixel.x,pixel.y,1);}
+    else ray=c.K.inv()*(cv::Mat_<double>(3,1)<<pixel.x,pixel.y,1);
+    if(!cv::checkRange(ray)||ray.at<double>(2)<=1e-12)throw std::runtime_error("카메라 시야 안의 점을 선택하세요.");
+    std::vector<cv::Point3d> points{{ray.at<double>(0),ray.at<double>(1),ray.at<double>(2)}};std::vector<cv::Point2d> raw;
+    cv::projectPoints(points,cv::Vec3d(),cv::Vec3d(),c.K,c.distortion,raw);validateRawPixel(c,raw[0]);return raw[0];
+}
+cv::Point2d stereoRawToPixel(const Calibration& c,cv::Point2d raw,int mode,const cv::Mat& r,const cv::Mat& p){
+    validateIntrinsics(c);validateRawPixel(c,raw);
+    if(mode<0||mode>2)throw std::runtime_error("Invalid image mode.");
+    if(!mode)return raw;
+    if(mode==2)validateRectifiedProjection(r,p);
+    std::vector<cv::Point2d> in{raw},out;
+    cv::undistortPoints(in,out,c.K,c.distortion,mode==2?r:cv::Mat(),mode==2?p:c.K,{cv::TermCriteria::COUNT|cv::TermCriteria::EPS,30,1e-12});
+    if(!std::isfinite(out[0].x)||!std::isfinite(out[0].y))throw std::runtime_error("Invalid projected image point.");return out[0];
+}
+TriangulatedPoint triangulateStereoPoint(const Calibration& a,const Calibration& b,const StereoCalibration& relation,cv::Point2d pa,cv::Point2d pb){
+    validateIntrinsics(a);validateIntrinsics(b);validateRawPixel(a,pa);validateRawPixel(b,pb);relation.validate();
+    auto na=normalizedPixel(a,pa),nb=normalizedPixel(b,pb);cv::Vec3d rayA(na.x,na.y,1);
+    cv::Mat rayBMat=relation.R.t()*(cv::Mat_<double>(3,1)<<nb.x,nb.y,1);cv::Vec3d rayB(rayBMat.at<double>(0),rayBMat.at<double>(1),rayBMat.at<double>(2));
+    rayA/=cv::norm(rayA);rayB/=cv::norm(rayB);
+    TriangulatedPoint result;result.rayAngleDeg=std::asin(std::clamp(cv::norm(rayA.cross(rayB)),0.,1.))*180/CV_PI;
+    if(result.rayAngleDeg<.05)throw std::runtime_error("두 시선이 거의 평행합니다. 깊이를 안정적으로 구할 수 없습니다.");
+    cv::Mat center=relation.secondCenterInFirst();
+    result.rayOrigins[1]={center.at<double>(0),center.at<double>(1),center.at<double>(2)};
+    auto w=-result.rayOrigins[1];double dot=rayA.dot(rayB),d=rayA.dot(w),e=rayB.dot(w);
+    double denominator=rayA.cross(rayB).dot(rayA.cross(rayB));
+    double alongA=(dot*e-d)/denominator,alongB=(e-dot*d)/denominator;
+    if(!std::isfinite(alongA)||!std::isfinite(alongB)||alongA<=0||alongB<=0)
+        throw std::runtime_error("카메라 뒤쪽으로 계산되었습니다. 좌우 대응점을 확인하세요.");
+    result.closestPoints={rayA*alongA,result.rayOrigins[1]+rayB*alongB};
+    result.rayGapM=cv::norm(result.closestPoints[0]-result.closestPoints[1]);
+    result.cameraPoint=(result.closestPoints[0]+result.closestPoints[1])*.5;
+    cv::Mat point(result.cameraPoint),other=relation.R*point+relation.T;
+    if(!cv::checkRange(point)||!cv::checkRange(other)||point.at<double>(2)<=0||other.at<double>(2)<=0)
+        throw std::runtime_error("카메라 뒤쪽으로 계산되었습니다. 좌우 대응점을 확인하세요.");
+    std::vector<cv::Point3d> points{{result.cameraPoint[0],result.cameraPoint[1],result.cameraPoint[2]}};std::vector<cv::Point2d> projected;
+    cv::projectPoints(points,cv::Vec3d(),cv::Vec3d(),a.K,a.distortion,projected);result.reprojectionErrorPx[0]=cv::norm(projected[0]-pa);
+    cv::projectPoints(points,relation.R,relation.T,b.K,b.distortion,projected);result.reprojectionErrorPx[1]=cv::norm(projected[0]-pb);
+    for(auto error:result.reprojectionErrorPx)if(!std::isfinite(error)||error>5)
+        throw std::runtime_error("재투영 오차가 5 px를 초과합니다. 두 영상에서 같은 지점을 다시 선택하세요.");
+    return result;
+}
 StereoPoints matchStereoPoints(const StereoPair& p,const BoardConfig& b,int rotation){
     b.validate();validateSample(p.first,{});validateSample(p.second,{});
     StereoPoints out;
@@ -55,11 +125,6 @@ StereoPoints matchStereoPoints(const StereoPair& p,const BoardConfig& b,int rota
 namespace {
 struct Candidate {cv::Mat R,T;int rotation=0;};
 void checkStop(std::stop_token s){if(s.stop_requested())throw std::runtime_error("Stereo calculation cancelled.");}
-void validateIntrinsics(const Calibration& c){
-    if(c.imageSize.width<=0||c.imageSize.height<=0||c.K.type()!=CV_64F||c.K.size()!=cv::Size(3,3)||
-       c.distortion.type()!=CV_64F||c.distortion.total()!=5||!cv::checkRange(c.K)||!cv::checkRange(c.distortion)||
-       c.K.at<double>(0,0)<=0||c.K.at<double>(1,1)<=0)throw std::runtime_error("Valid individual calibrations are required.");
-}
 Candidate candidate(const StereoPoints& p,const Calibration& a,const Calibration& b,int rotation){
     cv::Mat ra,ta,rb,tb,A,B;
     if(!cv::solvePnP(p.object,p.first,a.K,a.distortion,ra,ta)||!cv::solvePnP(p.object,p.second,b.K,b.distortion,rb,tb))throw std::runtime_error("Board pose estimation failed.");

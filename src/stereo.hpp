@@ -32,6 +32,20 @@ struct StereoRectification {
 StereoRectification makeStereoRectification(const Calibration& first,const Calibration& second,
                                              const StereoCalibration& relation);
 cv::Mat rectifiedFrame(const cv::Mat& input,const StereoRectification& maps,int cameraIndex);
+// Pixel centres in native resolution. Modes match the viewers: raw=0, undistorted=1, rectified=2.
+cv::Point2d stereoPixelToRaw(const Calibration& calibration,cv::Point2d pixel,int mode,
+                            const cv::Mat& rectificationR={},const cv::Mat& rectificationP={});
+cv::Point2d stereoRawToPixel(const Calibration& calibration,cv::Point2d raw,int mode,
+                            const cv::Mat& rectificationR={},const cv::Mat& rectificationP={});
+struct TriangulatedPoint {
+    cv::Vec3d cameraPoint; // Midpoint of the shortest ray connector; first camera coordinates, metres.
+    std::array<cv::Vec3d,2> rayOrigins{},closestPoints{}; // Same first-camera frame, metres.
+    double rayGapM=0; // Geometric ray separation, not ground-truth position uncertainty.
+    std::array<double,2> reprojectionErrorPx{};
+    double rayAngleDeg=0;
+};
+TriangulatedPoint triangulateStereoPoint(const Calibration& first,const Calibration& second,
+                                         const StereoCalibration& relation,cv::Point2d firstRaw,cv::Point2d secondRaw);
 // Each index identifies the same epipolar plane in both images and every mode.
 // Modes: 1 = undistorted, 2 = rectified. Empty paths mean off-image lines.
 using EpipolarGuide = std::vector<std::vector<cv::Point2f>>;

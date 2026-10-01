@@ -49,6 +49,12 @@ void Settings::SavedRig::validate()const{
        std::set<std::string>(serials.begin(),serials.end()).size()!=serials.size())throw std::runtime_error("Invalid saved rig identities.");
     for(size_t i=0;i<serials.size();++i)if(serials[i].empty()||intrinsicArchives[i].empty())throw std::runtime_error("Missing rig calibration identity.");
 }
+std::optional<cv::Vec3d> cameraPointToWorld(const Settings& s,const std::string& camera,cv::Vec3d point){
+    for(auto value:point.val)if(!std::isfinite(value))throw std::runtime_error("Invalid 3D point.");
+    const auto pose=savedWorldPoseView(s,camera);if(pose.state!=RecordState::Saved)return {};
+    cv::Mat world=pose.rotation*cv::Mat(point)+pose.center;
+    return cv::Vec3d(world.at<double>(0),world.at<double>(1),world.at<double>(2));
+}
 bool Settings::SavedRig::matches(const std::map<std::string,SavedCamera>& cameras)const{
     for(size_t i=0;i<serials.size();++i){auto it=cameras.find(serials[i]);if(it==cameras.end()||it->second.sourceKind!="live"||it->second.archive!=intrinsicArchives[i])return false;}
     return true;

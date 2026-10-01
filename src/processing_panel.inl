@@ -64,6 +64,7 @@
         replayOpenTask.start([folder](std::stop_token stop){return std::make_shared<RawReplay>(folder,stop);});
     }
     void clearSourceViews(){
+        clearPoint();
         rememberCameraWindows();cancelWork();cancelStereo();cancelOrigin();showCalibration=showStereo=showOrigin=false;
         roiCamera=-1;roiFrame={};roiPoints.clear();++sourceEpoch;
         for(auto& [id,r]:ballRuntime){r->task.cancel();r->result.reset();}
@@ -85,7 +86,7 @@
         devices.clear();selectedDevices.clear();updateDeviceList({});recordingMessage.clear();
         if(!smoke&&settings.autoReconnect&&!settings.selectedSerials.empty())beginReconnect();
     }
-    void seekReplay(size_t index){if(!replay)return;replayWanted=std::min(index,replay->index[replayReference].size()-1);++replayRequest;replayDirty=true;roiCamera=-1;roiFrame={};}
+    void seekReplay(size_t index){if(!replay)return;clearPoint();replayWanted=std::min(index,replay->index[replayReference].size()-1);++replayRequest;replayDirty=true;roiCamera=-1;roiFrame={};}
     bool replayProcessed(){
         if(!settings.ball.run)return true;
         for(size_t i=0;i<cameras.size();++i){if(!ballOptions(i).detect)continue;auto it=ballRuntime.find(cameras[i]->device.serial);
@@ -183,6 +184,7 @@
         return &*it->second->result;
     }
     cv::Mat ballStage(int i,const CameraFrame& frame){
+        if(pointFrameActive(i))return frame.image;
         auto job=displayedBall(i);if(!job||job->frame.image.data!=frame.image.data||job->frame.generation!=frame.generation)return frame.image;
         auto stage=ballOptions(i).stage;if(stage==0||stage==4)return frame.image;cv::Mat out;
         cv::cvtColor(stage==1?job->detection.gray:stage==2?job->detection.blurred:job->detection.edges,out,cv::COLOR_GRAY2BGR);return out;
@@ -236,7 +238,7 @@
                 ImGui::SeparatorText("ROI");ImGui::Checkbox("Use ROI",&o.roiEnabled);ImGui::SameLine();
                 if(ImGui::Button(roiCamera==ballCamera?"Cancel ROI":"Draw 4 Points")){
                     if(roiCamera==ballCamera){roiCamera=-1;roiFrame={};roiPoints.clear();}
-                    else {roiFrame=sourceFrame(ballCamera);if(!roiFrame.image.empty()){roiCamera=ballCamera;roiPoints.clear();views[ballCamera].visible=true;views[ballCamera].generation=0;layout.cameraDisplay[cameras[ballCamera]->device.serial].mode=0;}}}
+                    else {resumePointLive();roiFrame=sourceFrame(ballCamera);if(!roiFrame.image.empty()){roiCamera=ballCamera;roiPoints.clear();views[ballCamera].visible=true;views[ballCamera].generation=0;layout.cameraDisplay[cameras[ballCamera]->device.serial].mode=0;}}}
                 ImGui::SameLine();if(ImGui::Button("Reset ROI")){o.roi.clear();roiCamera=-1;roiFrame={};roiPoints.clear();}
                 auto slider=[&](const char* name,double& value,float lo,float hi,const char* format="%.2f"){float f=float(value);ImGui::SetNextItemWidth(210);if(ImGui::SliderFloat(name,&f,lo,hi,format,ImGuiSliderFlags_AlwaysClamp))value=f;};
                 auto integer=[&](const char* name,int& value,int lo,int hi){ImGui::SetNextItemWidth(210);ImGui::SliderInt(name,&value,lo,hi,"%d",ImGuiSliderFlags_AlwaysClamp);};

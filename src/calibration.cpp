@@ -8,6 +8,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <set>
+#include <algorithm>
 
 void BoardConfig::validate() const {
     if(columns < 3 || rows < 3 || columns > 40 || rows > 40 || !std::isfinite(squareMm) || squareMm <= 0)
@@ -47,6 +48,33 @@ Observation detectBoard(const cv::Mat& image, const BoardConfig& config, const B
         for(int id:o.ids) o.objectPoints.push_back(points.at(id));
     }
     return o;
+}
+cv::Mat drawBoardOverlay(const cv::Mat& image,const Observation& observation,const BoardConfig& config) {
+    if(image.empty())return {};
+    cv::Mat display;
+    if(image.channels()==1)cv::cvtColor(image,display,cv::COLOR_GRAY2BGR);else display=image.clone();
+    const auto& points=observation.imagePoints;
+    if(points.empty()||image.size()!=observation.image.size())return display;
+    for(auto p:points)if(!std::isfinite(p.x)||!std::isfinite(p.y))return display;
+    const int thickness=std::max(2,cvRound(std::max(image.cols,image.rows)/600.0));
+    const cv::Scalar outline(20,20,20),grid(90,240,110),first(40,210,255);
+    if(config.pattern==Pattern::Chessboard&&config.columns>=3&&config.rows>=3&&
+       points.size()==size_t(config.columns)*size_t(config.rows)) {
+        auto edge=[&](size_t a,size_t b){
+            cv::line(display,points[a],points[b],outline,thickness+2,cv::LINE_AA);
+            cv::line(display,points[a],points[b],grid,thickness,cv::LINE_AA);
+        };
+        for(int row=0;row<config.rows;++row)for(int column=0;column<config.columns;++column) {
+            const size_t index=size_t(row)*config.columns+column;
+            if(column+1<config.columns)edge(index,index+1);
+            if(row+1<config.rows)edge(index,index+config.columns);
+        }
+    }
+    for(size_t i=0;i<points.size();++i) {
+        cv::circle(display,points[i],thickness*2+2,outline,cv::FILLED,cv::LINE_AA);
+        cv::circle(display,points[i],thickness*2,i==0?first:grid,cv::FILLED,cv::LINE_AA);
+    }
+    return display;
 }
 void validateSample(const Observation& s,const std::vector<Observation>& existing) {
     if(s.image.empty() || s.imagePoints.size()<6 || s.imagePoints.size()!=s.objectPoints.size())
