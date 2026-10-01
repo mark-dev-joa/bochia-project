@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page.title | escape }} · {{ site.title | escape }}</title>
+  <meta name="description" content="{{ page.description | default: site.description | escape }}">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="{{ '/assets/study.css' | relative_url }}">
+  <script>
+    window.MathJax = {tex: {inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]'], ['$$', '$$']]}};
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-chtml.js"></script>
+  <script type="module" src="{{ '/assets/study.js' | relative_url }}"></script>
+</head>
+<body>
+  <a class="skip" href="#content">본문으로 이동</a>
+  <header class="site-header">
+    <a class="brand" href="{{ '/' | relative_url }}"><span class="brand-mark">B</span> BOCCIA LAB</a>
+    <span class="header-note">TRACKING → PHYSICS → SIMULATION</span>
+  </header>
+  <div class="shell">
+    <aside class="sidebar">
+      <p class="nav-label">연구 노트</p>
+      <nav aria-label="문서 탐색">
+        <a href="{{ '/' | relative_url }}#workflow">전체 계산 흐름</a>
+        <a href="{{ '/' | relative_url }}#step01">01 · 주어진 값과 기호</a>
+        <a href="{{ '/' | relative_url }}#step02">02 · 영상 좌표 측정</a>
+        <a href="{{ '/' | relative_url }}#step03">03 · 관측 연결</a>
+        <a href="{{ '/' | relative_url }}#step04">04 · 상대 포즈 초기값</a>
+        <a href="{{ '/' | relative_url }}#distortion-reference">참고 A · 렌즈 왜곡</a>
+      </nav>
+      <div class="study-position"><span class="status-dot"></span> 현재 학습 · 04 / 10<p>수식을 이해하고 손으로 계산한 뒤,<br>코드로 옮깁니다.</p></div>
+      <p class="nav-label toc-label">이 페이지</p>
+      <nav id="toc" aria-label="페이지 목차"></nav>
+    </aside>
+    <main id="content">
+      <div class="eyebrow">{{ page.eyebrow | default: 'MULTI-CAMERA CALIBRATION' }}</div>
+      <h1>{{ page.title }}</h1>
+      {% if page.description %}<p class="lead">{{ page.description }}</p>{% endif %}
+      <article>{{ content }}</article>
+      <footer>보치아 연구 노트 · 미터(m), 픽셀(px) 기준 · 학습하면서 갱신</footer>
+    </main>
+  </div>
+</body>
+</html>

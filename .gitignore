@@ -32,3 +32,18 @@ ball_finder_config.json
 # OS
 .DS_Store
 Thumbs.db
+
+# C++ calibration / local research outputs
+/_site/
+/artifacts/
+/tmp/
+/.bundle/
+/docs/.jekyll-cache/
+/docs/.jekyll-metadata
+/build/
+/data/
+/ui-smoke.png
+
+/output/
+# Reviewed Windows distribution is intentionally committed.
+!/releases/Boccia-Windows-x64.zip

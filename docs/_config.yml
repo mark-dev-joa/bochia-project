@@ -1,0 +1,17 @@
+title: Boccia Lab
+description: 보치아 공 추적과 시뮬레이션 연구 노트
+lang: ko
+url: ""
+baseurl: ""
+markdown: kramdown
+highlighter: rouge
+kramdown:
+  input: GFM
+  math_engine: mathjax
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: study
+exclude:
+  - README.md
