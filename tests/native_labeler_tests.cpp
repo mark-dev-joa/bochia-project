@@ -65,6 +65,15 @@ void viewTests() {
     check(batches["b"] == "b" && batches["c"] == "c" && batches["d"] == "c", "the rest of a group must not keep the id of the recording that left");
     leaveGroup(batches, "d");
     check(batches["c"] == "c" && batches["d"] == "d", "leaving a pair must leave two single recordings");
+
+    const std::vector<cv::Rect2d> balls = {{100, 100, 40, 40}, {130, 100, 40, 40}};   // two touching balls; their boxes overlap by 10 pixels
+    check(replaceTarget(balls, {110, 120}, -1) == 0 && replaceTarget(balls, {160, 120}, -1) == 1, "a point inside one box must target that ball");
+    check(replaceTarget(balls, {135, 120}, -1) == 1 && replaceTarget(balls, {135, 120}, 0) == 0, "where boxes overlap the selected ball wins, otherwise the later one");
+    check(replaceTarget(balls, {60, 60}, 0) == -1, "a point outside every box is a new ball even with a ball selected");
+    const auto outlineCenter = boundsCenter({{90, 95}, {150, 95}, {150, 145}, {90, 145}});
+    check(about(float(outlineCenter.x), 120) && about(float(outlineCenter.y), 120), "the center of an outline is the middle of its bounds");
+    check(replaceTarget(balls, boundsCenter({{96, 96}, {144, 96}, {144, 144}, {96, 144}}), -1) == 0, "re-tracing a ball from outside its box must still replace it");
+    check(replaceTarget(balls, boundsCenter({{101, 101}, {60, 101}, {60, 60}, {101, 60}}), -1) == -1, "an outline that only starts inside a neighbour's box must not replace the neighbour");
 }
 int main(int argc,char** argv){try{
     viewTests();

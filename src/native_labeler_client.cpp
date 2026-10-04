@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <winhttp.h>
 #include <opencv2/imgcodecs.hpp>
+#include <fstream>
 #include <stdexcept>
 
 namespace boccia::labeler {
@@ -33,7 +34,9 @@ std::vector<unsigned char> Client::request(const std::string& method, const std:
     }
     if (status < 200 || status >= 300) {
         auto value = Json::parse(result.begin(), result.end(), nullptr, false);
-        throw std::runtime_error(value.is_object() ? value.value("error", "서버 오류") : "서버를 업데이트한 뒤 다시 연결하세요. HTTP " + std::to_string(status));
+        const std::string message = value.is_object() ? value.value("error", "서버 오류") : "서버를 업데이트한 뒤 다시 연결하세요. HTTP " + std::to_string(status);
+        if (status == 409) throw Conflict(message);
+        throw std::runtime_error(message);
     }
     return result;
 }
@@ -52,7 +55,14 @@ cv::Mat Client::thumbnail(const std::string& key) const {
     auto bytes = request("GET", "/api/native/thumb?recording=" + key.substr(0, first) + "&camera=" + key.substr(first + 1, second - first - 1) + "&index=" + key.substr(second + 1), "");
     return cv::imdecode(bytes, cv::IMREAD_COLOR);
 }
-void Client::startServer(int port, const std::filesystem::path& source, const std::filesystem::path& project, const std::filesystem::path& exports) {
+std::filesystem::path Client::engineLog(const std::filesystem::path& project) { auto log = project; log.replace_extension(); log += L"-engine.log"; return log; }
+std::string Client::engineError(const std::filesystem::path& project) {
+    std::ifstream stream(engineLog(project), std::ios::binary);
+    std::string line, last;
+    while (std::getline(stream, line)) { while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back(); if (!line.empty()) last = line; }
+    return last;
+}
+void* Client::startServer(int port, const std::filesystem::path& source, const std::filesystem::path& project, const std::filesystem::path& exports) {
     auto quote = [](const std::filesystem::path& value) {
         auto text=value.native();if(text.find(L'"')!=std::wstring::npos)throw std::runtime_error("경로에 따옴표를 사용할 수 없습니다.");
         // Windows argv parsing doubles backslashes immediately before a quote.
@@ -62,8 +72,29 @@ void Client::startServer(int port, const std::filesystem::path& source, const st
     const auto workspace = fromUtf8(BOCCIA_LABELER_ROOT);
     std::wstring command = quote(fromUtf8(BOCCIA_LABELER_PYTHON)) + L" -u " + quote(workspace / "ball_labeler.py")
         + L" --no-browser --port " + std::to_wstring(port) + L" --source " + quote(source) + L" --project " + quote(project) + L" --export-root " + quote(exports);
-    STARTUPINFOW startup{}; startup.cb = sizeof(startup); PROCESS_INFORMATION process{};
-    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, workspace.c_str(), &startup, &process)) throw std::runtime_error("로컬 분할·저장 엔진을 실행하지 못했습니다.");
-    CloseHandle(process.hThread); CloseHandle(process.hProcess);
+    // The engine has no window, so what it prints goes to a log beside the project; the app shows its last line when the engine stops.
+    std::error_code ignored; std::filesystem::create_directories(project.parent_path(), ignored);
+    SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
+    const HANDLE log = CreateFileW(engineLog(project).c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    const HANDLE input = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, 0, nullptr);
+    // Only these two handles are passed on. Inheriting everything would also hand the engine this app's own output pipes,
+    // and a script waiting on the app would then wait for as long as the engine lives.
+    HANDLE passed[] = {input, log};
+    SIZE_T size = 0; InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+    std::vector<unsigned char> buffer(size);
+    const auto attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(buffer.data());
+    const bool listed = log != INVALID_HANDLE_VALUE && input != INVALID_HANDLE_VALUE && InitializeProcThreadAttributeList(attributes, 1, 0, &size);
+    const bool redirected = listed && UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, passed, sizeof(passed), nullptr, nullptr);
+    STARTUPINFOEXW startup{}; startup.StartupInfo.cb = sizeof(startup); PROCESS_INFORMATION process{};
+    if (redirected) { startup.lpAttributeList = attributes; startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES; startup.StartupInfo.hStdInput = input; startup.StartupInfo.hStdOutput = log; startup.StartupInfo.hStdError = log; }
+    else startup.StartupInfo.cb = sizeof(STARTUPINFOW);
+    SetEnvironmentVariableW(L"PYTHONIOENCODING", L"utf-8");   // the child inherits it, so the log can be read back as UTF-8
+    const BOOL started = CreateProcessW(nullptr, command.data(), nullptr, nullptr, redirected, CREATE_NO_WINDOW | (redirected ? EXTENDED_STARTUPINFO_PRESENT : 0), nullptr, workspace.c_str(), &startup.StartupInfo, &process);
+    if (listed) DeleteProcThreadAttributeList(attributes);
+    if (log != INVALID_HANDLE_VALUE) CloseHandle(log);
+    if (input != INVALID_HANDLE_VALUE) CloseHandle(input);
+    if (!started) throw std::runtime_error("로컬 분할·저장 엔진을 실행하지 못했습니다.");
+    CloseHandle(process.hThread);
+    return process.hProcess;
 }
 }

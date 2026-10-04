@@ -24,6 +24,10 @@ bool countsDiffer(const Json& scene);
 // 카메라 순서, 그 안에서는 박스의 왼쪽 좌표 순서.
 std::vector<BallRef> ballOrder(const std::vector<Json>& annotations);
 BallRef nextBall(const std::vector<BallRef>& order, BallRef current, int step);
+// 새 윤곽이 고칠 공. 선택한 공의 박스가 그 점을 포함하면 선택한 공, 아니면 그 점을 포함하는 마지막 박스, 없으면 -1(새 공).
+int replaceTarget(const std::vector<cv::Rect2d>& boxes, cv::Point2d point, int selected);
+// 점들을 둘러싼 사각형의 중심. 둘레를 찍은 폴리곤이 어느 공인지는 첫 점이 아니라 이 중심으로 정한다.
+cv::Point2d boundsCenter(const std::vector<cv::Point2d>& points);
 struct SplitTotal { int recordings = 0, images = 0, balls = 0, empty = 0; };
 struct SplitCheck { bool ok = false; std::string text, detail; };
 std::map<std::string, SplitTotal> splitTotals(const Json& stats, const Json& splits);

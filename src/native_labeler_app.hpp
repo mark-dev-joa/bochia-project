@@ -38,6 +38,7 @@ public:
     bool ready() const { return catalog_.is_object() && !frames_.empty(); }
     bool busy() const { return task_.valid(); }
     bool settled() const { return !busy() && !thumbTask_.valid() && thumbWanted_.empty(); }
+    bool idle() const;                               // settled and nothing waiting to be saved; an open proposal does not count
     void showEditor(int camera = 0);
     void showPage(int page);
     void selectSceneForCapture(int recordingNumber, int index);
@@ -100,7 +101,7 @@ private:
     void connect();
     void updateCatalog(Json catalog);
     void updateSummary(const Json& summary);
-    void loadScene(int index, bool editor = false, int camera = 0);
+    void loadScene(int index, bool editor = false, int camera = 0, std::string note = {});   // note replaces the usual status line
     void prefetch();
     void navigate(int index);
     void openPage(Page page);
@@ -170,6 +171,7 @@ private:
     void repaint(FrameView& frame);
     void fit(FrameView& frame, ImVec2 size, bool toBall);
     int hit(const FrameView& frame, cv::Point2d point) const;
+    int target(const FrameView& frame, cv::Point2d point) const;
     std::vector<int> sorted(const FrameView& frame) const;
     static std::string cameraLabel(const Json& member);
 };

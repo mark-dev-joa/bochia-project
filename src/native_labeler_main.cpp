@@ -53,8 +53,8 @@ int main() {
                     if(mode==L"editor"||mode==L"focus"){if(selectCamera>=0)application.selectForCapture(selectCamera,selectRank);else application.showEditor(0);}
                     else if(mode==L"prepare")application.showPage(0);else if(mode==L"split")application.showPage(2);else if(mode==L"export")application.showPage(3);
                     stage=2;}
-                else if(stage==2&&selfTest&&application.canClose()&&application.settled()){if(!application.selfCheckStep(checkStep++)){std::cout<<"PASS: select, zoom, one-pixel edge correction, delete and undo, ball cycling, scene confirm and the next scene fetched ahead\n";selfTest=false;}}
-                else if(stage==2&&stageTest&&application.canClose()&&application.settled()){if(!application.stageCheckStep(checkStep++)){std::cout<<"PASS: split plan, grouping, confirm, export and export history\n";stageTest=false;}}
+                else if(stage==2&&selfTest&&application.idle()){if(!application.selfCheckStep(checkStep++)){std::cout<<"PASS: select, zoom, save before leaving a scene, one-pixel edge correction, delete and undo, outline target, Tab key, scene confirm and the next scene fetched ahead\n";selfTest=false;}}
+                else if(stage==2&&stageTest&&application.idle()){if(!application.stageCheckStep(checkStep++)){std::cout<<"PASS: split plan, grouping, confirm, export and export history\n";stageTest=false;}}
             }
             ImGui_ImplOpenGL3_NewFrame();ImGui_ImplGlfw_NewFrame();ImGui::NewFrame();application.draw();
             if(closing){ImGui::OpenPopup("종료 전 작업 보관");if(ImGui::BeginPopupModal("종료 전 작업 보관",nullptr,ImGuiWindowFlags_AlwaysAutoResize)){ImGui::TextUnformatted("저장 또는 처리가 끝나지 않았습니다.");ImGui::TextUnformatted("작업을 계속하거나 변경을 recovery 폴더에 보관하고 종료할 수 있습니다.");if(ImGui::Button("계속 작업")){closing=false;ImGui::CloseCurrentPopup();}ImGui::SameLine();ImGui::BeginDisabled(application.busy());if(ImGui::Button("변경 보관하고 종료")){application.preserveRecovery();glfwSetWindowShouldClose(window,true);closing=false;ImGui::CloseCurrentPopup();}ImGui::EndDisabled();ImGui::EndPopup();}}

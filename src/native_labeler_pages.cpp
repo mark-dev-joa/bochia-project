@@ -412,11 +412,6 @@ void Application::splitPage() {
         box.text("평가에 넣은 촬영은 첫 학습 뒤에는 바꾸지 않습니다. 모든 모델을 같은 평가 세트로 비교하기 위해서입니다.");
         sy = box.close();
     }
-    {
-        SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "새 촬영이 들어오면");
-        box.mark(Mark::Info, "미지정으로 추가됩니다", "평가 세트를 그대로 두려면 학습이나 검증에 넣습니다. 검수가 끝나야 다시 확정할 수 있습니다.");
-        sy = box.close();
-    }
     reserve(stage, std::max(y, sy));
 }
 

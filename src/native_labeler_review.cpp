@@ -85,9 +85,9 @@ void Application::stepRow(int step) {
     for (int i = at + step; i >= 0 && i < int(rows_.size()); i += step) if (!rows_[i].header) { navigate(rows_[i].scene); return; }
 }
 GLuint Application::thumb(const std::string& key, bool color) {
-    if (const auto found = thumbs_.find(key); found != thumbs_.end()) return found->second;
-    if (std::none_of(thumbWanted_.begin(), thumbWanted_.end(), [&](const auto& wanted) { return wanted.first == key; })) thumbWanted_.emplace_back(key, color);
-    return 0;
+    const auto [found, added] = thumbs_.emplace(key, 0);   // 0 until the image arrives; each one is asked for once
+    if (added) thumbWanted_.emplace_back(key, color);
+    return found->second;
 }
 // Thumbnails load on their own future so they never block scene navigation.
 void Application::pumpThumbs() {
@@ -271,7 +271,9 @@ void Application::sceneBar(ImVec2 pos, float width) {
     float right = pos.x + width;
     ImGui::PushFont(nullptr, theme::px(theme::caption));
     ImGui::SetCursorScreenPos({right - 92, pos.y + 8}); ImGui::SetNextItemWidth(92);
+    ImGui::PushItemFlag(ImGuiItemFlags_NoTabStop, true);   // Tab cycles the balls; ImGui would otherwise turn this slider into a text field
     if (ImGui::SliderFloat("##brightness", &brightness_, .5f, 3.f, "")) for (auto& view : frames_) view.repaint = true;
+    ImGui::PopItemFlag();
     ImGui::PopFont();
     right -= 100 + theme::extent("표시 밝기", theme::caption).x;
     theme::write(draw, {right, pos.y + 12}, theme::text3, "표시 밝기", theme::caption);
@@ -547,7 +549,7 @@ void Application::canvasInput(FrameView& frame, ImVec2 pos, ImVec2 size, bool ho
         }
         else if (tool_ == Tool::Polygon && proposal_.is_null()) {
             if (remove) { if (!polygon_.empty()) polygon_.pop_back(); }
-            else { if (polygon_.empty()) replacement_ = ball; polygon_.push_back(point); }
+            else polygon_.push_back(point);
         }
         else if (tool_ == Tool::Box && left && !pending()) { dragStart_ = point; dragScreen_ = mouse; dragging_ = true; replacement_ = -1; }
         else if (tool_ == Tool::Brush) {
@@ -646,7 +648,12 @@ void Application::canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size) {
     if ((!proposal_.is_null() || polygon_.size() >= 3) && !dragging_) {   // pending proposal: apply or cancel
         ImVec2 anchor{pos.x + size.x / 2, end.y - 70};
         if (!proposal_.is_null()) { const auto r = detectionBox(proposal_); anchor = {pos.x + frame.offsetX + float(r.x + r.width / 2) * frame.scale, pos.y + frame.offsetY + float(r.y + r.height) * frame.scale + 22}; }
-        const char* label = proposal_.is_null() ? "폴리곤 작성 중" : "제안 미확정";
+        std::string label = "폴리곤 작성 중";
+        if (!proposal_.is_null()) {   // say what Enter will do: change that ball or add one
+            const auto order = sorted(frame);
+            const auto found = std::find(order.begin(), order.end(), replacement_);
+            label = found == order.end() ? "새 공 추가" : "공 " + std::to_string(found - order.begin() + 1) + " 윤곽 바꾸기";
+        }
         const float labelWidth = theme::extent(label, theme::caption, theme::bold).x, barWidth = 12 + labelWidth + 12 + 104 + 6 + 88 + 6;
         const ImVec2 p{std::clamp(anchor.x - barWidth / 2, pos.x + 64, std::max(pos.x + 64, end.x - barWidth - 10)), std::clamp(anchor.y, pos.y + 56, end.y - 44)};
         draw->AddRectFilled(p, {p.x + barWidth, p.y + 34}, theme::rgb(0x15181c, 245), 8); draw->AddRect(p, {p.x + barWidth, p.y + 34}, theme::proposal, 8);

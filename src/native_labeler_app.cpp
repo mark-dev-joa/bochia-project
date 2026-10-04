@@ -40,6 +40,7 @@ void Application::restorePosition() {
     }catch(...) {}}
     if(!catalog_["scenes"].empty())loadScene(index,editor,camera);
 }
+bool Application::idle() const {return settled()&&std::none_of(frames_.begin(),frames_.end(),[](const FrameView& frame){return frame.dirty;});}
 bool Application::canClose() const {return !busy()&&!pending()&&std::none_of(frames_.begin(),frames_.end(),[](const FrameView& frame){return frame.dirty;});}
 void Application::preserveRecovery(){
     auto text=std::string(BOCCIA_LABELER_ROOT);auto directory=std::filesystem::path(std::u8string(text.begin(),text.end()))/"output/native-labeler/recovery";std::filesystem::create_directories(directory);
@@ -63,8 +64,19 @@ void Application::connect() {
         try { base=client.get("/api/catalog"); }
         catch (...) {
             if(!config.startServer) throw;
-            Client::startServer(config.port,config.source,config.project,config.exports);
-            for(int i=0;i<100;++i) { try {base=client.get("/api/catalog");break;}catch(...){if(i==99)throw;std::this_thread::sleep_for(std::chrono::milliseconds(150));} }
+            const HANDLE engine=Client::startServer(config.port,config.source,config.project,config.exports);
+            for(int i=0;;++i) {
+                try {base=client.get("/api/catalog");break;}
+                catch(...) {
+                    // Waits between attempts and notices an engine that gave up, as it does when the recording folders changed.
+                    if(WaitForSingleObject(engine,150)!=WAIT_OBJECT_0&&i<99)continue;
+                    CloseHandle(engine);
+                    const auto reason=Client::engineError(config.project);
+                    if(reason.empty())throw;
+                    throw std::runtime_error("라벨 엔진이 시작되지 않았습니다. "+reason);
+                }
+            }
+            CloseHandle(engine);
         }
         auto same=[](const std::string& path,const std::filesystem::path& expected){return std::filesystem::weakly_canonical(fromUtf8(path))==std::filesystem::weakly_canonical(expected);};
         if(!same(base.at("source").get<std::string>(),config.source)||!same(base.at("project_path").get<std::string>(),config.project))
@@ -111,15 +123,17 @@ JobResult fetchScene(const Client& client,const Json& scene) {
     return result;
 }
 }
-void Application::loadScene(int index,bool editor,int camera) {
+void Application::loadScene(int index,bool editor,int camera,std::string note) {
     if(index<0||index>=int(catalog_["scenes"].size())||busy())return;
+    // Never replace a frame that still has unsaved edits: save it first and come back.
+    if(!frames_.empty()&&current().dirty){if(pending())message_="미확정 윤곽을 반영하거나 취소하세요.";else save([this,index,editor,camera,note]{loadScene(index,editor,camera,note);});return;}
     const auto token=++generation_;
-    auto show=[this,index,editor,camera,token](JobResult result){
+    auto show=[this,index,editor,camera,token,note](JobResult result){
         if(token!=generation_)return;
         // The catalog may have moved on since the images were requested, above all for a scene fetched ahead.
         const auto& members=catalog_["scenes"][index]["members"];
         for(size_t i=0;i<result.frames.size()&&i<members.size();++i){result.frames[i].member=members[i];result.frames[i].annotation["review_status"]=members[i].value("status","draft");}
-        releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor;stale_=false;aheadDirty_=true;scrollToCurrent_=true;cancel();message_="원본과 저장 라벨 표시 중";};
+        releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor;stale_=false;aheadDirty_=true;scrollToCurrent_=true;cancel();message_=note.empty()?"원본과 저장 라벨 표시 중":note;};
     // A scene fetched ahead is used only if no automatic draft has been written since.
     if(index==aheadScene_&&ahead_.valid()&&aheadAuto_==catalog_["summary"].value("auto_revision",0)){
         const auto fetched=ahead_.share();aheadScene_=-1;++aheadHits_;
@@ -217,7 +231,7 @@ void Application::undo(){if(busy())return;if(pending()){cancel();return;}auto& f
 void Application::segment(cv::Point2d point,bool negative) {
     if(busy())return;
     if(!proposal_.is_null()&&proposal_.value("source","")!="efficientsam"){message_="현재 윤곽을 먼저 반영하거나 취소하세요.";return;}
-    if(points_.empty()) {if(negative){message_="첫 점은 공 내부에 클릭하세요.";return;}replacement_=hit(current(),point);if(replacement_>=0)selected_=replacement_;}
+    if(points_.empty()) {if(negative){message_="첫 점은 공 내부에 클릭하세요.";return;}replacement_=target(current(),point);if(replacement_>=0)selected_=replacement_;}
     if(points_.size()>=32){message_="점은 최대 32개입니다. 현재 결과를 반영하거나 취소하세요.";return;}
     points_.push_back({{"x",point.x},{"y",point.y},{"label",negative?0:1}});
     auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["radius"]=radius_;
@@ -228,7 +242,7 @@ void Application::segment(cv::Point2d point,bool negative) {
 void Application::segmentBox(cv::Rect2d box) {
     if(busy()||!points_.empty()||box.width<2||box.height<2)return;
     const cv::Point2d center{box.x+box.width/2,box.y+box.height/2};
-    replacement_=hit(current(),center);if(replacement_>=0)selected_=replacement_;
+    replacement_=target(current(),center);if(replacement_>=0)selected_=replacement_;
     points_.push_back({{"x",center.x},{"y",center.y},{"label",1}});
     auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["radius"]=std::max(box.width,box.height)/2;payload["box"]={box.x,box.y,box.width,box.height};
     const auto key=current().annotation.at("key").get<std::string>();const auto client=client_;const auto token=generation_;
@@ -236,6 +250,8 @@ void Application::segmentBox(cv::Rect2d box) {
 }
 void Application::polygonProposal(){
     if(busy()||polygon_.size()<3)return;Json points=Json::array();for(auto point:polygon_)points.push_back({point.x,point.y});
+    // An outline follows the edge of a ball, so its middle says which ball it is; its first point may lie in a neighbour's box.
+    replacement_=target(current(),boundsCenter(polygon_));if(replacement_>=0)selected_=replacement_;
     auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points;const auto client=client_;const auto token=generation_;
     launch("수동 폴리곤 마스크 만들기",[client,payload]{return JobResult{client.post("/api/assist/polygon",payload),{}};},[this,token](JobResult result){if(token!=generation_)return;proposal_=result.data.at("proposals").at(0);polygon_.clear();current().repaint=true;message_="폴리곤 미리보기 · Enter로 반영";});
 }
@@ -247,8 +263,14 @@ void Application::review(Scope scope,bool hold,int member) {
     else for(auto& frame:frames_)if(frame.member.value("selected",true)&&(!hold||!frame.member.value("reviewed",false)))keys.push_back(frame.annotation.at("key"));
     if(keys.empty())return;
     const bool advance=scope==Scope::Scene||hold;
-    const auto client=client_;Json payload={{"keys",keys},{"status",hold?"hold":"reviewed"},{"expected_revision",catalog_["summary"]["revision"]}};
-    launch(hold?"보류 상태 저장":"확인 저장",[client,payload]{return JobResult{client.post("/api/native/review",payload),{}};},[this,advance,hold,keys](JobResult result){
+    // The engine refuses when it holds a different number of balls than this screen shows, as after an automatic draft.
+    Json seen=Json::object();for(const auto& frame:frames_)seen[frame.annotation.at("key").get<std::string>()]=frame.annotation["boxes"].size();
+    const auto client=client_;Json payload={{"keys",keys},{"seen",seen},{"status",hold?"hold":"reviewed"},{"expected_revision",catalog_["summary"]["revision"]}};
+    launch(hold?"보류 상태 저장":"확인 저장",[client,payload]{
+        try{return JobResult{client.post("/api/native/review",payload),{}};}
+        catch(const Conflict&){return JobResult{{{"conflict",true},{"catalog",client.get("/api/native/catalog")}},{}};}
+    },[this,advance,hold,keys](JobResult result){
+        if(result.data.contains("conflict")){updateCatalog(result.data["catalog"]);loadScene(scene_,editor_,camera_,"저장된 라벨이 화면과 달라 다시 불러왔습니다. 확인한 뒤 다시 누르세요.");return;}
         updateSummary(result.data.at("summary"));
         for(auto& f:frames_)if(std::find(keys.begin(),keys.end(),f.annotation["key"])!=keys.end()){f.annotation["reviewed"]=!hold;f.annotation["review_status"]=hold?"hold":"reviewed";}
         message_=hold?"보류로 표시했습니다":"확인했습니다";if(advance)nextUnreviewed();});
@@ -313,6 +335,11 @@ void Application::repaint(FrameView& f){
     }
     uploadTexture(f.overlay,overlay,true);f.repaint=false;
 }
+// The ball a new outline at this point changes, or -1 when it adds a ball.
+int Application::target(const FrameView& frame,cv::Point2d point)const {
+    std::vector<cv::Rect2d> boxes;for(const auto& box:frame.annotation["boxes"])boxes.push_back(detectionBox(box));
+    return replaceTarget(boxes,point,selected_);
+}
 int Application::hit(const FrameView& frame,cv::Point2d point)const {for(int i=int(frame.annotation["boxes"].size())-1;i>=0;--i)if(detectionBox(frame.annotation["boxes"][i]).contains(point))return i;return -1;}
 // scale 0 means automatic: zoom to the selected ball, otherwise fit the whole image.
 void Application::fit(FrameView& f,ImVec2 size,bool toBall){
@@ -324,21 +351,45 @@ void Application::selectForCapture(int camera,int rank){if(frames_.empty()||came
 // One step per call while the app is idle. Returns false when every step has passed; throws on a failed expectation.
 bool Application::selfCheckStep(int step) {
     auto expect=[](bool condition,const char* what){if(!condition)throw std::runtime_error(std::string("self-test: ")+what);};
-    static int checkedScene=-1;static Json before;
+    static int checkedScene=-1;static Json before;static BallRef was;
+    auto& io=ImGui::GetIO();
+    const auto first=[this]{return sorted(frames_.at(0)).front();};
+    const auto moved=[this]{return camera_!=was.camera||selected_!=was.index;};
     switch(step){
-    case 0:{const auto order=sorted(frames_.at(0));expect(!order.empty(),"scene has no ball in the first camera");checkedScene=scene_;select(0,order.front());return true;}
-    case 1:{expect(editor_&&camera_==0&&selected_>=0,"ball was not selected");expect(current().scale>2,"selected ball was not zoomed");before=current().annotation["boxes"][selected_];nudge(0,true);return true;}
-    case 2:{const auto& box=current().annotation["boxes"][selected_];const auto was=detectionBox(before),now=detectionBox(box);
-        expect(now.y==was.y-1&&now.height==was.height+1&&now.x==was.x&&now.width==was.width,"top edge did not grow by one pixel");
+    case 0:{expect(!sorted(frames_.at(0)).empty(),"scene has no ball in the first camera");checkedScene=scene_;select(0,first());return true;}
+    case 1:{expect(editor_&&camera_==0&&selected_>=0,"ball was not selected");expect(current().scale>2,"selected ball was not zoomed");before=current().annotation["boxes"][selected_];
+        // Leaving the scene right after an edit, before the autosave delay has passed, must save the edit first.
+        nudge(0,true);if(guard())nextUnreviewed();return true;}
+    case 2:{expect(scene_!=checkedScene,"N did not move to the next unreviewed scene");
+        expect(catalog_["scenes"][checkedScene]["members"][0].value("status","")=="editing","an edit made just before moving on was not saved");
+        navigate(checkedScene);return true;}
+    case 3:select(0,first());return true;
+    case 4:{const auto& box=current().annotation["boxes"][selected_];const auto old=detectionBox(before),now=detectionBox(box);
+        expect(now.y==old.y-1&&now.height==old.height+1&&now.x==old.x&&now.width==old.width,"top edge did not grow by one pixel");
         expect(box.at("bbox")==before.at("bbox")&&box.value("segmentation",Json())==before.value("segmentation",Json()),"box correction changed the mask");
         expect(current().member.value("status","")=="editing","an edited image must leave the confirmed state");nudge(0,false);return true;}
-    case 3:{expect(detectionBox(current().annotation["boxes"][selected_])==detectionBox(before),"shrinking did not restore the box");
+    case 5:{expect(detectionBox(current().annotation["boxes"][selected_])==detectionBox(before),"shrinking did not restore the box");
         const Json boxes=current().annotation["boxes"];
         removeSelected();expect(current().annotation["boxes"].size()+1==boxes.size()&&selected_<0,"delete did not remove the selected ball");
         undo();expect(current().annotation["boxes"]==boxes,"undo did not bring the deleted ball back");return true;}
-    case 4:{select(0,sorted(frames_.at(0)).front());const BallRef was{camera_,selected_};cycle(1);expect(camera_!=was.camera||selected_!=was.index,"Tab did not move to another ball");return true;}
-    case 5:review(Scope::Scene,false);return true;
-    case 6:{for(const auto& member:catalog_["scenes"][checkedScene]["members"])expect(!member.value("selected",true)||member.value("reviewed",false),"scene confirm left an image unconfirmed");
+    case 6:{select(0,first());const auto r=detectionBox(current().annotation["boxes"][selected_]);
+        // An outline traced around the ball starts outside its box; it must still change that ball.
+        tool_=Tool::Polygon;polygon_={{r.x-3,r.y-3},{r.x+r.width+3,r.y-3},{r.x+r.width+3,r.y+r.height+3},{r.x-3,r.y+r.height+3}};apply();return true;}
+    case 7:{expect(!proposal_.is_null()&&replacement_==first(),"an outline traced around a ball must change that ball");cancel();
+        // An outline of something beside the ball may start inside the ball's box; it must add a ball, not overwrite this one.
+        const auto r=detectionBox(current().annotation["boxes"][first()]);
+        polygon_={{r.x+1,r.y+1},{r.x-60,r.y+1},{r.x-60,r.y-40},{r.x+1,r.y-40}};apply();return true;}
+    case 8:expect(!proposal_.is_null()&&replacement_<0,"an outline that only starts inside a ball's box must add a ball");cancel();tool_=Tool::Select;return true;
+    case 9:{select(0,first());was={camera_,selected_};cycle(1);expect(moved(),"cycling did not move to another ball");
+        // A click gives the review pane the keyboard, as it has in real use, before the real Tab key is pressed twice.
+        const float width=ImGui::GetMainViewport()->WorkSize.x;io.AddMousePosEvent((width<1500?232.f:300.f)+150,70);io.AddMouseButtonEvent(0,true);return true;}
+    case 10:io.AddMouseButtonEvent(0,false);return true;
+    case 11:was={camera_,selected_};io.AddKeyEvent(ImGuiKey_Tab,true);return true;
+    case 12:io.AddKeyEvent(ImGuiKey_Tab,false);expect(moved(),"the Tab key did not move to the next ball");return true;
+    case 13:was={camera_,selected_};io.AddKeyEvent(ImGuiKey_Tab,true);return true;
+    case 14:io.AddKeyEvent(ImGuiKey_Tab,false);expect(moved()&&!io.WantTextInput,"Tab put the keyboard into a widget, which turns the shortcuts off");return true;
+    case 15:review(Scope::Scene,false);return true;
+    case 16:{for(const auto& member:catalog_["scenes"][checkedScene]["members"])expect(!member.value("selected",true)||member.value("reviewed",false),"scene confirm left an image unconfirmed");
         expect(scene_!=checkedScene&&!editor_,"confirm did not advance to the next unreviewed scene");
         expect(aheadHits_>0,"the next unreviewed scene was not fetched ahead");return false;}
     }
@@ -376,7 +427,10 @@ void Application::refreshStage(){
     if(busy())return;const auto client=client_;
     launch("현황 새로 읽기",[client]{return JobResult{{{"catalog",client.get("/api/native/catalog")},{"exports",client.get("/api/native/exports")},{"export",client.get("/api/export-status")},{"auto",client.get("/api/auto-status")}},{}};},
         [this](JobResult result){
-            updateCatalog(result.data["catalog"]);exports_=result.data["exports"].value("exports",Json::array());exportStatus_=result.data["export"];autoStatus_=result.data["auto"];
+            const auto revision=catalog_["summary"].value("revision",0),automatic=catalog_["summary"].value("auto_revision",0);
+            updateCatalog(result.data["catalog"]);
+            if(revision!=catalog_["summary"].value("revision",0)||automatic!=catalog_["summary"].value("auto_revision",0))stale_=true;
+            exports_=result.data["exports"].value("exports",Json::array());exportStatus_=result.data["export"];autoStatus_=result.data["auto"];
             // Nothing assigned yet: show the plan the engine would make, so the split page never opens empty.
             const bool unassigned=std::all_of(splits_.begin(),splits_.end(),[](const Json& split){return split.get<std::string>()=="unassigned";});
             if(page_==Page::Split&&unassigned&&!splits_.empty())proposeSplit();

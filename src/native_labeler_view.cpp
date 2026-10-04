@@ -64,6 +64,17 @@ BallRef nextBall(const std::vector<BallRef>& order, BallRef current, int step) {
     const int size = int(order.size()), at = found == order.end() ? (step > 0 ? -1 : 0) : int(found - order.begin());
     return order[((at + step) % size + size) % size];
 }
+int replaceTarget(const std::vector<cv::Rect2d>& boxes, cv::Point2d point, int selected) {
+    if (selected >= 0 && selected < int(boxes.size()) && boxes[selected].contains(point)) return selected;
+    for (int i = int(boxes.size()) - 1; i >= 0; --i) if (boxes[i].contains(point)) return i;
+    return -1;
+}
+cv::Point2d boundsCenter(const std::vector<cv::Point2d>& points) {
+    if (points.empty()) return {};
+    auto low = points.front(), high = low;
+    for (const auto& point : points) { low.x = std::min(low.x, point.x); low.y = std::min(low.y, point.y); high.x = std::max(high.x, point.x); high.y = std::max(high.y, point.y); }
+    return (low + high) * .5;
+}
 std::map<std::string, SplitTotal> splitTotals(const Json& stats, const Json& splits) {
     std::map<std::string, SplitTotal> totals{{"train", {}}, {"val", {}}, {"test", {}}};
     for (const auto& [recording, item] : stats.items()) {
