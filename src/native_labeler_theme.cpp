@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <cfloat>
 #include <cmath>
+#include <cstring>
 
 namespace boccia::labeler::theme {
 ImFont* mono = nullptr;
@@ -52,6 +53,21 @@ void dot(ImDrawList* draw, ImVec2 center, MemberState state, float radius) {
 }
 void write(ImDrawList* draw, ImVec2 pos, ImU32 color, const std::string& value, float size, ImFont* font) { draw->AddText(font, px(size), {pos.x, pos.y - (px(size) - size) / 2}, color, value.c_str()); }
 ImVec2 extent(const std::string& value, float size, ImFont* font) { return (font ? font : ImGui::GetFont())->CalcTextSizeA(px(size), FLT_MAX, 0, value.c_str()); }
+float paragraph(ImDrawList* draw, ImVec2 pos, ImU32 color, const std::string& value, float width, float size, ImFont* font) {
+    ImFont* face = font ? font : ImGui::GetFont();
+    const float step = std::round(size * 1.5f);
+    const char* at = value.c_str(); const char* const end = at + value.size();
+    float y = pos.y;
+    while (at < end) {
+        const char* stop = face->CalcWordWrapPosition(px(size), at, end, width);
+        if (stop == at) { ++stop; while (stop < end && (*stop & 0xC0) == 0x80) ++stop; }   // a glyph wider than the line still moves on
+        draw->AddText(face, px(size), {pos.x, y - (px(size) - size) / 2}, color, at, stop);
+        at = stop;
+        while (at < end && (*at == ' ' || *at == '\n')) ++at;
+        y += step;
+    }
+    return y - pos.y;
+}
 float keycapAt(ImDrawList* draw, ImVec2 pos, const char* key) {
     const float width = std::max(18.f, extent(key, 11, mono).x + 10);
     draw->AddRectFilled(pos, {pos.x + width, pos.y + 18}, bg3, 4); draw->AddRect(pos, {pos.x + width, pos.y + 18}, line2, 4);
@@ -135,15 +151,18 @@ bool segmented(const char* id, const char* const* labels, int count, int* value,
     ImGui::PopFont(); ImGui::PopID();
     return changed;
 }
-bool checkbox(const char* label, bool* value) {
+bool checkbox(const char* label, bool* value, bool locked) {
     ImGui::PushFont(nullptr, px(caption));
-    const ImVec2 pos = ImGui::GetCursorScreenPos(), size{21 + ImGui::CalcTextSize(label).x, 18};
+    const char* hidden = std::strstr(label, "##");   // what follows ## is only the ImGui id
+    const char* const end = hidden ? hidden : label + std::strlen(label);
+    const float labelWidth = end > label ? 7 + ImGui::CalcTextSize(label, end).x : 0;
+    const ImVec2 pos = ImGui::GetCursorScreenPos(), size{14 + labelWidth, 18};
     const bool clicked = ImGui::InvisibleButton(label, size);
-    if (clicked) *value = !*value;
+    if (clicked && !locked) *value = !*value;
     auto draw = ImGui::GetWindowDrawList();
-    if (*value) { draw->AddRectFilled({pos.x, pos.y + 2}, {pos.x + 14, pos.y + 16}, accent, 3); check(draw, {pos.x + 7, pos.y + 9}, 9, ink); }
+    if (*value) { draw->AddRectFilled({pos.x, pos.y + 2}, {pos.x + 14, pos.y + 16}, locked ? bg4 : accent, 3); check(draw, {pos.x + 7, pos.y + 9}, 9, locked ? text2 : ink); }
     else draw->AddRect({pos.x, pos.y + 2}, {pos.x + 14, pos.y + 16}, line2, 3, 0, 1.5f);
-    draw->AddText({pos.x + 21, pos.y + 1}, text2, label);
+    if (end > label) draw->AddText({pos.x + 21, pos.y + 1}, text2, label, end);
     ImGui::PopFont();
     return clicked;
 }

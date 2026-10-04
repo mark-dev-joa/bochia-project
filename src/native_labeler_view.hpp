@@ -24,4 +24,14 @@ bool countsDiffer(const Json& scene);
 // 카메라 순서, 그 안에서는 박스의 왼쪽 좌표 순서.
 std::vector<BallRef> ballOrder(const std::vector<Json>& annotations);
 BallRef nextBall(const std::vector<BallRef>& order, BallRef current, int step);
+struct SplitTotal { int recordings = 0, images = 0, balls = 0, empty = 0; };
+struct SplitCheck { bool ok = false; std::string text, detail; };
+std::map<std::string, SplitTotal> splitTotals(const Json& stats, const Json& splits);
+// 순서: 묶음이 두 쪽에 걸치는지, 세 쪽에 이미지가 있는지, 공 없는 이미지, 촬영 1개뿐인 쪽, 같은 날.
+std::vector<SplitCheck> splitChecks(const Json& stats, const Json& splits, const Json& groups);
+// groups는 촬영 ID -> 묶음 ID. 묶음 ID는 항상 그 묶음에서 ID가 가장 앞선 촬영이다.
+// 고른 촬영이 속한 묶음을 모두 하나로 합친다.
+void mergeGroups(Json& groups, const std::vector<std::string>& recordings);
+// 촬영 하나를 묶음에서 뺀다. 남은 촬영은 계속 한 묶음이다.
+void leaveGroup(Json& groups, const std::string& recording);
 }

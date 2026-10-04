@@ -27,12 +27,15 @@ void keycap(const char* key);
 // Draw-list variants for absolutely positioned tiles. keycapAt returns the width it used.
 void write(ImDrawList* draw, ImVec2 pos, ImU32 color, const std::string& value, float size = base, ImFont* font = nullptr);
 ImVec2 extent(const std::string& value, float size = base, ImFont* font = nullptr);
+// Wraps at the given width with a line height of 1.5 and returns the height it used.
+float paragraph(ImDrawList* draw, ImVec2 pos, ImU32 color, const std::string& value, float width, float size = caption, ImFont* font = nullptr);
 float keycapAt(ImDrawList* draw, ImVec2 pos, const char* key);
 float chipWidth(MemberState state);
 void icon(ImDrawList* draw, Icon kind, ImVec2 center, float size, ImU32 color);
 // width > 0 gives every segment the same share of that width; otherwise segments fit their labels.
 bool segmented(const char* id, const char* const* labels, int count, int* value, const ImU32* colors = nullptr, float height = 28, float width = 0);
-bool checkbox(const char* label, bool* value);
+// A locked box keeps its value and looks muted; the click is still reported so the caller can say why.
+bool checkbox(const char* label, bool* value, bool locked = false);
 bool toggle(const char* id, bool* value);
 bool primaryButton(const char* label, ImVec2 size);
 void check(ImDrawList* draw, ImVec2 center, float size, ImU32 color);

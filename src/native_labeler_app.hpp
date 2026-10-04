@@ -39,11 +39,11 @@ public:
     bool busy() const { return task_.valid(); }
     bool settled() const { return !busy() && !thumbTask_.valid() && thumbWanted_.empty(); }
     void showEditor(int camera = 0);
-    void showSplit();
     void showPage(int page);
     void selectSceneForCapture(int recordingNumber, int index);
     void selectForCapture(int camera, int rank);     // rank = left-to-right position of the ball in that camera
     bool selfCheckStep(int step);                    // scripted logic checks for the hidden smoke run
+    bool stageCheckStep(int step);                   // the same for split and export; needs a fully confirmed project
     const std::string& error() const { return error_; }
     bool canClose() const;
     void preserveRecovery();
@@ -74,11 +74,14 @@ private:
     std::vector<std::pair<std::string, bool>> thumbWanted_;
     std::future<Thumbs> thumbTask_;
     std::vector<std::vector<cv::Point>> proposalContours_;
-    int scene_ = 0, camera_ = 0, selected_ = 0, filter_ = 0, pageCaptureScene_ = -1, aheadScene_ = -1, aheadAuto_ = -1;
+    std::vector<std::string> picked_;                            // recordings ticked on the split page
+    int scene_ = 0, camera_ = 0, selected_ = 0, filter_ = 0, pageCaptureScene_ = -1, aheadScene_ = -1, aheadAuto_ = -1,
+        targetScenes_ = -1, emptyDrafts_ = 0;                    // counted from the catalog when targetScenes_ < 0
     Page page_ = Page::Review;
     Tool tool_ = Tool::Select;
-    bool editor_ = false, masks_ = true, boxes_ = false, contour_ = true, representatives_ = true, crops_ = true, erase_ = false, dragging_ = false,
-         scrollToCurrent_ = false, replaceSelected_ = false, rowsDirty_ = true, panning_ = false;
+    bool editor_ = false, masks_ = true, boxes_ = false, representatives_ = true, crops_ = true, dragging_ = false,
+         scrollToCurrent_ = false, rowsDirty_ = true, panning_ = false,
+         stale_ = false;                                         // labels changed on the engine while another page was open
     float brightness_ = 1.65f, brushSize_ = 6, radius_ = 16;
     Json proposal_;
     cv::Mat brushMask_;
@@ -150,9 +153,12 @@ private:
     void preparePage();
     void splitPage();
     void exportPage();
-    void refresh();
-    void refreshExports();
+    void refreshStage();
+    void proposeSplit();
+    void mergePicked();
     void confirmSplit();
+    void startExport();
+    std::string dataVersion() const;
     void uploadTexture(GLuint& texture, const cv::Mat& bgr, bool rgba = false);
     void repaint(FrameView& frame);
     void fit(FrameView& frame, ImVec2 size, bool toBall);

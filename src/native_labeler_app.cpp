@@ -11,11 +11,7 @@
 namespace boccia::labeler {
 namespace {
 using Clock = std::chrono::steady_clock;
-ImVec4 green{.35f, .86f, .70f, 1}, muted{.57f, .67f, .73f, 1}, amber{.95f, .73f, .36f, 1};
 std::string title(const Json& scene) { return "촬영 " + std::to_string(scene.at("recording_number").get<int>()) + " · 프레임 " + std::to_string(scene.at("index").get<int>()); }
-std::string utf8(const std::filesystem::path& value) { auto text=value.u8string(); return {text.begin(),text.end()}; }
-void hint(const char* text) { ImGui::TextColored(muted, "%s", text); }
-bool primary(const char* label, ImVec2 size = {}) { ImGui::PushStyleColor(ImGuiCol_Button, {.13f,.38f,.32f,1}); ImGui::PushStyleColor(ImGuiCol_ButtonHovered, {.19f,.49f,.40f,1}); bool result=ImGui::Button(label,size); ImGui::PopStyleColor(2); return result; }
 }
 Application::Application(Configuration config): config_(std::move(config)), client_(config_.port), poll_(Clock::now()) { connect(); }
 Application::~Application() {
@@ -73,11 +69,14 @@ void Application::connect() {
         auto same=[](const std::string& path,const std::filesystem::path& expected){return std::filesystem::weakly_canonical(fromUtf8(path))==std::filesystem::weakly_canonical(expected);};
         if(!same(base.at("source").get<std::string>(),config.source)||!same(base.at("project_path").get<std::string>(),config.project))
             throw std::runtime_error("이 포트는 다른 프로젝트를 사용 중입니다. 별도 --port와 --project를 지정하세요.");
-        return JobResult{{{"catalog",client.get("/api/native/catalog")},{"auto",client.get("/api/auto-status")},{"assist",client.get("/api/assist-status")}}, {}};
+        auto catalog=client.get("/api/native/catalog");
+        // The engine keeps running after the app closes, so an older one may still own the port.
+        if(catalog.value("api_version",0)<2)throw std::runtime_error("실행 중인 라벨 엔진이 이전 버전입니다. 포트 "+std::to_string(config.port)+"의 엔진(python ball_labeler.py)을 종료한 뒤 앱을 다시 실행하세요.");
+        return JobResult{{{"catalog",std::move(catalog)},{"auto",client.get("/api/auto-status")},{"assist",client.get("/api/assist-status")}}, {}};
     }, [this](JobResult result){ updateCatalog(result.data.at("catalog")); autoStatus_=result.data.at("auto"); message_="기존 촬영과 라벨 연결 완료"; restorePosition(); });
 }
 void Application::updateCatalog(Json value) {
-    catalog_=std::move(value);rowsDirty_=true;
+    catalog_=std::move(value);rowsDirty_=true;targetScenes_=-1;
     for(const auto& recording:catalog_["recordings"]) {
         auto id=recording.at("id").get<std::string>();
         if(!groups_.contains(id))groups_[id]=id;
@@ -86,7 +85,7 @@ void Application::updateCatalog(Json value) {
     if(catalog_.value("split_confirmed",false))groups_=catalog_.at("groups");
 }
 void Application::updateSummary(const Json& summary) {
-    catalog_["summary"]=summary; catalog_["split_confirmed"]=false;rowsDirty_=true;
+    catalog_["summary"]=summary; catalog_["split_confirmed"]=false;rowsDirty_=true;targetScenes_=-1;
     int target=0,done=0;
     for(auto& scene:catalog_["scenes"])for(auto& member:scene["members"]) {
         const auto key=member.at("key").get<std::string>();
@@ -107,14 +106,19 @@ void Application::loadScene(int index,bool editor,int camera) {
         JobResult result; const auto recording=scene.at("recording").get<std::string>();
         for(const auto& member:scene.at("members")){FrameView frame;frame.member=member;frame.annotation=client.get("/api/frame"+Client::frameQuery(member,recording));frame.annotation["review_status"]=member.value("status","draft");frame.image=client.image(member,recording);result.frames.push_back(std::move(frame));}
         return result;
-    },[this,index,editor,camera,token](JobResult result){if(token!=generation_)return;releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor;page_=Page::Review;scrollToCurrent_=true;cancel();message_="원본과 저장 라벨 표시 중";});
+    },[this,index,editor,camera,token](JobResult result){if(token!=generation_)return;releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor;stale_=false;scrollToCurrent_=true;cancel();message_="원본과 저장 라벨 표시 중";});
 }
 bool Application::pending() const { return !proposal_.is_null()||!polygon_.empty()||!points_.empty()||dragging_; }
 bool Application::guard(){if(busy()){message_="처리가 끝난 뒤 이동하세요. 화면 확대·이동은 계속할 수 있습니다.";return false;}if(pending()){message_="미확정 윤곽을 반영하거나 취소하세요.";return false;}return true;}
 void Application::navigate(int index){if(!guard())return;if(!frames_.empty()&&current().dirty){save([this,index]{loadScene(index);});return;}loadScene(index);}
 void Application::showEditor(int camera){focus(camera);}
 void Application::switchCamera(int camera){focus(camera);}
-void Application::openPage(Page page){if(!guard())return;if(!frames_.empty()&&current().dirty)save([this,page]{page_=page;});else page_=page;if(page==Page::Export)refreshExports();}
+void Application::openPage(Page page){
+    if(!guard())return;
+    if(!frames_.empty()&&current().dirty){save([this,page]{openPage(page);});return;}
+    page_=page;
+    if(page!=Page::Review)refreshStage();else if(stale_)loadScene(scene_,editor_,camera_);
+}
 void Application::showPage(int page){openPage(Page(std::clamp(page,0,3)));}
 // Enlarge one camera in place without selecting a ball.
 void Application::focus(int camera) {
@@ -220,8 +224,6 @@ void Application::nextUnreviewed(){
     if(index==scene_){message_="남은 미검수 이미지는 이 장면뿐입니다.";return;}
     loadScene(index);
 }
-void Application::refresh(){if(!guard())return;if(!frames_.empty()&&current().dirty){message_="저장되지 않은 변경이 있습니다. 저장을 완료한 뒤 새로고침하세요.";return;}const auto client=client_;launch("저장 상태 새로고침",[client]{return JobResult{client.get("/api/native/catalog"),{}};},[this](JobResult result){updateCatalog(result.data);loadScene(scene_,editor_,camera_);});}
-void Application::showSplit(){if(!guard())return;if(!frames_.empty()&&current().dirty){save([this]{showSplit();});return;}page_=Page::Split;editor_=false;}
 void Application::selectSceneForCapture(int recordingNumber,int index){if(!ready()||busy())return;for(int i=0;i<int(catalog_["scenes"].size());++i)if(catalog_["scenes"][i].value("recording_number",0)==recordingNumber&&catalog_["scenes"][i].value("index",-1)==index){loadScene(i);return;}}
 void Application::tick(){
     if(task_.valid()&&task_.wait_for(std::chrono::seconds(0))==std::future_status::ready){
@@ -237,9 +239,10 @@ void Application::tick(){
     if(activeJob&&ready()&&!busy()&&Clock::now()-poll_>std::chrono::seconds(3)&&error_.empty()&&!current().dirty&&!pending()){
         poll_=Clock::now();const auto client=client_;
         launch("작업 상태 확인",[client]{return JobResult{{{"auto",client.get("/api/auto-status")},{"export",client.get("/api/export-status")},{"catalog",client.get("/api/native/catalog")}}, {}};},[this](JobResult result){
-            const auto oldRevision=catalog_["summary"].value("revision",0),oldAuto=catalog_["summary"].value("auto_revision",0);
+            const auto oldRevision=catalog_["summary"].value("revision",0),oldAuto=catalog_["summary"].value("auto_revision",0);const bool exporting=exportStatus_.value("status","")=="running";
             autoStatus_=result.data["auto"];exportStatus_=result.data["export"];updateCatalog(result.data["catalog"]);
-            if(oldRevision!=catalog_["summary"].value("revision",0)||oldAuto!=catalog_["summary"].value("auto_revision",0))loadScene(scene_,editor_,camera_);
+            if(oldRevision!=catalog_["summary"].value("revision",0)||oldAuto!=catalog_["summary"].value("auto_revision",0)){if(page_==Page::Review)loadScene(scene_,editor_,camera_);else stale_=true;}
+            if(exporting&&exportStatus_.value("status","")!="running"){message_=exportStatus_.contains("error")?"내보내기가 실패했습니다. 내보내기 화면에서 원인을 확인하세요.":"내보내기를 마쳤습니다.";refreshStage();}
         });
     }
 }
@@ -276,45 +279,6 @@ void Application::fit(FrameView& f,ImVec2 size,bool toBall){
     const View view=toBall&&selected_>=0&&selected_<int(boxes.size())?ballView(detectionBox(boxes[selected_]),f.image.cols,f.image.rows,size.x,size.y):fitView(f.image.cols,f.image.rows,size.x,size.y);
     f.scale=view.scale;f.offsetX=view.x;f.offsetY=view.y;
 }
-void Application::preparePage(){
-    ImGui::TextUnformatted("데이터 준비");ImGui::Separator();ImGui::TextWrapped("입력: %s",utf8(config_.source).c_str());ImGui::TextWrapped("주석: %s",utf8(config_.project).c_str());
-    ImGui::Spacing();int raw=0;for(auto& recording:catalog_["recordings"])for(auto& camera:recording["cameras"])raw+=camera.value("count",0);
-    ImGui::Text("촬영 %d개 · 원본 %d장 · 대표 검수 대상 %d장",int(catalog_["recordings"].size()),raw,catalog_.value("target_images",0));
-    ImGui::TextWrapped("원본과 기존 사람 수정은 보존합니다. 학습·평가 용도는 전체 검수 후 다음 단계에서 확정합니다.");
-    ImGui::Spacing();hint("EfficientSAM-Ti · 로컬 CPU 분할");
-    auto job=autoStatus_.value("job",Json::object());auto status=job.value("status","idle");ImGui::Text("자동 초안 상태: %s",status.c_str());int done=job.value("done",0),total=job.value("total",0);if(total)ImGui::ProgressBar(float(done)/total,{-1,14});
-    ImGui::BeginDisabled(busy());if(primary("자동 초안 시작 / 재개")){const auto client=client_;launch("자동 초안 시작",[client]{return JobResult{client.post("/api/auto-start",Json::object()),{}};},[this](JobResult result){autoStatus_["job"]=result.data;message_="자동 처리 시작 · 검수와 자동 생성은 별개입니다.";});}ImGui::SameLine();if(ImGui::Button("자동 처리 중단")){const auto client=client_;launch("자동 처리 중단",[client]{return JobResult{client.post("/api/auto-stop",Json::object()),{}};},[this](JobResult result){autoStatus_["job"]=result.data;});}ImGui::EndDisabled();
-    ImGui::Spacing();ImGui::SetNextItemWidth(300);if(ImGui::SliderFloat("컬러 보기 밝기",&brightness_,.5f,3.f,"%.2f"))for(auto& f:frames_)f.repaint=true;hint("표시용 밝기 · 학습 원본과 독립");
-    ImGui::Spacing();if(primary("검수 화면으로 →"))page_=Page::Review;
-}
-void Application::confirmSplit(){
-    const auto client=client_;Json payload={{"groups",groups_},{"splits",splits_},{"expected_revision",catalog_["summary"]["revision"]}};
-    launch("촬영 그룹 분할 확정",[client,payload]{return JobResult{client.post("/api/native/split-confirm",payload),{}};},[this](JobResult result){updateSummary(result.data.at("summary"));catalog_["split_confirmed"]=true;page_=Page::Export;message_="분할 확정됨 · 이 데이터 버전으로 모델을 비교하세요.";});
-}
-void Application::splitPage(){
-    ImGui::TextUnformatted("검수 다음 단계 · 촬영 그룹으로 데이터 분할");hint("목표: 학습 80% · 검증 10% · 최종 평가 10%");ImGui::TextWrapped("같은 촬영의 모든 카메라와 연속 프레임을 함께 배분합니다. 같은 배치의 반복 촬영은 아래 그룹 번호를 같게 지정하세요.");
-    int done=catalog_.value("reviewed_target_images",0),total=catalog_.value("target_images",0);bool complete=total>0&&done==total;
-    ImGui::TextColored(complete?green:amber,"검수 %d / %d장 · %s",done,total,complete?"분할 확정 가능":"전체 검수를 먼저 완료하세요");ImGui::Separator();
-    ImGui::BeginChild("SplitAssignments",{0,ImGui::GetContentRegionAvail().y-90},false);
-    if(ImGui::BeginTable("RecordingSplits",4,ImGuiTableFlags_RowBg|ImGuiTableFlags_BordersInnerH|ImGuiTableFlags_SizingStretchProp)){ImGui::TableSetupColumn("촬영");ImGui::TableSetupColumn("같은 장면 그룹");ImGui::TableSetupColumn("분할");ImGui::TableSetupColumn("이미지");ImGui::TableHeadersRow();
-        std::vector<std::string> ids;for(auto& r:catalog_["recordings"])ids.push_back(r.at("id").get<std::string>());
-        for(int i=0;i<int(ids.size());++i){auto id=ids[i];ImGui::PushID(i);ImGui::TableNextRow();ImGui::TableNextColumn();ImGui::Text("촬영 %02d",i+1);ImGui::TableNextColumn();auto group=groups_.value(id,id);int position=int(std::find(ids.begin(),ids.end(),group)-ids.begin());position=std::min(position,int(ids.size())-1);auto label="그룹 "+std::to_string(position+1);
-            ImGui::SetNextItemWidth(-1);if(ImGui::BeginCombo("##group",label.c_str())){for(int g=0;g<int(ids.size());++g){auto name="그룹 "+std::to_string(g+1);if(ImGui::Selectable(name.c_str(),g==position)){groups_[id]=ids[g];catalog_["split_confirmed"]=false;}}ImGui::EndCombo();}
-            ImGui::TableNextColumn();const char* labels[]={"미지정","학습","검증","최종 평가"};const char* values[]={"unassigned","train","val","test"};int split=0;for(int s=0;s<4;++s)if(splits_.value(id,"unassigned")==values[s])split=s;ImGui::SetNextItemWidth(-1);if(ImGui::Combo("##split",&split,labels,4)){for(auto& [recording,value]:groups_.items())if(value==groups_[id])splits_[recording]=values[split];catalog_["split_confirmed"]=false;}
-            ImGui::TableNextColumn();int count=0;for(auto& scene:catalog_["scenes"])if(scene["recording"]==id)for(auto& member:scene["members"])count+=member.value("selected",true);ImGui::Text("%d장",count);ImGui::PopID();
-        }ImGui::EndTable();
-    }ImGui::EndChild();
-    int train=0,val=0,test=0;for(auto& scene:catalog_["scenes"]){auto split=splits_.value(scene.at("recording").get<std::string>(),"unassigned");for(auto& m:scene["members"])if(m.value("selected",true)){train+=split=="train";val+=split=="val";test+=split=="test";}}
-    ImGui::Text("현재 배분: 학습 %d · 검증 %d · 최종 평가 %d장",train,val,test);ImGui::BeginDisabled(!complete||busy());
-    if(ImGui::Button("촬영 그룹 자동 배분안")){const auto client=client_;const auto groups=groups_;launch("그룹 배분안 만들기",[client,groups]{return JobResult{client.post("/api/native/split-preview",{{"groups",groups}}),{}};},[this](JobResult result){splits_=result.data.at("splits");message_="배분안을 확인하고 최종 확정하세요.";});}ImGui::SameLine();if(primary("분할 확정 → 내보내기"))confirmSplit();ImGui::EndDisabled();hint("최종 평가는 첫 학습 전에 고정 · 그룹 크기에 따라 비율은 달라집니다.");
-}
-void Application::exportPage(){
-    ImGui::TextUnformatted("검수 완료 데이터 내보내기");ImGui::Separator();bool confirmed=catalog_.value("split_confirmed",false);ImGui::TextColored(confirmed?green:amber,"분할 상태: %s",confirmed?"확정됨":"전체 검수 후 분할을 확정하세요");
-    ImGui::TextUnformatted("COCO 분할 마스크 + COCO 검출 박스 + YOLO 검출 박스");ImGui::TextWrapped("박스 1px 보정은 검출용 COCO와 YOLO에 반영합니다. 분할용 COCO는 원래 마스크와 외접 박스를 보존합니다.");ImGui::Checkbox("공 잘라낸 PNG 함께 저장",&crops_);hint("YOLO 세그멘테이션 형식은 지원하지 않습니다.");
-    ImGui::BeginDisabled(!confirmed||busy()||exportStatus_.value("status","")=="running");if(primary("학습 데이터 내보내기")){const auto client=client_;bool crops=crops_;launch("내보내기 시작",[client,crops]{return JobResult{client.post("/api/native/export",{{"crops",crops}}),{}};},[this](JobResult result){exportStatus_=result.data;message_="검수·분할된 데이터 내보내기 시작";});}ImGui::EndDisabled();ImGui::SameLine();if(ImGui::Button("분할 확인"))showSplit();
-    auto state=exportStatus_.value("status","idle");ImGui::Text("진행: %s",state.c_str());int total=exportStatus_.value("total",0),done=exportStatus_.value("done",0);if(total)ImGui::ProgressBar(float(done)/total,{-1,16});
-    if(exportStatus_.contains("result"))ImGui::TextWrapped("완료 폴더: %s",exportStatus_["result"].value("path","").c_str());if(exportStatus_.contains("error"))ImGui::TextColored(amber,"%s",exportStatus_.value("error","").c_str());
-}
 void Application::selectForCapture(int camera,int rank){if(frames_.empty()||camera<0||camera>=int(frames_.size()))return;const auto order=sorted(frames_[camera]);if(rank>=0&&rank<int(order.size()))select(camera,order[rank]);}
 // One step per call while the app is idle. Returns false when every step has passed; throws on a failed expectation.
 bool Application::selfCheckStep(int step) {
@@ -335,9 +299,39 @@ bool Application::selfCheckStep(int step) {
     }
     return false;
 }
-void Application::refreshExports(){
+// The same kind of scripted run for the split and export pages. Returns false when every step has passed.
+bool Application::stageCheckStep(int step) {
+    auto expect=[](bool condition,const char* what){if(!condition)throw std::runtime_error(std::string("stage-test: ")+what);};
+    const auto planned=[this]{return !splits_.empty()&&std::none_of(splits_.begin(),splits_.end(),[](const Json& split){return split.get<std::string>()=="unassigned";});};
+    switch(step){
+    case 0:openPage(Page::Split);return true;
+    case 1:{expect(page_==Page::Split&&planned(),"the split page did not open with a plan");expect(splits_.size()>=3,"the stage test needs three recordings");
+        auto entry=splits_.begin();const std::string first=entry.key(),second=(++entry).key();
+        picked_={second,first};mergePicked();
+        expect(groups_[first]==groups_[second]&&splits_[first]==splits_[second],"merged recordings must share a group and a split");
+        leaveGroup(groups_,second);expect(groups_[first]!=groups_[second],"a recording that left its group is still grouped");
+        proposeSplit();return true;}
+    case 2:expect(planned(),"no plan after regrouping");confirmSplit();return true;
+    case 3:expect(page_==Page::Export&&dataVersion().size()==64,"confirming did not open the export page with a data version");crops_=false;startExport();return true;
+    default:{
+        const auto status=exportStatus_.value("status","");
+        if(status=="running")return true;
+        expect(status=="complete","the export did not finish");
+        expect(!exports_.empty()&&exports_[0].value("fingerprint",Json()).is_string()&&exports_[0]["fingerprint"]==dataVersion(),"the export history does not show the finished export");
+        expect(std::filesystem::exists(fromUtf8(exports_[0].value("path",""))/"data.yaml"),"the exported folder has no data.yaml");
+        return false;}
+    }
+}
+// The stage pages show per-recording counts that only the full catalog carries.
+void Application::refreshStage(){
     if(busy())return;const auto client=client_;
-    launch("내보내기 기록 읽기",[client]{return JobResult{client.get("/api/native/exports"),{}};},[this](JobResult result){exports_=result.data.value("exports",Json::array());});
+    launch("현황 새로 읽기",[client]{return JobResult{{{"catalog",client.get("/api/native/catalog")},{"exports",client.get("/api/native/exports")},{"export",client.get("/api/export-status")},{"auto",client.get("/api/auto-status")}},{}};},
+        [this](JobResult result){
+            updateCatalog(result.data["catalog"]);exports_=result.data["exports"].value("exports",Json::array());exportStatus_=result.data["export"];autoStatus_=result.data["auto"];
+            // Nothing assigned yet: show the plan the engine would make, so the split page never opens empty.
+            const bool unassigned=std::all_of(splits_.begin(),splits_.end(),[](const Json& split){return split.get<std::string>()=="unassigned";});
+            if(page_==Page::Split&&unassigned&&!splits_.empty())proposeSplit();
+        });
 }
 void Application::keys() {
     auto& io=ImGui::GetIO();

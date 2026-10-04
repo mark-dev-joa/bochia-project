@@ -1,6 +1,8 @@
 #include "native_labeler_view.hpp"
 #include <algorithm>
 #include <numeric>
+#include <set>
+#include <cstdio>
 
 namespace boccia::labeler {
 std::array<Span, 3> tileSpans(int focus, float width, float gap, float narrow) {
@@ -61,5 +63,68 @@ BallRef nextBall(const std::vector<BallRef>& order, BallRef current, int step) {
     const auto found = std::find_if(order.begin(), order.end(), [&](BallRef ball) { return ball.camera == current.camera && ball.index == current.index; });
     const int size = int(order.size()), at = found == order.end() ? (step > 0 ? -1 : 0) : int(found - order.begin());
     return order[((at + step) % size + size) % size];
+}
+std::map<std::string, SplitTotal> splitTotals(const Json& stats, const Json& splits) {
+    std::map<std::string, SplitTotal> totals{{"train", {}}, {"val", {}}, {"test", {}}};
+    for (const auto& [recording, item] : stats.items()) {
+        const auto found = totals.find(splits.value(recording, "unassigned"));
+        if (found == totals.end()) continue;
+        auto& total = found->second;
+        ++total.recordings; total.images += item.value("images", 0); total.balls += item.value("balls", 0); total.empty += item.value("empty", 0);
+    }
+    return totals;
+}
+std::vector<SplitCheck> splitChecks(const Json& stats, const Json& splits, const Json& groups) {
+    static const std::pair<const char*, const char*> names[] = {{"train", "학습"}, {"val", "검증"}, {"test", "평가"}};
+    auto totals = splitTotals(stats, splits);
+    auto join = [](const std::vector<std::string>& parts) { std::string text; for (const auto& part : parts) text += (text.empty() ? "" : ", ") + part; return text; };
+    std::vector<SplitCheck> checks;
+    std::map<std::string, std::string> owner; bool crossing = false;
+    for (const auto& [recording, group] : groups.items()) {
+        const auto split = splits.value(recording, "unassigned");
+        const auto [found, added] = owner.emplace(group.get<std::string>(), split);
+        crossing |= !added && found->second != split;
+    }
+    checks.push_back({!crossing, crossing ? "같은 묶음의 촬영이 서로 다른 쪽에 들어 있습니다" : "같은 촬영과 같은 묶음이 두 쪽에 걸치지 않습니다", ""});
+    std::vector<std::string> missing, noEmpty, single;
+    for (const auto& [key, label] : names) {
+        const auto& total = totals[key];
+        if (!total.images) { missing.push_back(label); continue; }
+        if (!total.empty) noEmpty.push_back(label);
+        if (total.recordings < 2) single.push_back(label);
+    }
+    checks.push_back({missing.empty(), missing.empty() ? "학습·검증·평가에 모두 이미지가 있습니다" : join(missing) + "에 이미지가 없습니다", ""});
+    std::vector<std::string> withEmpty; std::set<std::string> days;
+    for (const auto& [recording, item] : stats.items()) {
+        if (item.value("empty", 0)) { char number[8]; std::snprintf(number, sizeof number, "%02d", item.value("number", 0)); withEmpty.push_back(number); }
+        if (item.contains("day") && item["day"].is_string()) days.insert(item["day"].get<std::string>());
+    }
+    std::sort(withEmpty.begin(), withEmpty.end());
+    checks.push_back({noEmpty.empty(), noEmpty.empty() ? "세 쪽 모두 공 없는 이미지가 들어 있습니다" : join(noEmpty) + "에 공 없는 이미지가 없습니다",
+                      noEmpty.empty() ? "" : "공 없는 이미지가 있는 촬영: " + join(withEmpty)});
+    checks.push_back({single.empty(), single.empty() ? "모든 쪽에 촬영이 2개 이상입니다" : join(single) + "의 촬영이 1개뿐입니다",
+                      single.empty() ? "" : "장면 다양성이 낮아 점수가 그 촬영에 좌우됩니다"});
+    checks.push_back({days.size() != 1, days.size() == 1 ? "모든 촬영이 같은 날입니다" : "여러 날의 촬영이 섞여 있습니다",
+                      days.size() == 1 ? "다른 날 촬영이 들어오면 평가에 넣는 것을 권합니다" : ""});
+    return checks;
+}
+namespace {
+// 묶음 ID를 그 묶음의 첫 촬영 ID로 바꾼다. 묶음을 떠난 촬영의 ID가 묶음 이름으로 남지 않게 한다.
+void renameGroups(Json& groups) {
+    std::map<std::string, std::string> first;
+    for (const auto& [recording, group] : groups.items()) first.emplace(group.get<std::string>(), recording);   // items()는 ID 순서
+    for (auto& [recording, group] : groups.items()) group = first.at(group.get<std::string>());
+}
+}
+void mergeGroups(Json& groups, const std::vector<std::string>& recordings) {
+    std::set<std::string> joined;
+    for (const auto& recording : recordings) joined.insert(groups.value(recording, recording));
+    if (joined.empty()) return;
+    for (auto& [recording, group] : groups.items()) if (joined.count(group.get<std::string>())) group = *joined.begin();
+    renameGroups(groups);
+}
+void leaveGroup(Json& groups, const std::string& recording) {
+    groups[recording] = "";   // 다른 묶음 ID와 겹치지 않는 임시 값
+    renameGroups(groups);
 }
 }

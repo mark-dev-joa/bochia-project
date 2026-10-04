@@ -7,6 +7,7 @@
 namespace boccia::labeler {
 using Json = nlohmann::json;
 inline std::filesystem::path fromUtf8(const std::string& value) { return std::filesystem::path(std::u8string(value.begin(), value.end())); }
+inline std::string utf8(const std::filesystem::path& value) { const auto text = value.u8string(); return {text.begin(), text.end()}; }
 cv::Mat decodeMask(const Json& rle, int width, int height);
 Json encodeMask(const cv::Mat& mask);
 Json maskAnnotation(const cv::Mat& mask, const Json& previous, const std::string& source);

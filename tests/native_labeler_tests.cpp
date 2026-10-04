@@ -42,6 +42,29 @@ void viewTests() {
     auto begin = nextBall(order, {}, 1), wrapped = nextBall(order, order[2], 1), back = nextBall(order, order[0], -1);
     check(begin.camera == 0 && begin.index == 1 && wrapped.camera == 0 && wrapped.index == 1 && back.camera == 1, "ball cycling wrong");
     check(nextBall({}, {}, 1).camera == -1, "empty scene has no ball to select");
+    auto stats = Json::parse(R"({"a":{"number":1,"day":"2026-10-02","images":420,"balls":563,"empty":0},
+                                 "b":{"number":2,"day":"2026-10-02","images":492,"balls":935,"empty":39},
+                                 "c":{"number":3,"day":"2026-10-02","images":629,"balls":1322,"empty":0}})");
+    auto splits = Json::parse(R"({"a":"test","b":"train","c":"val"})"), groups = Json::parse(R"({"a":"a","b":"b","c":"c"})");
+    auto totals = splitTotals(stats, splits);
+    check(totals["train"].images == 492 && totals["train"].empty == 39 && totals["test"].recordings == 1 && totals["val"].balls == 1322, "split totals wrong");
+    auto checks = splitChecks(stats, splits, groups);
+    check(checks.size() == 5 && checks[0].ok && checks[1].ok && !checks[2].ok && !checks[3].ok && !checks[4].ok, "split checks wrong");
+    check(checks[2].detail.find("02") != std::string::npos, "empty-image check must name the recordings that have them");
+    groups["b"] = "a";
+    check(!splitChecks(stats, splits, groups)[0].ok, "a group across two splits must fail");
+    splits["a"] = "unassigned";
+    check(!splitChecks(stats, splits, groups)[1].ok, "a split without images must fail");
+
+    auto batches = Json::parse(R"({"a":"a","b":"b","c":"c","d":"d"})");
+    mergeGroups(batches, {"c", "b"});
+    check(batches["b"] == "b" && batches["c"] == "b" && batches["a"] == "a" && batches["d"] == "d", "a merged group must be named after its first member");
+    mergeGroups(batches, {"d", "c"});
+    check(batches["b"] == "b" && batches["c"] == "b" && batches["d"] == "b", "merging with one member of a group must take the whole group");
+    leaveGroup(batches, "b");
+    check(batches["b"] == "b" && batches["c"] == "c" && batches["d"] == "c", "the rest of a group must not keep the id of the recording that left");
+    leaveGroup(batches, "d");
+    check(batches["c"] == "c" && batches["d"] == "d", "leaving a pair must leave two single recordings");
 }
 int main(int argc,char** argv){try{
     viewTests();
@@ -54,7 +77,7 @@ int main(int argc,char** argv){try{
     Json boundary={{"bbox",{0,0,1,1}}};for(int edge=0;edge<4;++edge)check(!nudgeEdge(boundary,edge,false,13,9),"subpixel box accepted");check(!nudgeEdge(boundary,0,true,13,9),"top image edge overflow");check(!nudgeEdge(boundary,2,true,13,9),"left image edge overflow");
     mask.at<uchar>(1,4)=1;auto changed=maskAnnotation(mask,box,"manual_brush");check(!changed.contains("detection_bbox"),"mask edit retained stale correction");check(changed["area"]==25,"brush mask area wrong");
     if(argc>1){
-        Client client(std::stoi(argv[1]));auto catalog=client.get("/api/native/catalog");check(catalog["api_version"]==1,"native catalog incompatible");
+        Client client(std::stoi(argv[1]));auto catalog=client.get("/api/native/catalog");check(catalog["api_version"]==2,"native catalog incompatible");
         auto found=std::find_if(catalog["scenes"].begin(),catalog["scenes"].end(),[](const Json& scene){return scene.value("recording_number",0)==5&&scene.value("index",-1)==0;});check(found!=catalog["scenes"].end(),"test scene absent");
         auto member=(*found)["members"][0];auto query=Client::frameQuery(member,(*found)["recording"].get<std::string>());auto frame=client.get("/api/frame"+query);auto original=frame;
         check(!frame["boxes"].empty(),"test ball absent");check(!client.image(member,(*found)["recording"].get<std::string>()).empty(),"native image decode failed");

@@ -102,7 +102,7 @@ find_program(BOCCIA_LABELER_PYTHON NAMES python python3
 add_library(native_labeler_model src/native_labeler_model.cpp src/native_labeler_view.cpp)
 target_include_directories(native_labeler_model PUBLIC src ${OpenCV_INCLUDE_DIRS} "${DEPENDENCY_ROOT}/nlohmann/include")
 target_link_libraries(native_labeler_model PUBLIC ${OpenCV_LIBS})
-add_executable(boccia_labeler WIN32 src/native_labeler_main.cpp src/native_labeler_app.cpp src/native_labeler_client.cpp src/native_labeler_theme.cpp src/native_labeler_review.cpp)
+add_executable(boccia_labeler WIN32 src/native_labeler_main.cpp src/native_labeler_app.cpp src/native_labeler_client.cpp src/native_labeler_theme.cpp src/native_labeler_review.cpp src/native_labeler_pages.cpp)
 target_link_libraries(boccia_labeler PRIVATE native_labeler_model imgui opengl32 winhttp shell32)
 target_compile_definitions(boccia_labeler PRIVATE GLFW_INCLUDE_NONE NOMINMAX
   BOCCIA_LABELER_ROOT="${CMAKE_SOURCE_DIR}" BOCCIA_LABELER_PYTHON="${BOCCIA_LABELER_PYTHON}")
