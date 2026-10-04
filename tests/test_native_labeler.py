@@ -6,6 +6,7 @@ import time
 import unittest
 from urllib.request import Request, urlopen
 
+import cv2
 import numpy as np
 
 from ball_labeler import LabelServer, export_dataset, validate_boxes
@@ -127,6 +128,56 @@ class NativeWorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.save(boxes=[{"bbox": [2, 1, 3, 4], "color": "red"}])
 
+    def test_thumbnail_is_a_small_cached_jpeg(self):
+        from labeler_native import thumbnail
+        first = thumbnail(self.project, self.ids[0], "camera-0", 0, 32)
+        image = cv2.imdecode(np.frombuffer(first, np.uint8), cv2.IMREAD_COLOR)
+        self.assertEqual(image.shape[:2], (24, 32))
+        self.assertIs(thumbnail(self.project, self.ids[0], "camera-0", 0, 32), first)
+        with self.assertRaises(ValueError):
+            thumbnail(self.project, self.ids[0], "camera-0", 0, 4000)
+
+    def test_catalog_reports_attention_and_recording_statistics(self):
+        self.save(boxes=[{"bbox": [2, 1, 3, 4]}, {"bbox": [0, 0, 2, 2]}])
+        native = native_catalog(self.project)
+        stats = native["stats"][self.ids[0]]
+        self.assertEqual((stats["number"], stats["images"], stats["balls"], stats["empty"], stats["small"], stats["reviewed"]), (1, 6, 2, 5, 2, 1))
+        self.assertIsNone(stats["day"])
+        self.assertEqual(stats["frames"], [3, 3])
+        self.assertTrue(all("attention" in member for scene in native["scenes"] for member in scene["members"]))
+
+    def test_segment_passes_the_dragged_box_as_seed(self):
+        calls = []
+
+        class Assist:
+            def segment(self, image, key, points, radius=14, seed_bbox=None):
+                calls.append(seed_bbox)
+                return {"bbox": [1, 1, 2, 2]}
+
+        payload = {"recording": self.ids[0], "camera": "camera-0", "index": 0,
+                   "points": [{"x": 3, "y": 2, "label": 1}], "box": [1, 1, 4, 3]}
+        self.project.assistance(Assist(), "segment", payload)
+        self.project.assistance(Assist(), "segment", {**payload, "box": None})
+        self.assertEqual(calls, [[1, 1, 4, 3], None])
+
+    def test_export_history_lists_only_completed_exports(self):
+        from labeler_native import export_history
+        self.assertEqual(export_history(self.project), [])
+        self.review_all()
+        self.confirm()
+        native_action(self.project, "export", {"crops": False})
+        deadline = time.monotonic() + 5
+        while self.project.job["status"] == "running" and time.monotonic() < deadline:
+            time.sleep(.01)
+        broken = self.project.export_root / "20990101-000000-broken"
+        broken.mkdir(parents=True)
+        (broken / "manifest.json").write_text("{}")
+        (broken / "INCOMPLETE.txt").write_text("x")
+        history = export_history(self.project)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["fingerprint"], self.project.state["native_split"]["fingerprint"])
+        self.assertEqual(sum(item["images"] for item in history[0]["counts"].values()), 18)
+
     def test_native_http_catalog_and_review_use_same_project(self):
         server = LabelServer(("127.0.0.1", 0), self.project)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -142,6 +193,11 @@ class NativeWorkflowTests(unittest.TestCase):
             with urlopen(Request(base + "/api/native/review", data=body, headers={"Content-Type": "application/json"})) as response:
                 saved = json.load(response)
             self.assertEqual(saved["summary"]["reviewed"], 2)
+            with urlopen(base + f"/api/native/thumb?recording={self.ids[0]}&camera=camera-0&index=0&width=32") as response:
+                self.assertEqual(response.headers["Content-Type"], "image/jpeg")
+                self.assertGreater(len(response.read()), 100)
+            with urlopen(base + "/api/native/exports") as response:
+                self.assertEqual(json.load(response), {"exports": []})
         finally:
             server.shutdown()
             server.server_close()

@@ -319,7 +319,8 @@ class Project:
         image = self.catalog.read(recording, camera, index)
         if method == "segment":
             try:
-                box = assist.segment(image, self.catalog.signature + "/" + frame["key"], payload["points"], payload.get("radius", 14))
+                box = assist.segment(image, self.catalog.signature + "/" + frame["key"], payload["points"],
+                                     payload.get("radius", 14), payload.get("box"))
             except ValueError:
                 raise
             except Exception as exc:
@@ -549,6 +550,13 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/native/catalog":
                 from labeler_native import native_catalog
                 self.json_response(native_catalog(project))
+            elif parsed.path == "/api/native/thumb":
+                from labeler_native import thumbnail
+                self.respond(200, thumbnail(project, query["recording"][0], query["camera"][0], int(query["index"][0]),
+                                            int(query.get("width", [128])[0])), "image/jpeg")
+            elif parsed.path == "/api/native/exports":
+                from labeler_native import export_history
+                self.json_response({"exports": export_history(project)})
             elif parsed.path in ("/api/frame", "/api/image"):
                 recording, camera = query["recording"][0], query["camera"][0]
                 index = int(query.get("index", [0])[0])

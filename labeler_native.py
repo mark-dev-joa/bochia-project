@@ -7,6 +7,9 @@ import bisect
 import copy
 import hashlib
 import json
+from datetime import datetime
+
+import cv2
 
 
 def scene_index(catalog):
@@ -63,6 +66,68 @@ def split_valid(project):
                 and confirmation.get("splits") == project.state["splits"])
 
 
+def recording_stats(project):
+    """Per-recording counts of the review targets for the data and split tables."""
+    stats = {}
+    for number, (recording_id, recording) in enumerate(project.catalog.recordings.items(), 1):
+        stamp = recording["name"].rsplit("-", 1)[-1]
+        started = datetime.fromtimestamp(int(stamp) / 1000) if stamp.isdigit() and len(stamp) == 13 else None
+        times = next(iter(recording["cameras"].values()))["times"]
+        stats[recording_id] = {"number": number, "name": recording["name"],
+                               "day": started.strftime("%Y-%m-%d") if started else None,
+                               "started": started.strftime("%m-%d %H:%M:%S") if started else None,
+                               "seconds": round((times[-1] - times[0]) / 1e9, 1) if started else None,
+                               "frames": [len(camera["frames"]) for camera in recording["cameras"].values()],
+                               "images": 0, "balls": 0, "empty": 0, "small": 0, "reviewed": 0}
+    for member in targets(project):
+        item = stats[member["key"].split("/")[0]]
+        frame = project.state["frames"].get(member["key"], {})
+        boxes = frame.get("boxes", [])
+        item["images"] += 1
+        item["balls"] += len(boxes)
+        item["empty"] += not boxes
+        item["small"] += sum(max(box.get("detection_bbox", box["bbox"])[2:]) < 32 for box in boxes)
+        item["reviewed"] += bool(frame.get("reviewed"))
+    return stats
+
+
+def thumbnail(project, recording, camera, index, width=128):
+    """Small JPEG of one source frame for the scene list. Never written to disk."""
+    width = int(width)
+    if not 16 <= width <= 512:
+        raise ValueError("썸네일 폭이 올바르지 않습니다.")
+    cache = project.__dict__.setdefault("thumbnails", {})
+    key = (recording, camera, int(index), width)
+    if key not in cache:
+        image = project.catalog.read(recording, camera, int(index))
+        height = max(1, round(image.shape[0] * width / image.shape[1]))
+        ok, encoded = cv2.imencode(".jpg", cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA),
+                                   [cv2.IMWRITE_JPEG_QUALITY, 85])
+        if not ok:
+            raise ValueError("썸네일을 만들지 못했습니다.")
+        cache[key] = encoded.tobytes()
+    return cache[key]
+
+
+def export_history(project):
+    """Completed export folders, newest first."""
+    entries = []
+    if not project.export_root.is_dir():
+        return entries
+    for folder in sorted(project.export_root.iterdir(), reverse=True):
+        manifest = folder / "manifest.json"
+        if not manifest.is_file() or (folder / "INCOMPLETE.txt").exists():
+            continue
+        try:
+            value = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        entries.append({"name": folder.name, "path": str(folder), "created_at": value.get("created_at"),
+                        "counts": value.get("counts", {}),
+                        "fingerprint": (value.get("native_split") or {}).get("fingerprint")})
+    return entries
+
+
 def native_catalog(project):
     with project.lock:
         summary = project.summary()
@@ -72,14 +137,16 @@ def native_catalog(project):
             for member in scene["members"]:
                 entry = summary["frames"].get(member["key"], {})
                 member.update(selected=entry.get("selected", True), reviewed=entry.get("reviewed", False),
-                              status=entry.get("review_status", "draft"), count=entry.get("count", 0))
+                              status=entry.get("review_status", "draft"), count=entry.get("count", 0),
+                              attention=entry.get("needs_attention", False))
                 if member["selected"]:
                     count += 1
                     reviewed += member["reviewed"]
         return {"api_version": 1, "source": str(project.catalog.source), "project_path": str(project.path),
                 "recordings": project.catalog.metadata(), "summary": summary, "scenes": scenes,
                 "target_images": count, "reviewed_target_images": reviewed,
-                "split_confirmed": split_valid(project), "groups": project.state.get("native_split", {}).get("groups", {})}
+                "split_confirmed": split_valid(project), "groups": project.state.get("native_split", {}).get("groups", {}),
+                "stats": recording_stats(project)}
 
 
 def group_plan(project, groups):
