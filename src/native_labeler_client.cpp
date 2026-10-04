@@ -46,6 +46,12 @@ cv::Mat Client::image(const Json& member, const std::string& recording) const {
     auto bytes = request("GET", "/api/image" + frameQuery(member, recording), "");
     auto image = cv::imdecode(bytes, cv::IMREAD_COLOR); if (image.empty()) throw std::runtime_error("이미지를 복원하지 못했습니다."); return image;
 }
+cv::Mat Client::thumbnail(const std::string& key) const {
+    const auto first = key.find('/'), second = key.find('/', first + 1);
+    if (first == std::string::npos || second == std::string::npos) throw std::runtime_error("프레임 키가 올바르지 않습니다.");
+    auto bytes = request("GET", "/api/native/thumb?recording=" + key.substr(0, first) + "&camera=" + key.substr(first + 1, second - first - 1) + "&index=" + key.substr(second + 1), "");
+    return cv::imdecode(bytes, cv::IMREAD_COLOR);
+}
 void Client::startServer(int port, const std::filesystem::path& source, const std::filesystem::path& project, const std::filesystem::path& exports) {
     auto quote = [](const std::filesystem::path& value) {
         auto text=value.native();if(text.find(L'"')!=std::wstring::npos)throw std::runtime_error("경로에 따옴표를 사용할 수 없습니다.");

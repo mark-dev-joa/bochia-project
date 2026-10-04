@@ -10,6 +10,7 @@ public:
     Json get(const std::string& path) const;
     Json post(const std::string& path, const Json& payload) const;
     cv::Mat image(const Json& member, const std::string& recording) const;
+    cv::Mat thumbnail(const std::string& key) const;   // key = "recording/camera/index"
     static std::string frameQuery(const Json& member, const std::string& recording);
     static void startServer(int port, const std::filesystem::path& source, const std::filesystem::path& project,
                             const std::filesystem::path& exports);

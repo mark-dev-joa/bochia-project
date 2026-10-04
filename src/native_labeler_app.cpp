@@ -1,4 +1,5 @@
 #include "native_labeler_app.hpp"
+#include "native_labeler_theme.hpp"
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
 #include <fstream>
@@ -17,7 +18,11 @@ void hint(const char* text) { ImGui::TextColored(muted, "%s", text); }
 bool primary(const char* label, ImVec2 size = {}) { ImGui::PushStyleColor(ImGuiCol_Button, {.13f,.38f,.32f,1}); ImGui::PushStyleColor(ImGuiCol_ButtonHovered, {.19f,.49f,.40f,1}); bool result=ImGui::Button(label,size); ImGui::PopStyleColor(2); return result; }
 }
 Application::Application(Configuration config): config_(std::move(config)), client_(config_.port), poll_(Clock::now()) { connect(); }
-Application::~Application() { if(task_.valid()) task_.wait(); if(config_.rememberUi){try{rememberPosition();}catch(...){}} releaseFrames(); }
+Application::~Application() {
+    if(task_.valid()) task_.wait(); if(thumbTask_.valid()) thumbTask_.wait(); if(ahead_.valid()) ahead_.wait();
+    if(config_.rememberUi){try{rememberPosition();}catch(...){}} releaseFrames();
+    for(auto& [key,id]:thumbs_)if(id)glDeleteTextures(1,&id);
+}
 std::filesystem::path Application::preferencesPath() const { return config_.project.parent_path()/(config_.project.stem().wstring()+L"-native-ui.json"); }
 void Application::rememberPosition() const {
     if(frames_.empty())return;
@@ -72,7 +77,7 @@ void Application::connect() {
     }, [this](JobResult result){ updateCatalog(result.data.at("catalog")); autoStatus_=result.data.at("auto"); message_="기존 촬영과 라벨 연결 완료"; restorePosition(); });
 }
 void Application::updateCatalog(Json value) {
-    catalog_=std::move(value);
+    catalog_=std::move(value);rowsDirty_=true;
     for(const auto& recording:catalog_["recordings"]) {
         auto id=recording.at("id").get<std::string>();
         if(!groups_.contains(id))groups_[id]=id;
@@ -81,11 +86,11 @@ void Application::updateCatalog(Json value) {
     if(catalog_.value("split_confirmed",false))groups_=catalog_.at("groups");
 }
 void Application::updateSummary(const Json& summary) {
-    catalog_["summary"]=summary; catalog_["split_confirmed"]=false;
+    catalog_["summary"]=summary; catalog_["split_confirmed"]=false;rowsDirty_=true;
     int target=0,done=0;
     for(auto& scene:catalog_["scenes"])for(auto& member:scene["members"]) {
         const auto key=member.at("key").get<std::string>();
-        if(summary["frames"].contains(key)) {const auto& item=summary["frames"][key];member["selected"]=item.value("selected",true);member["reviewed"]=item.value("reviewed",false);member["status"]=item.value("review_status","draft");member["count"]=item.value("count",0);}
+        if(summary["frames"].contains(key)) {const auto& item=summary["frames"][key];member["selected"]=item.value("selected",true);member["reviewed"]=item.value("reviewed",false);member["status"]=item.value("review_status","draft");member["count"]=item.value("count",0);member["attention"]=item.value("needs_attention",false);}
         if(member.value("selected",true)){++target;done+=member.value("reviewed",false);}
     }
     catalog_["target_images"]=target;catalog_["reviewed_target_images"]=done;
@@ -102,19 +107,45 @@ void Application::loadScene(int index,bool editor,int camera) {
         JobResult result; const auto recording=scene.at("recording").get<std::string>();
         for(const auto& member:scene.at("members")){FrameView frame;frame.member=member;frame.annotation=client.get("/api/frame"+Client::frameQuery(member,recording));frame.annotation["review_status"]=member.value("status","draft");frame.image=client.image(member,recording);result.frames.push_back(std::move(frame));}
         return result;
-    },[this,index,editor,camera,token](JobResult result){if(token!=generation_)return;releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=current().annotation["boxes"].empty()?-1:0;editor_=editor;page_=Page::Review;scrollToCurrent_=true;cancel();message_="원본과 저장 라벨 표시 중";});
+    },[this,index,editor,camera,token](JobResult result){if(token!=generation_)return;releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor;page_=Page::Review;scrollToCurrent_=true;cancel();message_="원본과 저장 라벨 표시 중";});
 }
 bool Application::pending() const { return !proposal_.is_null()||!polygon_.empty()||!points_.empty()||dragging_; }
 bool Application::guard(){if(busy()){message_="처리가 끝난 뒤 이동하세요. 화면 확대·이동은 계속할 수 있습니다.";return false;}if(pending()){message_="미확정 윤곽을 반영하거나 취소하세요.";return false;}return true;}
 void Application::navigate(int index){if(!guard())return;if(!frames_.empty()&&current().dirty){save([this,index]{loadScene(index);});return;}loadScene(index);}
-void Application::showEditor(int camera){if(frames_.empty()||!guard())return;bool entering=!editor_;switchCamera(camera);editor_=true;page_=Page::Review;if(entering&&!frames_.empty())current().scale=0;}
-void Application::switchCamera(int camera) {
-    if(camera<0||camera>=int(frames_.size())||!guard())return;
-    if(current().dirty){save([this,camera]{switchCamera(camera);});return;}
-    camera_=camera;selected_=current().annotation["boxes"].empty()?-1:0;current().repaint=true;cancel();
+void Application::showEditor(int camera){focus(camera);}
+void Application::switchCamera(int camera){focus(camera);}
+void Application::openPage(Page page){if(!guard())return;if(!frames_.empty()&&current().dirty)save([this,page]{page_=page;});else page_=page;if(page==Page::Export)refreshExports();}
+void Application::showPage(int page){openPage(Page(std::clamp(page,0,3)));}
+// Enlarge one camera in place without selecting a ball.
+void Application::focus(int camera) {
+    if(frames_.empty()||camera<0||camera>=int(frames_.size())||!guard())return;
+    if(current().dirty&&camera!=camera_){save([this,camera]{focus(camera);});return;}
+    current().repaint=true;camera_=camera;editor_=true;selected_=-1;current().scale=0;current().repaint=true;cancel();
+}
+// Enlarge the camera, select the ball and zoom to it.
+void Application::select(int camera,int ball) {
+    if(frames_.empty()||camera<0||camera>=int(frames_.size())||!guard())return;
+    if(current().dirty&&camera!=camera_){save([this,camera,ball]{select(camera,ball);});return;}
+    if(camera!=camera_){current().repaint=true;cancel();}
+    camera_=camera;editor_=true;selected_=ball<int(current().annotation["boxes"].size())?ball:-1;current().scale=0;current().repaint=true;
+}
+void Application::cycle(int step) {
+    if(frames_.empty()||!guard())return;
+    std::vector<Json> annotations;for(auto& frame:frames_)annotations.push_back(frame.annotation);
+    const auto next=nextBall(ballOrder(annotations),editor_?BallRef{camera_,selected_}:BallRef{},step);
+    if(next.camera>=0)select(next.camera,next.index);
+}
+// edge: 0 top, 1 bottom, 2 left, 3 right. The mask is never touched.
+void Application::nudge(int edge,bool expand) {
+    if(frames_.empty()||!editor_||selected_<0||pending()||busy())return;
+    auto& frame=current();auto& box=frame.annotation["boxes"][selected_];auto trial=box;
+    if(!nudgeEdge(trial,edge,expand,frame.image.cols,frame.image.rows)){message_=expand?"이미지 밖으로 넓힐 수 없습니다.":"박스는 1픽셀보다 작아질 수 없습니다.";return;}
+    // A correction that ends up equal to the mask bounds is no correction.
+    if(trial.at("detection_bbox")==trial.at("bbox"))trial.erase("detection_bbox");
+    checkpoint();box=trial;boxes_=true;changed();
 }
 void Application::checkpoint(){auto& f=current();f.history.push_back(f.annotation);if(f.history.size()>40)f.history.erase(f.history.begin());}
-void Application::changed(){auto& f=current();f.dirty=true;f.repaint=true;f.annotation["reviewed"]=false;f.annotation["review_status"]="editing";f.member["reviewed"]=false;f.member["status"]="editing";catalog_["split_confirmed"]=false;changed_=Clock::now();message_="수정됨 · 자동 저장 대기";}
+void Application::changed(){auto& f=current();f.dirty=true;f.repaint=true;f.annotation["reviewed"]=false;f.annotation["review_status"]="editing";f.member["reviewed"]=false;f.member["status"]="editing";catalog_["split_confirmed"]=false;rowsDirty_=true;changed_=Clock::now();message_="수정됨 · 자동 저장 대기";}
 void Application::save(std::function<void()> next) {
     if(frames_.empty()||pending()||busy())return;
     const int slot=camera_; const auto key=current().annotation.at("key").get<std::string>();
@@ -141,33 +172,53 @@ void Application::undo(){if(busy())return;if(pending()){cancel();return;}auto& f
 void Application::segment(cv::Point2d point,bool negative) {
     if(busy())return;
     if(!proposal_.is_null()&&proposal_.value("source","")!="efficientsam"){message_="현재 윤곽을 먼저 반영하거나 취소하세요.";return;}
-    if(points_.empty()) {if(negative){message_="첫 점은 공 내부에 클릭하세요.";return;}replacement_=hit(current(),point);if(replacement_<0&&replaceSelected_)replacement_=selected_;if(replacement_>=0)selected_=replacement_;}
+    if(points_.empty()) {if(negative){message_="첫 점은 공 내부에 클릭하세요.";return;}replacement_=hit(current(),point);if(replacement_>=0)selected_=replacement_;}
     if(points_.size()>=32){message_="점은 최대 32개입니다. 현재 결과를 반영하거나 취소하세요.";return;}
     points_.push_back({{"x",point.x},{"y",point.y},{"label",negative?0:1}});
     auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["radius"]=radius_;
     const auto key=current().annotation.at("key").get<std::string>();const auto client=client_;const auto token=generation_;
-    launch("EfficientSAM으로 공 윤곽 분리",[client,payload]{return JobResult{client.post("/api/assist/segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_="실제 분할 결과 · Enter 반영 / Esc 취소";});
+    launch("EfficientSAM으로 공 윤곽 분리",[client,payload]{return JobResult{client.post("/api/assist/segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_="제안 미확정 · Enter 반영, Esc 취소";});
+}
+// A dragged box is sent together with its center as the positive point.
+void Application::segmentBox(cv::Rect2d box) {
+    if(busy()||!points_.empty()||box.width<2||box.height<2)return;
+    const cv::Point2d center{box.x+box.width/2,box.y+box.height/2};
+    replacement_=hit(current(),center);if(replacement_>=0)selected_=replacement_;
+    points_.push_back({{"x",center.x},{"y",center.y},{"label",1}});
+    auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["radius"]=std::max(box.width,box.height)/2;payload["box"]={box.x,box.y,box.width,box.height};
+    const auto key=current().annotation.at("key").get<std::string>();const auto client=client_;const auto token=generation_;
+    launch("EfficientSAM으로 공 윤곽 분리",[client,payload]{return JobResult{client.post("/api/assist/segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_="제안 미확정 · Enter 반영, Esc 취소";});
 }
 void Application::polygonProposal(){
     if(busy()||polygon_.size()<3)return;Json points=Json::array();for(auto point:polygon_)points.push_back({point.x,point.y});
     auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points;const auto client=client_;const auto token=generation_;
     launch("수동 폴리곤 마스크 만들기",[client,payload]{return JobResult{client.post("/api/assist/polygon",payload),{}};},[this,token](JobResult result){if(token!=generation_)return;proposal_=result.data.at("proposals").at(0);polygon_.clear();current().repaint=true;message_="폴리곤 미리보기 · Enter로 반영";});
 }
-void Application::review(bool next,bool hold,int member) {
+void Application::review(Scope scope,bool hold,int member) {
     if(!guard()||frames_.empty())return;
-    if(current().dirty){save([this,next,hold,member]{review(next,hold,member);});return;}
+    if(current().dirty){save([this,scope,hold,member]{review(scope,hold,member);});return;}
     Json keys=Json::array();
-    if(member>=0)keys.push_back(frames_.at(member).annotation.at("key"));
-    else if(editor_)keys.push_back(current().annotation.at("key"));
+    if(scope==Scope::Camera)keys.push_back(frames_.at(member>=0?member:camera_).annotation.at("key"));
     else for(auto& frame:frames_)if(frame.member.value("selected",true)&&(!hold||!frame.member.value("reviewed",false)))keys.push_back(frame.annotation.at("key"));
     if(keys.empty())return;
+    const bool advance=scope==Scope::Scene||hold;
     const auto client=client_;Json payload={{"keys",keys},{"status",hold?"hold":"reviewed"},{"expected_revision",catalog_["summary"]["revision"]}};
-    launch(hold?"보류 상태 저장":"검수 완료 저장",[client,payload]{return JobResult{client.post("/api/native/review",payload),{}};},[this,next,hold,keys](JobResult result){updateSummary(result.data.at("summary"));for(auto& f:frames_)if(std::find(keys.begin(),keys.end(),f.annotation["key"])!=keys.end()){f.annotation["reviewed"]=!hold;f.annotation["review_status"]=hold?"hold":"reviewed";}message_=hold?"보류 저장 완료":"검수 완료 저장됨";if(next)nextUnreviewed(hold);});
+    launch(hold?"보류 상태 저장":"확인 저장",[client,payload]{return JobResult{client.post("/api/native/review",payload),{}};},[this,advance,hold,keys](JobResult result){
+        updateSummary(result.data.at("summary"));
+        for(auto& f:frames_)if(std::find(keys.begin(),keys.end(),f.annotation["key"])!=keys.end()){f.annotation["reviewed"]=!hold;f.annotation["review_status"]=hold?"hold":"reviewed";}
+        message_=hold?"보류로 표시했습니다":"확인했습니다";if(advance)nextUnreviewed();});
 }
-void Application::nextUnreviewed(bool skipCurrent){
-    if(editor_&&!skipCurrent)for(int offset=1;offset<int(frames_.size());++offset){int slot=(camera_+offset)%int(frames_.size());auto& member=frames_[slot].member;if(member.value("selected",true)&&!member.value("reviewed",false)){switchCamera(slot);message_="같은 장면의 다음 카메라 검수";return;}}
-    for(int offset=1;offset<=int(catalog_["scenes"].size());++offset){int index=(scene_+offset)%int(catalog_["scenes"].size());for(auto& member:catalog_["scenes"][index]["members"])if(member.value("selected",true)&&!member.value("reviewed",false)){loadScene(index);return;}}
-    editor_=false;message_="대상 전체 검수 완료 · 데이터 분할 단계로 이동하세요.";
+// Held images are skipped; they are revisited through the list filter.
+int Application::nextUnreviewedIndex() const {
+    const int count=int(catalog_["scenes"].size());
+    for(int offset=1;offset<=count;++offset){const int index=(scene_+offset)%count;for(const auto& member:catalog_["scenes"][index]["members"])if(member.value("selected",true)&&!member.value("reviewed",false)&&member.value("status","")!="hold")return index;}
+    return -1;
+}
+void Application::nextUnreviewed(){
+    const int index=nextUnreviewedIndex();
+    if(index<0){editor_=false;message_="검수 대상을 모두 확인했습니다. 분할 단계로 넘어가세요.";return;}
+    if(index==scene_){message_="남은 미검수 이미지는 이 장면뿐입니다.";return;}
+    loadScene(index);
 }
 void Application::refresh(){if(!guard())return;if(!frames_.empty()&&current().dirty){message_="저장되지 않은 변경이 있습니다. 저장을 완료한 뒤 새로고침하세요.";return;}const auto client=client_;launch("저장 상태 새로고침",[client]{return JobResult{client.get("/api/native/catalog"),{}};},[this](JobResult result){updateCatalog(result.data);loadScene(scene_,editor_,camera_);});}
 void Application::showSplit(){if(!guard())return;if(!frames_.empty()&&current().dirty){save([this]{showSplit();});return;}page_=Page::Split;editor_=false;}
@@ -180,6 +231,7 @@ void Application::tick(){
             if(!frames_.empty()&&current().dirty){try{preserveRecovery();message_="저장 실패 · 변경은 메모리와 recovery 폴더에 보관했습니다.";}catch(...) {}}
         }
     }
+    pumpThumbs();
     if(ready()&&!busy()&&!pending()&&current().dirty&&Clock::now()-changed_>std::chrono::milliseconds(450)&&error_.empty())save();
     const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running";
     if(activeJob&&ready()&&!busy()&&Clock::now()-poll_>std::chrono::seconds(3)&&error_.empty()&&!current().dirty&&!pending()){
@@ -191,129 +243,38 @@ void Application::tick(){
         });
     }
 }
-const char* Application::statusLabel(const Json& member){const auto state=member.value("status","draft");return state=="reviewed"?"검수 완료":state=="hold"?"보류":state=="editing"?"수정됨":"미검수";}
-void Application::queue(){
-    ImGui::TextUnformatted("프레임 데이터");hint("한 행 = 한 장면 · 카메라 함께 보기");
-    int target=catalog_.value("target_images",0),done=catalog_.value("reviewed_target_images",0);
-    ImGui::Text("%d / %d 이미지 완료",done,target);ImGui::ProgressBar(target?float(done)/target:0,{ -1,5 },"");
-    if(ImGui::Checkbox("대표 프레임만",&representatives_)){}
-    const char* filters[]={"전체","미검수","완료","보류"};ImGui::SetNextItemWidth(-1);ImGui::Combo("##statusFilter",&filter_,filters,4);ImGui::Separator();
-    const float buttons=86;ImGui::BeginChild("SceneList",{0,ImGui::GetContentRegionAvail().y-buttons},false);
-    for(int i=0;i<int(catalog_["scenes"].size());++i){const auto& scene=catalog_["scenes"][i];int reviewed=0,count=0,total=0;bool held=false,editing=false;
-        for(const auto& member:scene["members"]){if(representatives_&&!member.value("selected",true))continue;++total;reviewed+=member.value("reviewed",false);count+=member.value("count",0);held|=member.value("status","")=="hold";editing|=member.value("status","")=="editing";}
-        if(!total||(filter_==1&&reviewed==total)||(filter_==2&&reviewed!=total)||(filter_==3&&!held))continue;
-        const char* state=held?"보류":reviewed==total?"검수 완료":reviewed||editing?"검수 중":"미검수";
-        ImGui::PushID(i);auto pos=ImGui::GetCursorScreenPos();bool clicked=ImGui::Selectable("##scene",i==scene_,0,{0,69});auto draw=ImGui::GetWindowDrawList();
-        draw->AddText({pos.x+7,pos.y+6},IM_COL32(220,233,241,255),title(scene).c_str());std::string label=std::string(state)+" · "+std::to_string(reviewed)+"/"+std::to_string(total)+" 대상 완료";
-        draw->AddText({pos.x+7,pos.y+29},held?IM_COL32(241,187,91,255):reviewed==total?IM_COL32(104,231,195,255):IM_COL32(153,177,192,255),label.c_str());
-        label="영상 "+std::to_string(total)+" · 주석 "+std::to_string(count);draw->AddText({pos.x+7,pos.y+49},IM_COL32(126,151,166,255),label.c_str());if(i==scene_&&scrollToCurrent_){ImGui::SetScrollHereY(.5f);scrollToCurrent_=false;}if(clicked)navigate(i);ImGui::PopID();
-    }
-    ImGui::EndChild();ImGui::Separator();if(primary("검수 후 데이터 분할 →",{-1,30}))showSplit();if(ImGui::Button("저장 상태 새로고침",{-1,27}))refresh();
-}
 void Application::uploadTexture(GLuint& texture,const cv::Mat& pixels,bool rgba){
-    if(!texture)glGenTextures(1,&texture);glBindTexture(GL_TEXTURE_2D,texture);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);glPixelStorei(GL_UNPACK_ALIGNMENT,1);
+    if(!texture)glGenTextures(1,&texture);glBindTexture(GL_TEXTURE_2D,texture);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);glPixelStorei(GL_UNPACK_ALIGNMENT,1);
     glTexImage2D(GL_TEXTURE_2D,0,rgba?GL_RGBA:GL_RGB,pixels.cols,pixels.rows,0,rgba?GL_RGBA:GL_BGR,GL_UNSIGNED_BYTE,pixels.data);
 }
+// Rebuilds the display image, the mask fill overlay and the cached contours of one frame.
 void Application::repaint(FrameView& f){
     cv::Mat display;f.image.convertTo(display,CV_8UC3,f.member.value("kind","")=="컬러"?brightness_:1.12);uploadTexture(f.texture,display);
     cv::Mat overlay(f.image.size(),CV_8UC4,cv::Scalar(0,0,0,0));
-    auto paint=[&](const cv::Mat& mask,bool active){for(int y=0;y<mask.rows;++y){auto in=mask.ptr<uchar>(y);auto out=overlay.ptr<cv::Vec4b>(y);for(int x=0;x<mask.cols;++x)if(in[x])out[x]=active?cv::Vec4b(101,231,196,86):cv::Vec4b(89,185,225,74);}};
-    for(int i=0;i<int(f.annotation["boxes"].size());++i){const auto& box=f.annotation["boxes"][i];if(&f==&current()&&replacement_==i&&!proposal_.is_null())continue;if(box.contains("segmentation"))paint(decodeMask(box["segmentation"],f.image.cols,f.image.rows),&f==&current()&&i==selected_);}
-    if(&f==&current()&&!proposal_.is_null()){if(!brushMask_.empty())paint(brushMask_,true);else if(proposal_.contains("segmentation"))paint(decodeMask(proposal_["segmentation"],f.image.cols,f.image.rows),true);}
+    const bool active=!frames_.empty()&&&f==&current();
+    const auto& boxes=f.annotation["boxes"];f.contours.assign(boxes.size(),{});
+    for(int i=0;i<int(boxes.size());++i){
+        if(!boxes[i].contains("segmentation"))continue;
+        auto mask=decodeMask(boxes[i]["segmentation"],f.image.cols,f.image.rows);
+        cv::findContours(mask.clone(),f.contours[i],cv::RETR_EXTERNAL,cv::CHAIN_APPROX_SIMPLE);
+        if(active&&replacement_==i&&!proposal_.is_null())continue;
+        overlay.setTo(active&&editor_&&i==selected_?cv::Scalar(255,216,74,13):cv::Scalar(46,230,208,51),mask);
+    }
+    if(active){
+        proposalContours_.clear();
+        // Only a brush stroke is filled, so painting gives feedback; AI and polygon proposals show their outline only.
+        if(!brushMask_.empty()){overlay.setTo(cv::Scalar(255,90,217,70),brushMask_);cv::findContours(brushMask_.clone(),proposalContours_,cv::RETR_EXTERNAL,cv::CHAIN_APPROX_SIMPLE);}
+        else if(!proposal_.is_null()&&proposal_.contains("segmentation")){auto mask=decodeMask(proposal_["segmentation"],f.image.cols,f.image.rows);cv::findContours(mask,proposalContours_,cv::RETR_EXTERNAL,cv::CHAIN_APPROX_SIMPLE);}
+    }
     uploadTexture(f.overlay,overlay,true);f.repaint=false;
 }
 int Application::hit(const FrameView& frame,cv::Point2d point)const {for(int i=int(frame.annotation["boxes"].size())-1;i>=0;--i)if(detectionBox(frame.annotation["boxes"][i]).contains(point))return i;return -1;}
-void Application::fit(FrameView& f,ImVec2 size,bool detail){
-    cv::Rect2d extent{0,0,double(f.image.cols),double(f.image.rows)};
-    if(detail&&!f.annotation["boxes"].empty()){extent=detectionBox(f.annotation["boxes"][0]);for(auto& box:f.annotation["boxes"])extent|=detectionBox(box);extent.x-=38;extent.y-=38;extent.width+=76;extent.height+=76;}
-    f.scale=float(std::min(size.x/extent.width,size.y/extent.height));f.offsetX=float(size.x*.5-(extent.x+extent.width*.5)*f.scale);f.offsetY=float(size.y*.5-(extent.y+extent.height*.5)*f.scale);
-}
-void Application::imageCanvas(FrameView& f,ImVec2 size,bool editable,bool detail){
-    if(f.image.empty()||size.x<10||size.y<10)return;if(f.repaint)repaint(f);
-    float scale=f.scale,ox=f.offsetX,oy=f.offsetY;
-    if(!editable||scale<=0){fit(f,size,detail||editable);scale=f.scale;ox=f.offsetX;oy=f.offsetY;}
-    auto start=ImGui::GetCursorScreenPos();ImGui::PushID(f.annotation.at("key").get<std::string>().c_str());ImGui::PushID(detail?1:0);
-    ImGui::InvisibleButton("image",size,ImGuiButtonFlags_MouseButtonLeft|ImGuiButtonFlags_MouseButtonMiddle|ImGuiButtonFlags_MouseButtonRight);
-    bool hovered=ImGui::IsItemHovered();auto draw=ImGui::GetWindowDrawList();draw->AddRectFilled(start,{start.x+size.x,start.y+size.y},IM_COL32(7,13,19,255));draw->PushClipRect(start,{start.x+size.x,start.y+size.y},true);
-    ImVec2 a{start.x+ox,start.y+oy},b{a.x+f.image.cols*scale,a.y+f.image.rows*scale};draw->AddImage(ImTextureRef(ImTextureID(f.texture)),a,b);if(masks_)draw->AddImage(ImTextureRef(ImTextureID(f.overlay)),a,b);
-    auto outline=[&](const Json& box,bool active){auto r=detectionBox(box);ImU32 color=active?IM_COL32(107,239,195,255):IM_COL32(111,192,228,255);
-        if(boxes_)draw->AddRect({a.x+float(r.x)*scale,a.y+float(r.y)*scale},{a.x+float(r.x+r.width)*scale,a.y+float(r.y+r.height)*scale},color,0,0,active?2.f:1.f);
-        if(contour_&&box.contains("segmentation")&&editable){std::vector<std::vector<cv::Point>> contours;auto mask=decodeMask(box["segmentation"],f.image.cols,f.image.rows);cv::findContours(mask,contours,cv::RETR_LIST,cv::CHAIN_APPROX_SIMPLE);for(auto& contour:contours){std::vector<ImVec2> pts;for(auto p:contour)pts.push_back({a.x+p.x*scale,a.y+p.y*scale});if(pts.size()>2)draw->AddPolyline(pts.data(),int(pts.size()),color,ImDrawFlags_Closed,1);}}
-    };
-    for(int i=0;i<int(f.annotation["boxes"].size());++i)if(!editable||replacement_!=i||proposal_.is_null())outline(f.annotation["boxes"][i],editable&&selected_==i);
-    if(editable&&!proposal_.is_null())outline(proposal_,true);
-    if(editable){for(size_t i=0;i<polygon_.size();++i){auto p=polygon_[i];ImVec2 v{a.x+float(p.x)*scale,a.y+float(p.y)*scale};draw->AddCircleFilled(v,3,IM_COL32(250,207,119,255));if(i){auto q=polygon_[i-1];draw->AddLine({a.x+float(q.x)*scale,a.y+float(q.y)*scale},v,IM_COL32(250,207,119,255),2);}}
-        for(auto& point:points_){draw->AddCircleFilled({a.x+point["x"].get<float>()*scale,a.y+point["y"].get<float>()*scale},4,point["label"]==1?IM_COL32(99,242,173,255):IM_COL32(249,117,112,255));}
-    }
-    draw->PopClipRect();
-    auto mouse=ImGui::GetIO().MousePos;cv::Point2d point{(mouse.x-a.x)/scale,(mouse.y-a.y)/scale};bool inside=point.x>=0&&point.y>=0&&point.x<f.image.cols&&point.y<f.image.rows;
-    if(!editable){if(ImGui::IsItemClicked(ImGuiMouseButton_Left)&&guard()){int index=int(&f-frames_.data());int target=hit(f,point);showEditor(index);if(target>=0)selected_=target;current().repaint=true;}f.scale=0;}
-    else {
-        auto& io=ImGui::GetIO();bool pan=ImGui::IsKeyDown(ImGuiKey_Space)||ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-        if(hovered&&io.MouseWheel!=0){float updated=std::clamp(scale*std::exp(io.MouseWheel*.16f),.1f,20.f);f.offsetX=mouse.x-start.x-float(point.x)*updated;f.offsetY=mouse.y-start.y-float(point.y)*updated;f.scale=updated;}
-        if(ImGui::IsItemActive()&&pan&&ImGui::IsMouseDragging(ImGuiMouseButton_Left,0)){f.offsetX+=io.MouseDelta.x;f.offsetY+=io.MouseDelta.y;}
-        if(ImGui::IsItemActive()&&ImGui::IsMouseDragging(ImGuiMouseButton_Middle,0)){f.offsetX+=io.MouseDelta.x;f.offsetY+=io.MouseDelta.y;}
-        if(hovered&&!pan&&inside&&!busy()&&ImGui::IsMouseClicked(ImGuiMouseButton_Left)){
-            if(tool_==Tool::Select&&!pending()){selected_=hit(f,point);f.repaint=true;}
-            else if(tool_==Tool::Ai)segment(point,io.KeyShift);
-            else if(tool_==Tool::Polygon&&proposal_.is_null()){if(polygon_.empty())replacement_=replaceSelected_?selected_:-1;polygon_.push_back(point);}
-            else if(tool_==Tool::Box&&!pending()){dragStart_=point;dragging_=true;replacement_=replaceSelected_?selected_:-1;}
-            else if(tool_==Tool::Brush&&selected_>=0){auto& box=f.annotation["boxes"][selected_];if(!box.contains("segmentation")){message_="마스크가 있는 공을 선택하세요.";}else if(proposal_.is_null()||!brushMask_.empty()){if(proposal_.is_null()){proposal_=box;brushMask_=decodeMask(box["segmentation"],f.image.cols,f.image.rows);replacement_=selected_;}dragging_=true;lastBrush_=point;cv::circle(brushMask_,point,int(brushSize_/2),cv::Scalar(erase_||io.KeyShift?0:1),-1);f.repaint=true;}}
-        }
-        if(dragging_&&inside&&ImGui::IsMouseDown(ImGuiMouseButton_Left)&&!brushMask_.empty()){cv::line(brushMask_,lastBrush_,point,cv::Scalar(erase_||io.KeyShift?0:1),int(brushSize_),cv::LINE_8);lastBrush_=point;f.repaint=true;}
-        if(dragging_&&tool_==Tool::Box){draw->PushClipRect(start,{start.x+size.x,start.y+size.y},true);draw->AddRect({a.x+float(dragStart_.x)*scale,a.y+float(dragStart_.y)*scale},mouse,IM_COL32(245,208,132,255),0,0,2);draw->PopClipRect();}
-        if(dragging_&&ImGui::IsMouseReleased(ImGuiMouseButton_Left)){dragging_=false;if(tool_==Tool::Box){point.x=std::clamp(point.x,0.,double(f.image.cols));point.y=std::clamp(point.y,0.,double(f.image.rows));double x=std::min(point.x,dragStart_.x),y=std::min(point.y,dragStart_.y),w=std::abs(point.x-dragStart_.x),h=std::abs(point.y-dragStart_.y);if(w>=1&&h>=1){if(replacement_>=0){proposal_=f.annotation["boxes"][replacement_];proposal_["detection_bbox"]={x,y,w,h};}else proposal_={{"bbox",{x,y,w,h}},{"occluded",false},{"source","manual"}};}}
-            else if(!brushMask_.empty()){try{proposal_=maskAnnotation(brushMask_,proposal_,"manual_brush");}catch(const std::exception& error){error_=error.what();}}f.repaint=true;}
-    }
-    ImGui::PopID();ImGui::PopID();
-}
-void Application::overview(){
-    ImGui::TextUnformatted(title(catalog_["scenes"][scene_]).c_str());ImGui::SameLine();hint("컬러 1 + 모노 2 · 클릭해서 편집");
-    ImGui::Checkbox("마스크",&masks_);ImGui::SameLine();ImGui::Checkbox("박스",&boxes_);ImGui::Separator();
-    float height=ImGui::GetContentRegionAvail().y-88;
-    if(ImGui::BeginTable("Cameras",3,ImGuiTableFlags_SizingStretchSame)){
-        for(int slot=0;slot<3;++slot){ImGui::TableNextColumn();ImGui::PushID(slot);ImGui::BeginChild("CameraCard",{0,height},ImGuiChildFlags_Borders);
-            if(slot>=int(frames_.size())){hint("매칭된 카메라 없음");hint("수신 시각과 원본을 확인하세요.");}
-            else {auto& frame=frames_[slot];ImGui::Text("%s · %s",frame.member.at("name").get<std::string>().c_str(),frame.member.at("kind").get<std::string>().c_str());ImGui::SameLine();ImGui::TextColored(frame.member.value("reviewed",false)?green:muted,"%s",statusLabel(frame.member));
-                if(!frame.member.value("selected",true))ImGui::TextColored(amber,"반복 프레임 · 검수 대상 제외");else hint("전체 영상 · 클릭해서 편집");
-                auto size=ImGui::GetContentRegionAvail();imageCanvas(frame,{size.x,std::max(120.f,size.y-190)},false);hint("공 주변 확대");imageCanvas(frame,{size.x,95},false,true);
-                ImGui::Text("공 %d개 · 수신 Δ %+.3f ms",int(frame.annotation["boxes"].size()),frame.member.value("delta_ms",0.));
-                ImGui::BeginDisabled(busy());if(ImGui::Button("보류",{53,29}))review(false,true,slot);ImGui::SameLine();ImGui::BeginDisabled(frame.member.value("reviewed",false));if(primary(frame.annotation["boxes"].empty()?"공 없음 확인":"확인 완료",{-1,29}))review(false,false,slot);ImGui::EndDisabled();ImGui::EndDisabled();
-            }ImGui::EndChild();ImGui::PopID();
-        }ImGui::EndTable();
-    }
-    ImGui::Separator();hint("수신 시각 기준 묶음 · 노출 동기화는 별도 확인");
-    if(ImGui::Button("장면 보류"))review(true,true);ImGui::SameLine();if(primary("현재 장면 확인 완료 · 다음  E"))review(true);ImGui::SameLine();if(ImGui::Button("다음 장면 →"))navigate(std::min(scene_+1,int(catalog_["scenes"].size())-1));
-}
-void Application::editor(){
-    ImGui::BeginChild("EditorCanvasPane",{ImGui::GetContentRegionAvail().x-274,0},false);
-    if(ImGui::Button("← 3개 보기  Esc")){if(guard()){if(current().dirty)save([this]{editor_=false;});else editor_=false;}}ImGui::SameLine();ImGui::TextUnformatted(title(catalog_["scenes"][scene_]).c_str());
-    for(int i=0;i<int(frames_.size());++i){if(i)ImGui::SameLine();ImGui::PushID(i);if(ImGui::Button((frames_[i].member.at("name").get<std::string>()+" · "+frames_[i].member.at("kind").get<std::string>()).c_str()))switchCamera(i);ImGui::PopID();}
-    ImGui::Separator();const char* labels[]={"선택 V","AI 클릭 S","폴리곤 P","브러시 R","박스 B"};for(int i=0;i<5;++i){if(i)ImGui::SameLine();ImGui::PushID(i);if(ImGui::Selectable(labels[i],int(tool_)==i,0,{i==2?82.f:75.f,25})){if(guard())tool_=Tool(i);}ImGui::PopID();}
-    ImGui::BeginDisabled(pending()||busy());if(ImGui::RadioButton("새 공 추가",!replaceSelected_))replaceSelected_=false;ImGui::SameLine();ImGui::BeginDisabled(selected_<0);if(ImGui::RadioButton("선택 공 보정",replaceSelected_))replaceSelected_=true;ImGui::EndDisabled();ImGui::EndDisabled();
-    ImGui::Checkbox("마스크",&masks_);ImGui::SameLine();ImGui::Checkbox("윤곽",&contour_);ImGui::SameLine();ImGui::Checkbox("박스",&boxes_);ImGui::SameLine();if(ImGui::SmallButton("전체 영상")){auto size=ImGui::GetContentRegionAvail();size.y-=87;fit(current(),size,false);}ImGui::SameLine();if(ImGui::SmallButton("공 확대"))current().scale=0;
-    auto size=ImGui::GetContentRegionAvail();imageCanvas(current(),{size.x,std::max(100.f,size.y-75)},true);
-    ImGui::Separator();if(ImGui::Button("취소  Esc"))cancel();ImGui::SameLine();ImGui::BeginDisabled(proposal_.is_null()&&polygon_.size()<3);if(primary("윤곽 반영  Enter"))apply();ImGui::EndDisabled();ImGui::SameLine();if(ImGui::Button("되돌리기 Ctrl+Z"))undo();
-    hint("휠 확대 · Space+드래그 이동 · Shift+클릭 제외/지우기");ImGui::EndChild();ImGui::SameLine();ImGui::BeginChild("Properties",{0,0},ImGuiChildFlags_Borders);properties();ImGui::EndChild();
-}
-void Application::properties(){
-    auto& frame=current();auto& objects=frame.annotation["boxes"];ImGui::Text("공 목록 · %d개",int(objects.size()));
-    ImGui::BeginChild("Objects",{0,std::min(90.f,26.f*float(objects.size()+1))},true);for(int i=0;i<int(objects.size());++i){auto label="공 "+std::to_string(i+1)+(objects[i].contains("segmentation")?" · 마스크":" · 박스");if(ImGui::Selectable(label.c_str(),selected_==i)&&!pending()){selected_=i;frame.repaint=true;}}ImGui::EndChild();
-    ImGui::BeginChild("ObjectDetails",{0,std::max(100.f,ImGui::GetContentRegionAvail().y-112)},false);
-    if(selected_>=0&&selected_<int(objects.size())){auto& box=objects[selected_];ImGui::Text("공 %02d",selected_+1);auto bounds=detectionBox(box);hint("박스 1픽셀 보정 · 원본 px");ImGui::Text("X %.1f  Y %.1f",bounds.x,bounds.y);ImGui::Text("너비 %.1f  높이 %.1f",bounds.width,bounds.height);
-        const char* edges[]={"위","아래","왼쪽","오른쪽"};ImGui::BeginDisabled(pending()||busy());
-        if(ImGui::BeginTable("BoxEdges",3,ImGuiTableFlags_SizingStretchSame)){for(int edge=0;edge<4;++edge){ImGui::TableNextColumn();ImGui::TextUnformatted(edges[edge]);ImGui::TableNextColumn();ImGui::PushID(edge);if(ImGui::Button("+1 확장",{-1,24})){auto original=box;if(nudgeEdge(box,edge,true,frame.image.cols,frame.image.rows)){box=original;checkpoint();nudgeEdge(box,edge,true,frame.image.cols,frame.image.rows);boxes_=true;changed();}else message_="이미지 밖으로 확장할 수 없습니다.";}
-            ImGui::TableNextColumn();if(ImGui::Button("-1 축소",{-1,24})){auto original=box;if(nudgeEdge(box,edge,false,frame.image.cols,frame.image.rows)){box=original;checkpoint();nudgeEdge(box,edge,false,frame.image.cols,frame.image.rows);boxes_=true;changed();}else message_="박스는 최소 1픽셀이어야 합니다.";}ImGui::PopID();}ImGui::EndTable();}
-        if(ImGui::Button("보정 초기화",{-1,25})&&box.contains("detection_bbox")){checkpoint();box.erase("detection_bbox");changed();}hint("검출 박스만 변경 · 마스크 유지");
-        bool occluded=box.value("occluded",false);if(ImGui::Checkbox("일부 가림",&occluded)){checkpoint();box["occluded"]=occluded;changed();}
-        const char* colors[]={"미지정","빨강","파랑","흰색"};const char* values[]={"unknown","red","blue","white"};int color=0;for(int i=0;i<4;++i)if(box.value("color","unknown")==values[i])color=i;
-        bool mono=frame.member.value("kind","")=="모노";ImGui::BeginDisabled(mono);ImGui::SetNextItemWidth(-1);if(ImGui::Combo("##color",&color,colors,4)){checkpoint();box["color"]=values[color];changed();}ImGui::EndDisabled();if(mono)hint("모노 색상은 미지정");
-        if(ImGui::Button("선택 공 삭제",{-1,25})){checkpoint();objects.erase(objects.begin()+selected_);selected_=objects.empty()?-1:std::min(selected_,int(objects.size())-1);changed();}
-        ImGui::EndDisabled();
-    }else hint("공을 선택하거나 새 공을 표시하세요.");
-    if(tool_==Tool::Ai){ImGui::SetNextItemWidth(-1);ImGui::SliderFloat("공 반지름",&radius_,3,80,"%.0f px");}
-    if(tool_==Tool::Brush){ImGui::SetNextItemWidth(-1);ImGui::SliderFloat("브러시 크기",&brushSize_,2,30,"%.0f px");ImGui::Checkbox("지우개",&erase_);}
-    ImGui::EndChild();ImGui::Separator();hint("보이는 공을 모두 확인하세요.");ImGui::BeginDisabled(pending()||busy());if(primary(objects.empty()?"공 없음 확인하고 다음 E":"완료하고 다음  E",{-1,29}))review(true);if(ImGui::Button("보류하고 다음",{-1,26}))review(true,true);ImGui::EndDisabled();
+// scale 0 means automatic: zoom to the selected ball, otherwise fit the whole image.
+void Application::fit(FrameView& f,ImVec2 size,bool toBall){
+    const auto& boxes=f.annotation["boxes"];
+    const View view=toBall&&selected_>=0&&selected_<int(boxes.size())?ballView(detectionBox(boxes[selected_]),f.image.cols,f.image.rows,size.x,size.y):fitView(f.image.cols,f.image.rows,size.x,size.y);
+    f.scale=view.scale;f.offsetX=view.x;f.offsetY=view.y;
 }
 void Application::preparePage(){
     ImGui::TextUnformatted("데이터 준비");ImGui::Separator();ImGui::TextWrapped("입력: %s",utf8(config_.source).c_str());ImGui::TextWrapped("주석: %s",utf8(config_.project).c_str());
@@ -354,29 +315,159 @@ void Application::exportPage(){
     auto state=exportStatus_.value("status","idle");ImGui::Text("진행: %s",state.c_str());int total=exportStatus_.value("total",0),done=exportStatus_.value("done",0);if(total)ImGui::ProgressBar(float(done)/total,{-1,16});
     if(exportStatus_.contains("result"))ImGui::TextWrapped("완료 폴더: %s",exportStatus_["result"].value("path","").c_str());if(exportStatus_.contains("error"))ImGui::TextColored(amber,"%s",exportStatus_.value("error","").c_str());
 }
+void Application::selectForCapture(int camera,int rank){if(frames_.empty()||camera<0||camera>=int(frames_.size()))return;const auto order=sorted(frames_[camera]);if(rank>=0&&rank<int(order.size()))select(camera,order[rank]);}
+// One step per call while the app is idle. Returns false when every step has passed; throws on a failed expectation.
+bool Application::selfCheckStep(int step) {
+    auto expect=[](bool condition,const char* what){if(!condition)throw std::runtime_error(std::string("self-test: ")+what);};
+    static int checkedScene=-1;static Json before;
+    switch(step){
+    case 0:{const auto order=sorted(frames_.at(0));expect(!order.empty(),"scene has no ball in the first camera");checkedScene=scene_;select(0,order.front());return true;}
+    case 1:{expect(editor_&&camera_==0&&selected_>=0,"ball was not selected");expect(current().scale>2,"selected ball was not zoomed");before=current().annotation["boxes"][selected_];nudge(0,true);return true;}
+    case 2:{const auto& box=current().annotation["boxes"][selected_];const auto was=detectionBox(before),now=detectionBox(box);
+        expect(now.y==was.y-1&&now.height==was.height+1&&now.x==was.x&&now.width==was.width,"top edge did not grow by one pixel");
+        expect(box.at("bbox")==before.at("bbox")&&box.value("segmentation",Json())==before.value("segmentation",Json()),"box correction changed the mask");
+        expect(current().member.value("status","")=="editing","an edited image must leave the confirmed state");nudge(0,false);return true;}
+    case 3:{expect(detectionBox(current().annotation["boxes"][selected_])==detectionBox(before),"shrinking did not restore the box");
+        const BallRef was{camera_,selected_};cycle(1);expect(camera_!=was.camera||selected_!=was.index,"Tab did not move to another ball");return true;}
+    case 4:review(Scope::Scene,false);return true;
+    case 5:{for(const auto& member:catalog_["scenes"][checkedScene]["members"])expect(!member.value("selected",true)||member.value("reviewed",false),"scene confirm left an image unconfirmed");
+        expect(scene_!=checkedScene&&!editor_,"confirm did not advance to the next unreviewed scene");return false;}
+    }
+    return false;
+}
+void Application::refreshExports(){
+    if(busy())return;const auto client=client_;
+    launch("내보내기 기록 읽기",[client]{return JobResult{client.get("/api/native/exports"),{}};},[this](JobResult result){exports_=result.data.value("exports",Json::array());});
+}
+void Application::keys() {
+    auto& io=ImGui::GetIO();
+    if(page_!=Page::Review||io.WantTextInput||frames_.empty())return;
+    auto pressed=[](ImGuiKey key){return ImGui::IsKeyPressed(key,false);};
+    if(pressed(ImGuiKey_Escape)){
+        if(pending())cancel();
+        else if(editor_&&selected_>=0){selected_=-1;current().scale=0;current().repaint=true;}
+        else if(editor_&&guard()){if(current().dirty)save([this]{editor_=false;});else editor_=false;}
+    }
+    if(pressed(ImGuiKey_Enter)||pressed(ImGuiKey_KeypadEnter))apply();
+    if(io.KeyCtrl&&pressed(ImGuiKey_Z))undo();
+    if(io.KeyCtrl&&pressed(ImGuiKey_S))save();
+    if(io.KeyCtrl||io.KeyAlt)return;
+    if(pressed(ImGuiKey_E))review(io.KeyShift&&editor_?Scope::Camera:Scope::Scene,false);
+    if(pressed(ImGuiKey_Q))review(editor_?Scope::Camera:Scope::Scene,true);
+    if(pressed(ImGuiKey_N)&&guard())nextUnreviewed();
+    if(pressed(ImGuiKey_A))stepRow(-1);
+    if(pressed(ImGuiKey_D))stepRow(1);
+    if(pressed(ImGuiKey_1))focus(0);
+    if(pressed(ImGuiKey_2))focus(1);
+    if(pressed(ImGuiKey_3))focus(2);
+    if(pressed(ImGuiKey_Tab))cycle(io.KeyShift?-1:1);
+    static const ImGuiKey arrows[]={ImGuiKey_UpArrow,ImGuiKey_DownArrow,ImGuiKey_LeftArrow,ImGuiKey_RightArrow};
+    for(int edge=0;edge<4;++edge)if(ImGui::IsKeyPressed(arrows[edge],true))nudge(edge,!io.KeyShift);
+    if(pressed(ImGuiKey_M)){masks_=!masks_;}
+    if(pressed(ImGuiKey_X))boxes_=!boxes_;
+    if(!editor_||pending()||busy())return;
+    if(pressed(ImGuiKey_V))tool_=Tool::Select;
+    if(pressed(ImGuiKey_S))tool_=Tool::Ai;
+    if(pressed(ImGuiKey_B))tool_=Tool::Brush;
+    if(pressed(ImGuiKey_P))tool_=Tool::Polygon;
+    if(pressed(ImGuiKey_R))tool_=Tool::Box;
+    if(pressed(ImGuiKey_F)){selected_=-1;current().scale=0;current().repaint=true;}
+    if(pressed(ImGuiKey_Z))current().scale=0;
+    if(pressed(ImGuiKey_LeftBracket))brushSize_=std::max(2.f,brushSize_-1);
+    if(pressed(ImGuiKey_RightBracket))brushSize_=std::min(30.f,brushSize_+1);
+    auto& objects=current().annotation["boxes"];
+    if(selected_<0||selected_>=int(objects.size()))return;
+    if(pressed(ImGuiKey_O)){checkpoint();objects[selected_]["occluded"]=!objects[selected_].value("occluded",false);changed();}
+    if(pressed(ImGuiKey_Delete)){checkpoint();objects.erase(objects.begin()+selected_);selected_=-1;current().scale=0;changed();}
+}
+void Application::topBar() {
+    const float width=ImGui::GetContentRegionAvail().x,height=48;const ImVec2 origin=ImGui::GetCursorScreenPos();
+    ImGui::Dummy({width,height});const ImVec2 after=ImGui::GetCursorScreenPos();auto draw=ImGui::GetWindowDrawList();
+    draw->AddLine({origin.x,origin.y+height-.5f},{origin.x+width,origin.y+height-.5f},theme::line);
+    draw->AddCircle({origin.x+21,origin.y+24},7,theme::accent,0,1.5f);draw->AddCircleFilled({origin.x+21,origin.y+24},3.5f,theme::accent);
+    theme::write(draw,{origin.x+36,origin.y+14},theme::text,"Boccia Labeler",15,theme::bold);
+    const float brand=36+theme::extent("Boccia Labeler",15,theme::bold).x+14;
+    draw->AddLine({origin.x+brand,origin.y+15},{origin.x+brand,origin.y+33},theme::line);
+    theme::write(draw,{origin.x+brand+14,origin.y+15},theme::text2,"보치아 공 라벨 프로젝트");
+    static const char* names[]={"데이터 준비","검수","분할","내보내기"};
+    float total=0,widths[4];
+    for(int i=0;i<4;++i){widths[i]=12+18+7+theme::extent(names[i]).x+12;total+=widths[i]+(i?30:0);}
+    float x=origin.x+(width-total)/2;
+    for(int i=0;i<4;++i){
+        if(i){draw->AddLine({x+6,origin.y+24},{x+24,origin.y+24},theme::line2);x+=30;}
+        const bool on=int(page_)==i,done=i<int(page_);
+        ImGui::SetCursorScreenPos({x,origin.y+9});ImGui::PushID(i);
+        if(ImGui::InvisibleButton("##step",{widths[i],30})&&!on)openPage(Page(i));
+        const bool hovered=ImGui::IsItemHovered();ImGui::PopID();
+        if(on||hovered)draw->AddRectFilled({x,origin.y+9},{x+widths[i],origin.y+39},on?theme::accentSoft:theme::bg2,6);
+        const ImVec2 badge{x+12+9,origin.y+24};
+        if(on)draw->AddCircleFilled(badge,9,theme::accent);else if(done)draw->AddCircleFilled(badge,9,theme::okSoft);else draw->AddCircle(badge,8.5f,theme::line2);
+        if(done)theme::check(draw,badge,9,theme::ok);
+        else{const std::string number=std::to_string(i+1);theme::write(draw,{badge.x-theme::extent(number,11,theme::bold).x/2,badge.y-7},on?theme::ink:theme::text2,number,11,theme::bold);}
+        theme::write(draw,{x+12+18+7,origin.y+15},on?theme::text:theme::text2,names[i]);
+        x+=widths[i];
+    }
+    const int target=catalog_.is_object()?catalog_.value("target_images",0):0,done=catalog_.is_object()?catalog_.value("reviewed_target_images",0):0;
+    const std::string count=grouped(done)+" / "+grouped(target);
+    const std::string saved=busy()?busyLabel_:!frames_.empty()&&current().dirty?"저장 대기":"자동 저장됨";
+    float right=origin.x+width-14;
+    right-=theme::extent(saved,theme::caption).x;theme::write(draw,{right,origin.y+16},busy()?theme::hold:theme::text3,saved,theme::caption);
+    right-=18+120;draw->AddRectFilled({right,origin.y+22},{right+120,origin.y+26},theme::bg4,2);
+    if(target&&done)draw->AddRectFilled({right,origin.y+22},{right+std::max(2.f,120.f*done/target),origin.y+26},theme::ok,2);
+    right-=10+theme::extent(count,theme::caption,theme::mono).x;theme::write(draw,{right,origin.y+16},theme::text,count,theme::caption,theme::mono);
+    right-=8+theme::extent("확인한 이미지",theme::caption).x;theme::write(draw,{right,origin.y+16},theme::text2,"확인한 이미지",theme::caption);
+    ImGui::SetCursorScreenPos(after);
+}
+void Application::errorBar() {
+    const float width=ImGui::GetContentRegionAvail().x;const ImVec2 origin=ImGui::GetCursorScreenPos();
+    ImGui::Dummy({width,36});const ImVec2 after=ImGui::GetCursorScreenPos();auto draw=ImGui::GetWindowDrawList();
+    draw->AddRectFilled(origin,{origin.x+width,origin.y+36},theme::rgb(0xff8a4c,30));
+    theme::warning(draw,{origin.x+22,origin.y+18},13,theme::warn);
+    theme::write(draw,{origin.x+38,origin.y+10},theme::warn,error_);
+    ImGui::SetCursorScreenPos({origin.x+width-196,origin.y+5});
+    if(ImGui::Button("닫기",{60,26}))error_.clear();
+    ImGui::SameLine(0,8);
+    if(ImGui::Button("다시 연결",{110,26})){if(!busy()&&(frames_.empty()||!current().dirty))connect();else message_="현재 변경을 저장하거나 recovery 파일을 보관한 뒤 다시 실행하세요.";}
+    ImGui::SetCursorScreenPos(after);
+}
+void Application::statusBar() {
+    const float width=ImGui::GetContentRegionAvail().x;const ImVec2 origin=ImGui::GetCursorScreenPos();
+    ImGui::Dummy({width,28});auto draw=ImGui::GetWindowDrawList();
+    draw->AddLine(origin,{origin.x+width,origin.y},theme::line);
+    theme::write(draw,{origin.x+14,origin.y+7},busy()?theme::hold:theme::text3,busy()?busyLabel_:message_,theme::caption);
+    const std::string source="원본 "+utf8(config_.source);
+    theme::write(draw,{origin.x+width-14-theme::extent(source,theme::caption).x,origin.y+7},theme::text3,source,theme::caption);
+}
 void Application::draw(){
     const auto viewport=ImGui::GetMainViewport();ImGui::SetNextWindowPos(viewport->WorkPos);ImGui::SetNextWindowSize(viewport->WorkSize);
-    ImGui::Begin("Boccia Labeler",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings);
-    ImGui::TextColored(green,"Boccia Lab");ImGui::SameLine();hint("보치아 공 라벨링 · 로컬 프로젝트");
-    const char* pages[]={"데이터 준비","라벨 검수","데이터 분할","내보내기"};for(int i=0;i<4;++i){if(i)ImGui::SameLine();if(ImGui::Selectable(pages[i],int(page_)==i,0,{110,28})){if(guard()){if(!frames_.empty()&&current().dirty)save([this,i]{page_=Page(i);});else page_=Page(i);}}}ImGui::Separator();
-    if(!error_.empty()){ImGui::TextColored(amber,"%s",error_.c_str());if(ImGui::SmallButton("오류 메시지 닫기"))error_.clear();ImGui::SameLine();if(ImGui::SmallButton("다시 연결")){if(!busy()&&(frames_.empty()||!current().dirty))connect();else message_="현재 변경을 저장하거나 recovery 파일을 보관한 뒤 재실행하세요.";}ImGui::Separator();}
-    if(!ready()){ImGui::TextWrapped("%s",message_.c_str());ImGui::TextUnformatted("기존 촬영과 자동 마스크를 읽고 있습니다.");}
-    else {
-        float body=ImGui::GetContentRegionAvail().y-32;
-        ImGui::BeginChild("Workspace",{0,body},false);
-        if(page_==Page::Review){ImGui::BeginChild("QueuePane",{218,0},ImGuiChildFlags_Borders);queue();ImGui::EndChild();ImGui::SameLine();ImGui::BeginChild("ReviewPane",{0,0},false);if(editor_)editor();else overview();ImGui::EndChild();}
-        else if(page_==Page::Prepare)preparePage();else if(page_==Page::Split)splitPage();else exportPage();
+    ImGui::Begin("Boccia Labeler",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{0,0});
+    topBar();
+    if(!error_.empty())errorBar();
+    const float body=ImGui::GetContentRegionAvail().y-28;
+    if(!ready()){
+        ImGui::BeginChild("Loading",{0,body});
+        theme::write(ImGui::GetWindowDrawList(),{ImGui::GetCursorScreenPos().x+28,ImGui::GetCursorScreenPos().y+24},theme::text2,message_);
         ImGui::EndChild();
-        auto& io=ImGui::GetIO();if(page_==Page::Review&&!io.WantTextInput){
-            if(ImGui::IsKeyPressed(ImGuiKey_E))review(true);if(ImGui::IsKeyPressed(ImGuiKey_Escape)){if(pending())cancel();else if(editor_&&guard()){if(current().dirty)save([this]{editor_=false;});else editor_=false;}}
-            if(editor_){if(ImGui::IsKeyPressed(ImGuiKey_Enter))apply();if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_Z))undo();if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_S))save();
-                if(!pending()&&!busy()){if(ImGui::IsKeyPressed(ImGuiKey_V))tool_=Tool::Select;if(ImGui::IsKeyPressed(ImGuiKey_S)&&!io.KeyCtrl)tool_=Tool::Ai;if(ImGui::IsKeyPressed(ImGuiKey_P))tool_=Tool::Polygon;if(ImGui::IsKeyPressed(ImGuiKey_R))tool_=Tool::Brush;if(ImGui::IsKeyPressed(ImGuiKey_B))tool_=Tool::Box;}
-                if(ImGui::IsKeyPressed(ImGuiKey_Delete)&&selected_>=0&&guard()){checkpoint();auto& objects=current().annotation["boxes"];objects.erase(objects.begin()+selected_);selected_=objects.empty()?-1:std::min(selected_,int(objects.size())-1);changed();}
-            }
-            if(ImGui::IsKeyPressed(ImGuiKey_1))showEditor(0);if(ImGui::IsKeyPressed(ImGuiKey_2))showEditor(1);if(ImGui::IsKeyPressed(ImGuiKey_3))showEditor(2);
-            if(ImGui::IsKeyPressed(ImGuiKey_RightArrow))navigate(std::min(scene_+1,int(catalog_["scenes"].size())-1));if(ImGui::IsKeyPressed(ImGuiKey_LeftArrow))navigate(std::max(0,scene_-1));
-        }
     }
-    ImGui::Separator();ImGui::TextColored(busy()?amber:muted,"%s",busy()?busyLabel_.c_str():message_.c_str());ImGui::End();
+    else if(page_==Page::Review){
+        const float width=ImGui::GetContentRegionAvail().x,list=width<1500?232.f:300.f,side=width<1500?296.f:344.f;
+        ImGui::BeginChild("QueuePane",{list,body});queue();ImGui::EndChild();ImGui::SameLine(0,0);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg,theme::bg0);
+        ImGui::BeginChild("ReviewPane",{width-list-side,body},0,ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);reviewPane();ImGui::EndChild();
+        ImGui::PopStyleColor();ImGui::SameLine(0,0);
+        ImGui::BeginChild("SidePane",{side,body});sidePanel();ImGui::EndChild();
+        keys();
+    }
+    else{
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{28,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,8});ImGui::PushStyleColor(ImGuiCol_ChildBg,theme::bg0);
+        ImGui::BeginChild("StagePane",{0,body},ImGuiChildFlags_AlwaysUseWindowPadding);
+        if(page_==Page::Prepare)preparePage();else if(page_==Page::Split)splitPage();else exportPage();
+        ImGui::EndChild();ImGui::PopStyleColor();ImGui::PopStyleVar(2);
+    }
+    statusBar();
+    ImGui::PopStyleVar();
+    ImGui::End();
+    if(later_){auto action=std::move(later_);later_=nullptr;action();}
 }
 }

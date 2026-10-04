@@ -6,6 +6,8 @@
 
 namespace boccia::labeler {
 struct Span { float x = 0, width = 0; };
+// 3936 -> "3,936"
+inline std::string grouped(int value) { auto text = std::to_string(value); for (int at = int(text.size()) - 3; at > 0; at -= 3) text.insert(at, ","); return text; }
 struct View { float scale = 1, x = 0, y = 0; };
 // focus < 0이면 같은 폭 세 칸. 아니면 초점 타일이 남는 폭을 모두 갖는다. C, A, B 순서는 유지한다.
 std::array<Span, 3> tileSpans(int focus, float width, float gap = 10, float narrow = 184);

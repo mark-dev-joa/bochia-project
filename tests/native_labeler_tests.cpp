@@ -62,6 +62,8 @@ int main(int argc,char** argv){try{
         auto saved=client.post("/api/annotation",annotationPayload(frame,catalog["summary"]["revision"]));auto reread=client.get("/api/frame"+query);check(reread["boxes"][0]["segmentation"]==oldMask,"HTTP save lost mask");check(reread["boxes"][0].contains("detection_bbox"),"HTTP save lost edge correction");
         auto rectangle=detectionBox(original["boxes"][0]);Json prompt=annotationPayload(original,saved["summary"]["revision"]);prompt["points"]={{{"x",rectangle.x+rectangle.width/2},{"y",rectangle.y+rectangle.height/2},{"label",1}}};prompt["radius"]=18;
         auto proposed=client.post("/api/assist/segment",prompt);auto& inferred=proposed["proposals"][0];check(inferred.contains("segmentation")&&inferred.value("source","")=="efficientsam","real SAM inference failed");
+        Json boxed=annotationPayload(original,saved["summary"]["revision"]);boxed["points"]=prompt["points"];boxed["radius"]=18;boxed["box"]={rectangle.x-2,rectangle.y-2,rectangle.width+4,rectangle.height+4};
+        auto boxProposal=client.post("/api/assist/segment",boxed);check(boxProposal["proposals"][0].contains("segmentation"),"box prompted SAM inference failed");
         original["review_status"]=original.value("reviewed",false)?"reviewed":"editing";client.post("/api/annotation",annotationPayload(original,saved["summary"]["revision"]));
         std::cout<<"PASS: native HTTP image, mask-preserving save/reload and actual EfficientSAM inference\n";
     }
