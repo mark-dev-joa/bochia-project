@@ -1,4 +1,5 @@
 #include "native_labeler_app.hpp"
+#include "native_labeler_theme.hpp"
 #include <GLFW/glfw3.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
@@ -38,9 +39,7 @@ int main() {
     auto window=glfwCreateWindow(requestedWidth,requestedHeight,"Boccia Lab - Native Labeler",nullptr,nullptr);if(!window){glfwTerminate();return 2;}glfwSetWindowSizeLimits(window,1280,720,GLFW_DONT_CARE,GLFW_DONT_CARE);
     glfwMakeContextCurrent(window);glfwSwapInterval(1);if(!gladLoadGL((GLADloadfunc)glfwGetProcAddress)){glfwDestroyWindow(window);glfwTerminate();return 3;}
     IMGUI_CHECKVERSION();ImGui::CreateContext();auto& io=ImGui::GetIO();io.IniFilename=nullptr;
-    if(std::filesystem::exists("C:/Windows/Fonts/malgun.ttf"))io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/malgun.ttf",17,nullptr,io.Fonts->GetGlyphRangesKorean());
-    ImGui::StyleColorsDark();auto& style=ImGui::GetStyle();style.WindowPadding={14,12};style.FramePadding={9,6};style.ItemSpacing={9,8};style.FrameRounding=4;style.ChildRounding=5;style.WindowBorderSize=0;
-    style.Colors[ImGuiCol_WindowBg]={.055f,.086f,.12f,1};style.Colors[ImGuiCol_ChildBg]={.073f,.11f,.145f,1};style.Colors[ImGuiCol_Button]={.13f,.21f,.27f,1};style.Colors[ImGuiCol_ButtonHovered]={.20f,.32f,.38f,1};style.Colors[ImGuiCol_Header]={.12f,.34f,.29f,1};style.Colors[ImGuiCol_HeaderHovered]={.17f,.30f,.33f,1};style.Colors[ImGuiCol_CheckMark]={.36f,.88f,.71f,1};style.Colors[ImGuiCol_Text]={.87f,.92f,.95f,1};
+    theme::loadFonts();theme::apply();
     ImGui_ImplGlfw_InitForOpenGL(window,true);ImGui_ImplOpenGL3_Init("#version 330");int result=0;
     try {Application application(config);int stage=0,settled=0;bool closing=false;auto start=std::chrono::steady_clock::now();
         while(!glfwWindowShouldClose(window)){
@@ -52,7 +51,7 @@ int main() {
             ImGui_ImplOpenGL3_NewFrame();ImGui_ImplGlfw_NewFrame();ImGui::NewFrame();application.draw();
             if(closing){ImGui::OpenPopup("종료 전 작업 보관");if(ImGui::BeginPopupModal("종료 전 작업 보관",nullptr,ImGuiWindowFlags_AlwaysAutoResize)){ImGui::TextUnformatted("저장 또는 처리가 끝나지 않았습니다.");ImGui::TextUnformatted("작업을 계속하거나 변경을 recovery 폴더에 보관하고 종료할 수 있습니다.");if(ImGui::Button("계속 작업")){closing=false;ImGui::CloseCurrentPopup();}ImGui::SameLine();ImGui::BeginDisabled(application.busy());if(ImGui::Button("변경 보관하고 종료")){application.preserveRecovery();glfwSetWindowShouldClose(window,true);closing=false;ImGui::CloseCurrentPopup();}ImGui::EndDisabled();ImGui::EndPopup();}}
             ImGui::Render();
-            int width,height;glfwGetFramebufferSize(window,&width,&height);glViewport(0,0,width,height);glClearColor(.04f,.06f,.09f,1);glClear(GL_COLOR_BUFFER_BIT);ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            int width,height;glfwGetFramebufferSize(window,&width,&height);glViewport(0,0,width,height);glClearColor(.051f,.059f,.071f,1);glClear(GL_COLOR_BUFFER_BIT);ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
             if(hidden&&stage==2&&!application.busy()&&++settled>=3){if(!capture.empty()){std::filesystem::create_directories(capture.parent_path());cv::Mat pixels(height,width,CV_8UC3);glPixelStorei(GL_PACK_ALIGNMENT,1);glReadPixels(0,0,width,height,GL_BGR,GL_UNSIGNED_BYTE,pixels.data);cv::flip(pixels,pixels,0);auto name=capture.u8string();if(!cv::imwrite(std::string(name.begin(),name.end()),pixels))throw std::runtime_error("Screenshot failed");}
                 if(glGetError()!=GL_NO_ERROR)throw std::runtime_error("OpenGL smoke failed");std::cout<<"PASS: native UI loaded real scene; view rendered without GL errors\n";glfwSetWindowShouldClose(window,true);}
             if(hidden&&(!application.error().empty()||std::chrono::steady_clock::now()-start>std::chrono::seconds(50)))throw std::runtime_error(application.error().empty()?"Native UI timed out":application.error());
