@@ -1,0 +1,5 @@
+# Manual/circle tools work without model weights; click segmentation uses ONNX.
+opencv-python>=4.13.0
+numpy>=1.26
+zstandard>=0.22
+onnxruntime>=1.19,<2

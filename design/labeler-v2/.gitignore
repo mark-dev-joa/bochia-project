@@ -1,0 +1,4 @@
+# Generated from real recordings by build_mock_data.py and headless captures. Keep local.
+img/
+shots/
+mock-data.js

@@ -95,3 +95,31 @@ add_custom_command(TARGET boccia_calibration POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E ${SDK_COPY_COMMAND} "${IMV_ROOT}/Runtime/x64" "$<TARGET_FILE_DIR:boccia_calibration>")
 add_custom_command(TARGET boccia_calibration POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${zstd_SOURCE_DIR}/LICENSE" "$<TARGET_FILE_DIR:boccia_calibration>/LICENSE-zstd.txt")
+
+# Native annotation UI shares the proven local inference/store engine, not a webview.
+find_program(BOCCIA_LABELER_PYTHON NAMES python python3
+  HINTS "C:/Users/PC/AppData/Local/Programs/Python/Python312" REQUIRED)
+add_library(native_labeler_model src/native_labeler_model.cpp)
+target_include_directories(native_labeler_model PUBLIC src ${OpenCV_INCLUDE_DIRS} "${DEPENDENCY_ROOT}/nlohmann/include")
+target_link_libraries(native_labeler_model PUBLIC ${OpenCV_LIBS})
+add_executable(boccia_labeler WIN32 src/native_labeler_main.cpp src/native_labeler_app.cpp src/native_labeler_client.cpp)
+target_link_libraries(boccia_labeler PRIVATE native_labeler_model imgui opengl32 winhttp shell32)
+target_compile_definitions(boccia_labeler PRIVATE GLFW_INCLUDE_NONE NOMINMAX
+  BOCCIA_LABELER_ROOT="${CMAKE_SOURCE_DIR}" BOCCIA_LABELER_PYTHON="${BOCCIA_LABELER_PYTHON}")
+if(MSVC)
+  target_compile_options(native_labeler_model PRIVATE /utf-8 /W4)
+  target_compile_options(boccia_labeler PRIVATE /utf-8 /W4)
+  target_link_options(boccia_labeler PRIVATE /ENTRY:mainCRTStartup)
+endif()
+add_custom_command(TARGET boccia_labeler POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:opencv_world>" "$<TARGET_FILE_DIR:boccia_labeler>")
+add_executable(native_labeler_tests tests/native_labeler_tests.cpp src/native_labeler_client.cpp)
+target_link_libraries(native_labeler_tests PRIVATE native_labeler_model winhttp)
+target_compile_definitions(native_labeler_tests PRIVATE NOMINMAX
+  BOCCIA_LABELER_ROOT="${CMAKE_SOURCE_DIR}" BOCCIA_LABELER_PYTHON="${BOCCIA_LABELER_PYTHON}")
+if(MSVC)
+  target_compile_options(native_labeler_tests PRIVATE /utf-8 /W4)
+endif()
+add_custom_command(TARGET native_labeler_tests POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:opencv_world>" "$<TARGET_FILE_DIR:native_labeler_tests>")
+add_test(NAME native_labeler_data_contracts COMMAND native_labeler_tests)

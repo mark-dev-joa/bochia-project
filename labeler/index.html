@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>보치아 공 라벨러</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/labeler.css">
+  <script src="/labeler.js" defer></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand"><span class="brand-icon">●</span><div><h1>보치아 공 라벨러</h1><p>원본 촬영에서 공의 위치를 기록합니다</p></div></div>
+    <div class="header-progress"><strong id="reviewCount">0</strong><span>프레임 검수 완료</span><small id="ballCount">공 0개</small></div>
+    <button id="helpButton" class="quiet">사용 방법</button>
+    <button id="exportButton" class="primary">학습 데이터 내보내기</button>
+  </header>
+  <div id="error" class="error" role="alert" hidden></div>
+  <main class="workspace">
+    <aside class="sources panel">
+      <div class="section-heading"><h2>촬영 목록</h2><span id="sourceCount" class="badge">—</span></div>
+      <p class="hint">촬영마다 학습·검증·시험을 지정합니다.<br>같은 촬영의 모든 카메라는 함께 묶입니다.</p>
+      <button id="suggestSplits" class="wide quiet">촬영별 분할 제안 적용</button>
+      <section class="auto-panel"><button id="startAutomatic" class="primary wide">전체 자동 초안 만들기</button><div id="autoProgress" role="status">자동 초안 준비</div><progress id="autoProgressBar" max="1" value="0" aria-label="자동 라벨링 진행"></progress><div id="autoCounts" class="hint"></div><button id="stopAutomatic" class="quiet wide" hidden>자동 작업 중단</button></section>
+      <section class="selection-panel"><label class="check"><input id="representativesOnly" type="checkbox" checked> 대표 프레임만 보기</label><div id="selectionCounts" role="status" class="hint">중복 필터 확인 중…</div><p class="hint">검수·학습 대상에서 반복 장면을 줄입니다.<br>번호·슬라이더로 모든 원본을 열 수 있습니다.</p></section>
+      <div id="recordings" class="recordings"></div>
+      <div class="source-footer"><span class="eyebrow">저장 위치</span><div id="projectPath" class="path"></div><span id="saveState" role="status">자동 저장 준비</span></div>
+    </aside>
+    <section class="editor">
+      <div class="editor-heading"><div><h2 id="recordingName">촬영을 불러오는 중…</h2><p id="frameMeta">원본 이미지는 변경하지 않습니다</p></div><span class="class-pill">● boccia_ball</span></div>
+      <div class="camera-bar"><div id="cameras" class="camera-tabs"></div><label class="split-label">이 촬영의 분할 <select id="splitSelect" aria-label="이 촬영의 분할"><option value="unassigned">미지정</option><option value="train">학습 train</option><option value="val">검증 val</option><option value="test">시험 test</option></select></label></div>
+      <div class="tools"><div class="tool-group"><button id="segmentTool" class="tool" title="S">클릭 분할 <kbd>S</kbd></button><button id="polygonTool" class="tool" title="P">수동 윤곽 <kbd>P</kbd></button><button id="drawTool" class="tool active" title="B">박스 <kbd>B</kbd></button><button id="selectTool" class="tool" title="V">수정 <kbd>V</kbd></button></div><div class="tool-group"><button id="fitButton" title="F">화면 맞춤</button><button id="oneToOne" title="원본 픽셀 크기">1:1</button><button id="zoomOut" aria-label="축소">−</button><span id="zoomValue">100%</span><button id="zoomIn" aria-label="확대">＋</button></div><label class="brightness">보기 밝기 <input id="brightness" type="range" min="0.5" max="3" step="0.1" value="1"></label></div>
+      <div id="assistBar" class="assist-bar"><span id="assistMessage" role="status">보조 도구 준비 중…</span><div id="proposalActions" hidden><button id="acceptProposals" class="primary">제안 추가 <kbd>Enter</kbd></button><button id="discardProposals">취소 <kbd>Esc</kbd></button></div></div>
+      <div id="selectionBar" class="selection-bar" hidden><span id="selectionBadge"></span><button id="openRepresentative" class="quiet">대표 프레임 열기</button><button id="keepFrame" class="quiet">검수 대상으로 추가</button></div>
+      <div id="canvasWrap" class="canvas-wrap"><canvas id="canvas" tabindex="0" aria-label="공을 클릭해 분할하거나 박스를 그리는 이미지 편집 영역"></canvas><div id="canvasMessage" class="canvas-message">이미지를 불러오는 중…</div><div class="canvas-help">휠: 확대 · Space + 드래그: 이동 · Delete: 박스 삭제</div></div>
+      <div class="frame-navigation"><button id="previous" aria-label="이전 프레임">← 이전</button><label>프레임 <input id="frameNumber" type="number" min="0" value="0"><span id="frameTotal">/ —</span></label><input id="frameSlider" type="range" min="0" max="0" value="0" aria-label="프레임 이동"><label>이동 간격 <input id="step" type="number" min="1" max="10000" value="30"></label><button id="next" aria-label="다음 프레임">다음 →</button></div>
+      <div class="editor-footer"><span>선택한 프레임의 보이는 공을 모두 표시하세요.</span><span>← →: 대표/설정 간격 · Shift + ← →: 원본 1프레임 · Ctrl + Z: 되돌리기</span></div>
+    </section>
+    <aside class="annotations panel">
+      <section class="assist-panel"><div class="section-heading"><h2>라벨링 보조</h2><span id="modelStatus" class="badge">—</span></div><p class="hint">공 클릭 → 윤곽 확인 → Enter로 추가<br>Shift+클릭: 주변 제외<br>일부만 잡히면 빠진 공 부분을 추가 클릭</p><div class="assist-buttons"><button id="findCandidates" class="quiet wide" title="현재 보이는 영역에서 원형 후보를 찾습니다. 공 주변을 확대하면 후보를 줄일 수 있습니다.">공 후보 찾기</button><button id="copyPrevious" class="quiet wide">이전 라벨 가져오기</button></div><details><summary>공 크기 설정 · 원본 픽셀</summary><div class="assist-settings"><label>클릭 분할 반지름<input id="assistRadius" type="number" min="3" max="300" value="14"></label><label>후보 최소 반지름<input id="minimumRadius" type="number" min="2" max="300" value="6"></label><label>후보 최대 반지름<input id="maximumRadius" type="number" min="2" max="300" value="45"></label></div></details></section>
+      <div class="section-heading"><h2>이 프레임의 공</h2><span id="boxCount" class="badge">0</span></div>
+      <p class="hint">자동 제안의 누락·오검출을 확인하세요.<br>가려진 공은 보이는 부분을 표시하고<br>‘가림 있음’을 체크합니다.</p>
+      <div id="boxList" class="box-list"></div>
+      <section id="boxDetails" class="box-details" hidden><h3 id="selectedTitle">공 좌표</h3><div class="coordinate-grid"><label>X<input id="boxX" type="number" step="0.1"></label><label>Y<input id="boxY" type="number" step="0.1"></label><label>너비<input id="boxW" type="number" min="0.5" step="0.1"></label><label>높이<input id="boxH" type="number" min="0.5" step="0.1"></label></div><label class="check"><input id="occluded" type="checkbox"> 가림 있음</label><div class="detail-actions"><button id="focusSelected" class="quiet wide">선택 공 확대</button><button id="refineSelected" class="quiet wide">선택 공 클릭 분할로 보정</button><button id="deleteBox" class="danger wide">선택한 공 삭제</button></div></section>
+      <div class="review-section"><span id="reviewBadge" class="review-badge">검수 전</span><p>공을 빠짐없이 표시한 후 완료하세요.<br>완료한 프레임만 내보냅니다.</p><button id="reviewButton" class="primary wide">검수 완료 <kbd>E</kbd></button><button id="emptyButton" class="quiet wide">공 없는 프레임으로 완료</button><button id="nextUnreviewed" class="quiet wide">다음 미검수 <kbd>N</kbd></button></div>
+      <div class="section-heading saved-heading"><h2>작업한 프레임</h2><span id="savedCount" class="badge">0</span></div><div id="savedFrames" class="saved-frames"></div>
+    </aside>
+  </main>
+  <dialog id="helpDialog"><div class="dialog-heading"><h2>라벨링 시작하기</h2><button id="closeHelp" aria-label="닫기">✕</button></div><ol><li>‘전체 자동 초안 만들기’를 실행합니다. 원형·여러 카메라의 위치 후보에서 공의 마스크와 박스를 자동 생성합니다. 저장한 라벨은 덮어쓰지 않으며 중단 후 이어갈 수 있습니다.</li><li>왼쪽에서 촬영을 고르고, 컬러 또는 모노 카메라를 선택합니다. 자동 초안은 아직 검수 전입니다.</li><li>‘클릭 분할(S)’에서 공 내부를 클릭합니다. 윤곽을 확인하고 Enter로 추가합니다. Shift+클릭은 주변을 제외하고 추가 클릭은 공 영역을 포함합니다. 수동 박스(B)도 사용할 수 있습니다.</li><li>‘공 후보 찾기’는 원형 후보, ‘이전 라벨 가져오기’는 같은 카메라의 이전 작업을 제안합니다. 실제 공인 제안만 클릭해 추가하세요. ‘수정(V)’에서 박스를 옮기거나 모서리를 조절합니다. 가려진 공은 보이는 부분 기준으로 표시하고 ‘가림 있음’을 체크합니다.</li><li>‘수동 윤곽(P)’은 공 둘레를 클릭해 직접 분할합니다. Enter로 닫고 다시 Enter로 반영합니다. 선택한 기존 공은 ‘선택 공 클릭 분할로 보정’으로 수정할 수 있습니다.</li><li>프레임 안의 공을 모두 표시했으면 ‘검수 완료’를 누릅니다. 공이 없으면 ‘공 없는 프레임으로 완료’를 누릅니다. N으로 다음 미검수 초안을 확인합니다.</li><li>촬영별 분할을 지정한 뒤 내보냅니다. 원본 크기의 PNG, COCO·YOLO 라벨과 선택한 공의 잘라낸 이미지가 생성됩니다. 클릭 분할로 만든 윤곽은 COCO에 함께 저장됩니다.</li></ol><p class="hint">자동 제안은 추가 후에도 검수 전 초안입니다. 박스를 수정하면 검수 완료가 해제되고 해당 박스의 기존 분할 윤곽은 제거됩니다. 보기 밝기는 표시만 바꾸며 학습 이미지는 원본 밝기로 저장됩니다. 잘라낸 공은 양성 예시이며, 별도 분류기를 학습할 때에는 공이 아닌 예시도 준비해야 합니다.</p><p class="hint">약 30장으로 표시 기준을 먼저 맞춘 후 학습용 데이터를 늘려가세요. 같은 촬영의 인접 프레임은 많이 모으기보다 다른 상황을 골라주세요.</p></dialog>
+  <dialog id="exportDialog"><div class="dialog-heading"><h2>학습 데이터 내보내기</h2><button id="closeExport" aria-label="닫기">✕</button></div><p id="exportDescription"></p><label class="check"><input id="exportCrops" type="checkbox" checked> 공을 잘라낸 이미지와 원본 좌표도 함께 저장</label><p class="hint">COCO와 YOLO 라벨을 함께 저장합니다. 미검수 프레임은 제외합니다. 매번 새 폴더를 만들며, 비어 있는 분할은 그대로 비워 둡니다.</p><button id="confirmExport" class="primary wide">내보내기 시작</button><div id="exportProgress" role="status"></div><pre id="exportResult" hidden></pre><button id="copyExportPath" class="quiet wide" hidden>결과 폴더 경로 복사</button></dialog>
+</body>
+</html>

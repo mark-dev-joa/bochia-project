@@ -1,0 +1,16 @@
+#pragma once
+#include <nlohmann/json.hpp>
+#include <opencv2/core.hpp>
+#include <string>
+#include <filesystem>
+
+namespace boccia::labeler {
+using Json = nlohmann::json;
+inline std::filesystem::path fromUtf8(const std::string& value) { return std::filesystem::path(std::u8string(value.begin(), value.end())); }
+cv::Mat decodeMask(const Json& rle, int width, int height);
+Json encodeMask(const cv::Mat& mask);
+Json maskAnnotation(const cv::Mat& mask, const Json& previous, const std::string& source);
+cv::Rect2d detectionBox(const Json& box);
+bool nudgeEdge(Json& box, int edge, bool expand, int width, int height);
+Json annotationPayload(const Json& frame, int revision);
+}

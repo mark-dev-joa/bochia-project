@@ -1,0 +1,746 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Boccia Labeler · 검수 화면 시안 v2</title>
+<style>
+:root{
+  --bg0:#0d0f12; --bg1:#15181c; --bg2:#1c2025; --bg3:#252a31; --bg4:#2f353d;
+  --line:#2a3038; --line2:#3b434d;
+  --tx1:#e8ebef; --tx2:#a5aeba; --tx3:#727c88;
+  --accent:#5b9dff; --accent-bg:rgba(91,157,255,.15);
+  --ok:#3dd68c; --ok-bg:rgba(61,214,140,.14); --ok-fill:#1f9d63;
+  --hold:#f5b544; --hold-bg:rgba(245,181,68,.14);
+  --warn:#ff8a4c;
+  --mask:#2ee6d0; --sel:#ffd84a; --prop:#ff5ad9;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#000;overflow:hidden}
+body{font:13px/1.4 "Segoe UI","Malgun Gothic",sans-serif;color:var(--tx1);-webkit-font-smoothing:antialiased}
+#app{width:1920px;height:1080px;display:grid;grid-template-columns:300px 1fr 344px;grid-template-rows:48px 1fr 28px;background:var(--bg1);transform-origin:0 0;position:absolute;left:0;top:0}
+svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+kbd{display:inline-block;min-width:18px;height:18px;padding:0 5px;border-radius:4px;border:1px solid var(--line2);background:var(--bg3);color:var(--tx2);font:11px/16px "Cascadia Mono",Consolas,monospace;text-align:center}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+.mono{font-family:"Cascadia Mono",Consolas,monospace}
+
+.top{grid-column:1/4;display:flex;align-items:center;gap:16px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--bg1)}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:14px}
+.brand i{width:14px;height:14px;border-radius:50%;background:var(--accent);box-shadow:inset 0 0 0 3px var(--bg1),0 0 0 1.5px var(--accent)}
+.proj{color:var(--tx2);padding-left:14px;border-left:1px solid var(--line)}
+.steps{margin:0 auto;display:flex;align-items:center;gap:6px}
+.step{display:flex;align-items:center;gap:7px;height:30px;padding:0 12px;border-radius:6px;color:var(--tx2)}
+.step b{width:18px;height:18px;border-radius:50%;border:1px solid var(--line2);font:11px/16px "Segoe UI";text-align:center;font-weight:600}
+.step.done b{background:var(--ok-bg);border-color:transparent;color:var(--ok)}
+.step.on{background:var(--accent-bg);color:var(--tx1)}
+.step.on b{background:var(--accent);border-color:var(--accent);color:#08111f}
+.sep{width:18px;height:1px;background:var(--line2)}
+.prog{display:flex;align-items:center;gap:10px;color:var(--tx2);font-size:12px}
+.bar{width:120px;height:4px;border-radius:2px;background:var(--bg4);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--ok)}
+.saved{display:flex;align-items:center;gap:5px;color:var(--tx3);font-size:12px}
+.tbtn{display:flex;align-items:center;gap:6px;height:28px;padding:0 9px;border-radius:6px;border:1px solid var(--line);color:var(--tx2);font-size:12px}
+
+.list{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.lh{padding:10px 12px 8px;border-bottom:1px solid var(--line)}
+.lh h3{margin:0 0 8px;font-size:13px;font-weight:600;display:flex;justify-content:space-between}
+.lh h3 span{color:var(--tx3);font-weight:400}
+.seg{display:flex;background:var(--bg2);border-radius:6px;padding:2px;gap:2px}
+.seg button{flex:1;height:24px;border-radius:4px;color:var(--tx2);font-size:12px}
+.seg button.on{background:var(--bg4);color:var(--tx1)}
+.lopt{display:flex;justify-content:space-between;align-items:center;margin-top:8px;color:var(--tx3);font-size:12px}
+.chk{display:inline-flex;align-items:center;gap:6px;color:var(--tx2)}
+.chk i{width:13px;height:13px;border-radius:3px;background:var(--accent);display:grid;place-items:center;color:#08111f}
+.chk i svg{width:11px;height:11px;stroke-width:2.6}
+.rows{flex:1;overflow:hidden}
+.grp{display:flex;align-items:center;gap:8px;height:30px;padding:0 12px;background:var(--bg2);border-bottom:1px solid var(--line);font-size:12px;color:var(--tx2)}
+.grp b{color:var(--tx1);font-weight:600}
+.grp .cab{margin-left:auto;display:flex;gap:4px;font:10px "Cascadia Mono",Consolas;color:var(--tx3)}
+.grp .cab span{width:10px;text-align:center}
+.row{display:flex;align-items:center;gap:10px;height:54px;padding:0 12px 0 9px;border-bottom:1px solid var(--line);border-left:3px solid transparent;cursor:pointer}
+.row:hover{background:var(--bg2)}
+.row.cur{background:var(--accent-bg);border-left-color:var(--accent)}
+.row img{width:60px;height:45px;border-radius:3px;display:block;background:#000;filter:brightness(1.55) contrast(1.04)}
+.row .t{flex:1;min-width:0}
+.row .t1{display:flex;gap:6px;align-items:baseline}
+.row .t1 small{color:var(--tx3);font-size:11px}
+.row .t2{color:var(--tx2);font-size:12px;display:flex;align-items:center;gap:5px}
+.row .t2 svg{width:13px;height:13px;color:var(--warn)}
+.dots{display:flex;gap:4px}
+.dot{width:10px;height:10px;border-radius:50%;border:1.5px solid var(--tx3)}
+.dot.done{background:var(--ok);border-color:var(--ok)}
+.dot.hold{background:var(--hold);border-color:var(--hold)}
+.dot.edit{border-color:var(--accent);background:var(--accent-bg)}
+.dot.dup{border:0;height:2px;margin-top:4px;border-radius:1px;background:var(--line2)}
+.lf{display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--line)}
+.lf button{flex:1;height:28px;border-radius:6px;border:1px solid var(--line);color:var(--tx2);font-size:12px;display:flex;align-items:center;justify-content:center;gap:6px}
+.lf button.p{flex:1.5;border-color:var(--line2);color:var(--tx1)}
+
+.stage{padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0;background:var(--bg0);position:relative}
+.scenebar{height:40px;display:flex;align-items:center;gap:10px;flex:none}
+.crumb{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px}
+.crumb span{color:var(--tx3);font-weight:400}
+.sync{color:var(--tx3);font-size:12px}
+.vt{margin-left:auto;display:flex;align-items:center;gap:6px}
+.tg{display:flex;align-items:center;gap:6px;height:28px;padding:0 9px;border-radius:6px;border:1px solid var(--line);color:var(--tx2);font-size:12px;background:var(--bg1)}
+.tg.on{color:var(--tx1);border-color:var(--line2);background:var(--bg3)}
+.slider{display:flex;align-items:center;gap:7px;color:var(--tx3);font-size:12px;padding:0 6px}
+.slider u{display:block;width:74px;height:3px;border-radius:2px;background:var(--bg4);position:relative}
+.slider u::after{content:"";position:absolute;left:46%;top:-4.5px;width:12px;height:12px;border-radius:50%;background:var(--tx2)}
+.tiles{flex:1;display:grid;gap:10px;min-height:0}
+.tiles.ov{grid-template-columns:repeat(3,minmax(0,1fr))}
+.tiles.f0{grid-template-columns:minmax(0,1fr) 184px 184px}
+.tiles.f1{grid-template-columns:184px minmax(0,1fr) 184px}
+.tiles.f2{grid-template-columns:184px 184px minmax(0,1fr)}
+.tile{background:var(--bg1);border:1px solid var(--line);border-radius:8px;display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.tile.big{border-color:var(--accent)}
+.th{height:34px;flex:none;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+.th b{font-weight:600}
+.th .meta{color:var(--tx3);font-size:12px}
+.chip{margin-left:auto;display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:11px;font-size:12px;border:1px solid var(--line2);color:var(--tx2)}
+.chip.done{border-color:transparent;background:var(--ok-bg);color:var(--ok)}
+.chip.hold{border-color:transparent;background:var(--hold-bg);color:var(--hold)}
+.chip.edit{border-color:transparent;background:var(--accent-bg);color:var(--accent)}
+.chip svg{width:12px;height:12px;stroke-width:2.4}
+.view{position:relative;background:#000;cursor:pointer;flex:none;overflow:hidden}
+.view .im{position:absolute;inset:0;background-size:100% 100%}
+.view svg.o,.vp svg.o{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.o .m{fill:rgba(46,230,208,.20);stroke:var(--mask);stroke-width:1.5;vector-effect:non-scaling-stroke;cursor:pointer}
+.o.nofill .m{fill:none}
+.o .m.s{fill:rgba(255,216,74,.05);stroke:var(--sel);stroke-width:2}
+.o .bx{fill:none;stroke:#fff;stroke-width:1;vector-effect:non-scaling-stroke}
+.o .bxs{fill:none;stroke:rgba(0,0,0,.6);stroke-width:3;vector-effect:non-scaling-stroke}
+.o .tight{fill:none;stroke:var(--mask);stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
+.o .pr{fill:none;stroke:var(--prop);stroke-width:2;stroke-dasharray:6 4;vector-effect:non-scaling-stroke}
+.num{position:absolute;transform:translate(-50%,-135%);min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:rgba(13,15,18,.82);color:var(--mask);font:11px/16px "Segoe UI";font-weight:600;text-align:center;pointer-events:none}
+.crops{padding:10px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-content:start}
+.crop{cursor:pointer;min-width:0}
+.crop .c{position:relative;aspect-ratio:1;border-radius:6px;overflow:hidden;background:#000;border:1px solid var(--line)}
+.crop .c .bg{position:absolute;inset:0;background-repeat:no-repeat;image-rendering:pixelated}
+.crop:hover .c{border-color:var(--tx3)}
+.crop.s .c{border-color:var(--sel);box-shadow:0 0 0 1px var(--sel)}
+.crop .c svg{position:absolute;inset:0;width:100%;height:100%}
+.crop .cap{display:flex;gap:6px;align-items:center;height:22px;font-size:12px;color:var(--tx2)}
+.crop .cap b{color:var(--tx1);font-weight:600}
+.tag{margin-left:auto;font-size:11px;color:var(--tx3);border:1px solid var(--line);border-radius:4px;padding:0 5px;line-height:16px}
+.add .c{border:1px dashed var(--line2);background:none;display:grid;place-items:center;color:var(--tx3);font-size:12px;text-align:center;line-height:1.5}
+.add .c svg{position:static;width:18px;height:18px;margin:0 auto 4px;display:block}
+.tile.sm .crops{padding:6px;gap:6px}
+.tile.sm .crop .cap{height:18px;font-size:11px}
+.tile.sm .th{padding:0 8px;gap:6px}
+.vp{position:relative;flex:1;min-height:0;background:#000;overflow:hidden;cursor:grab}
+.vp .im{position:absolute;background-size:100% 100%;image-rendering:pixelated}
+.vp .grid{position:absolute;inset:0;pointer-events:none}
+.rail{position:absolute;left:10px;top:10px;display:flex;flex-direction:column;gap:2px;padding:4px;border-radius:8px;background:rgba(21,24,28,.92);border:1px solid var(--line2)}
+.rail button{width:36px;height:36px;border-radius:6px;color:var(--tx2);position:relative;display:grid;place-items:center}
+.rail button svg{width:18px;height:18px}
+.rail button em{position:absolute;right:3px;bottom:1px;font:9px "Cascadia Mono",Consolas;font-style:normal;color:var(--tx3)}
+.rail button.on{background:var(--accent);color:#08111f}
+.rail button.on em{color:#08111f}
+.rail hr{width:24px;border:0;border-top:1px solid var(--line2);margin:3px auto}
+.opt{position:absolute;left:66px;top:10px;height:36px;display:flex;align-items:center;gap:10px;padding:0 12px;border-radius:8px;background:rgba(21,24,28,.92);border:1px solid var(--line2);color:var(--tx2);font-size:12px;white-space:nowrap}
+.opt b{color:var(--tx1);font-weight:600}
+.opt .g{color:var(--ok)} .opt .r{color:#ff6b6b}
+.zoom{position:absolute;right:10px;top:10px;height:28px;display:flex;align-items:center;gap:8px;padding:0 10px;border-radius:6px;background:rgba(21,24,28,.92);border:1px solid var(--line2);color:var(--tx2);font-size:12px}
+.mini .im{position:absolute;inset:0;background-size:100% 100%;image-rendering:auto}
+.mini{position:absolute;left:10px;bottom:10px;width:188px;height:141px;border:1px solid var(--line2);border-radius:6px;overflow:hidden;box-shadow:0 0 0 3px rgba(13,15,18,.6)}
+.mini i{position:absolute;border:1.5px solid var(--sel);background:rgba(255,216,74,.12)}
+.dim{position:absolute;transform:translate(-50%,-100%);margin-top:-8px;padding:1px 7px;border-radius:4px;background:rgba(13,15,18,.86);color:#fff;font:12px "Cascadia Mono",Consolas;white-space:nowrap;pointer-events:none}
+.hd{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;background:#fff;border:1.5px solid #0d0f12;border-radius:2px;pointer-events:none}
+.pt{position:absolute;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;border:2px solid #fff;color:#fff;font:700 12px/12px "Segoe UI";text-align:center;pointer-events:none}
+.pt.g{background:var(--ok-fill)} .pt.r{background:#e5484d}
+.pbar{position:absolute;transform:translate(-50%,0);display:flex;align-items:center;gap:10px;height:34px;padding:0 6px 0 12px;border-radius:8px;background:rgba(21,24,28,.95);border:1px solid var(--prop);font-size:12px;white-space:nowrap}
+.pbar span{color:var(--prop);font-weight:600}
+.pbar button{height:24px;padding:0 9px;border-radius:5px;display:flex;align-items:center;gap:6px;border:1px solid var(--line2);color:var(--tx2)}
+.pbar button.p{background:var(--ok-fill);border-color:var(--ok-fill);color:#fff}
+.pbar button.p kbd,.act .p kbd{background:rgba(0,0,0,.22);border-color:transparent;color:#fff}
+.hint{height:34px;flex:none;display:flex;align-items:center;gap:18px;color:var(--tx3);font-size:12px;padding:0 4px}
+.hint span{display:flex;align-items:center;gap:6px}
+.toast{position:absolute;left:50%;bottom:58px;transform:translateX(-50%);padding:9px 16px;border-radius:8px;background:var(--bg4);border:1px solid var(--line2);font-size:13px;opacity:0;transition:opacity .15s;pointer-events:none;white-space:nowrap}
+.toast.on{opacity:1}
+
+.side{border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.sec{padding:12px 14px;border-bottom:1px solid var(--line)}
+.sec h4{margin:0 0 8px;font-size:12px;font-weight:600;color:var(--tx2);display:flex;justify-content:space-between;align-items:center}
+.sec h4 span{font-weight:400;color:var(--tx3)}
+.og{display:flex;align-items:center;gap:7px;height:24px;font-size:12px;color:var(--tx3);margin-top:4px}
+.og:first-of-type{margin-top:0}
+.og .dot{width:8px;height:8px}
+.ob{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:6px;cursor:pointer;border:1px solid transparent}
+.ob:hover{background:var(--bg2)}
+.ob.s{background:rgba(255,216,74,.10);border-color:rgba(255,216,74,.45)}
+.ob i{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--mask);color:var(--mask);font:600 11px/15px "Segoe UI";font-style:normal;text-align:center;flex:none}
+.ob.s i{border-color:var(--sel);color:var(--sel)}
+.ob .sz{color:var(--tx3);font:12px "Cascadia Mono",Consolas}
+.ob .ed{color:var(--accent);font-size:11px}
+.ob .ic{margin-left:auto;display:flex;gap:8px;color:var(--tx3)}
+.ob .ic svg{width:14px;height:14px}
+.kv{display:flex;align-items:center;justify-content:space-between;height:28px;font-size:12px;color:var(--tx2)}
+.kv b{color:var(--tx1);font-weight:400}
+.sw{width:30px;height:16px;border-radius:8px;background:var(--bg4);position:relative;display:inline-block;vertical-align:middle;margin-left:8px}
+.sw::after{content:"";position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:50%;background:var(--tx2)}
+.sw.on{background:var(--accent)} .sw.on::after{left:16px;background:#fff}
+.nudge{margin-top:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg2);padding:12px 10px 10px}
+.pad{display:grid;grid-template-columns:1fr 104px 1fr;grid-template-rows:30px 78px 30px;gap:6px;align-items:center;justify-items:center}
+.stp{display:flex;align-items:center;gap:0;border:1px solid var(--line2);border-radius:6px;overflow:hidden;background:var(--bg1)}
+.stp button{width:26px;height:26px;display:grid;place-items:center;color:var(--tx2);font-size:15px}
+.stp button:hover{background:var(--bg4);color:var(--tx1)}
+.stp span{min-width:30px;text-align:center;font:12px "Cascadia Mono",Consolas;color:var(--tx1);border-left:1px solid var(--line2);border-right:1px solid var(--line2);line-height:26px}
+.stp span.nz{color:var(--sel)}
+.stp.v{flex-direction:column}
+.stp.v span{border:0;border-top:1px solid var(--line2);border-bottom:1px solid var(--line2);width:100%}
+.bxp{width:104px;height:78px;border:1.5px solid #fff;border-radius:2px;display:grid;place-items:center;position:relative;background:rgba(255,255,255,.03)}
+.bxp::before{content:"";position:absolute;inset:9px 14px;border:1px dashed var(--mask);border-radius:50%;opacity:.7}
+.bxp b{font:600 14px "Cascadia Mono",Consolas;position:relative}
+.xy{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}
+.xy div{background:var(--bg1);border:1px solid var(--line);border-radius:5px;padding:3px 7px;font:12px "Cascadia Mono",Consolas;display:flex;justify-content:space-between}
+.xy div span{color:var(--tx3)}
+.nf{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:12px;color:var(--tx3)}
+.lnk{height:24px;padding:0 9px;border-radius:5px;border:1px solid var(--line2);color:var(--tx2);font-size:12px}
+.keys{margin-top:8px;font-size:12px;color:var(--tx3);line-height:1.9}
+.sum{display:flex;align-items:center;gap:8px;height:30px;font-size:13px}
+.sum .n{margin-left:auto;color:var(--tx2)}
+.note{margin-top:8px;font-size:12px;color:var(--tx3);line-height:1.6}
+.act{margin-top:auto;padding:12px 14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+.act .p{height:44px;border-radius:8px;background:var(--ok-fill);color:#fff;font-size:14px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:10px}
+.act .p:hover{background:#23ad6e}
+.act .r2{display:flex;gap:8px}
+.act .r2 button{flex:1;height:32px;border-radius:6px;border:1px solid var(--line2);color:var(--tx2);font-size:12px;display:flex;align-items:center;justify-content:center;gap:7px}
+.act p{margin:0;font-size:12px;color:var(--tx3)}
+
+#app.page{grid-template-columns:1fr}
+#app.page .list,#app.page .side{display:none}
+#app.page .stage{padding:0}
+.step{cursor:pointer}
+.pw{padding:20px 28px;display:grid;grid-template-columns:minmax(0,1fr) 372px;gap:22px;height:100%;min-height:0;position:relative}
+.ph{display:flex;align-items:flex-end;gap:16px;margin-bottom:14px}
+.ph h1{margin:0;font-size:20px;font-weight:600}
+.ph p{margin:3px 0 0;color:var(--tx2)}
+.ph .sp{margin-left:auto;display:flex;gap:8px}
+.btn{height:34px;padding:0 14px;border-radius:7px;border:1px solid var(--line2);color:var(--tx1);display:inline-flex;align-items:center;gap:8px;background:var(--bg2);white-space:nowrap}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#08111f;font-weight:600}
+.btn.go{background:var(--ok-fill);border-color:var(--ok-fill);color:#fff;font-weight:600}
+.btn.sm{height:28px;padding:0 10px;font-size:12px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px}
+.card{background:var(--bg1);border:1px solid var(--line);border-radius:10px;padding:11px 14px}
+.card small{color:var(--tx3);font-size:12px;display:block}
+.card b{font:600 22px "Segoe UI","Malgun Gothic";display:block;margin:1px 0}
+.card span{color:var(--tx2);font-size:12px}
+.banner{display:flex;align-items:center;gap:12px;padding:9px 14px;border-radius:10px;border:1px solid rgba(91,157,255,.45);background:var(--accent-bg);margin-bottom:12px}
+.banner svg{color:var(--accent)}
+.banner .mono{color:var(--tx2);font-size:12px}
+.banner .btn{margin-left:auto}
+.tbl{background:var(--bg1);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.tr{display:grid;grid-template-columns:30px 230px 110px 170px minmax(0,1.25fr) minmax(0,1fr) minmax(0,1fr) 92px;align-items:center;gap:0 16px;min-height:45px;padding:0 16px;border-bottom:1px solid var(--line)}
+.tr:last-child{border-bottom:0}
+.tr.hd2{min-height:32px;color:var(--tx3);font-size:12px;background:var(--bg2)}
+.gr{display:flex;align-items:center;gap:12px;min-height:38px;padding:0 16px;background:var(--bg2);border-bottom:1px solid var(--line)}
+.gr b{font-weight:600}
+.gr .mono{color:var(--tx3);font-size:12px}
+.gr .rt{margin-left:auto;display:flex;align-items:center;gap:10px;color:var(--tx2);font-size:12px}
+.okc{color:var(--ok);display:inline-flex;align-items:center;gap:5px}
+.okc svg,.wrn svg{width:14px;height:14px}
+.wrn{color:var(--warn);display:inline-flex;align-items:center;gap:5px}
+.nb{width:26px;height:22px;border-radius:5px;background:var(--bg3);color:var(--tx2);font:600 12px/22px "Cascadia Mono",Consolas;text-align:center}
+.c2 b{font-weight:400}
+.c2 small{display:block;color:var(--tx3);font-size:12px}
+.c2 small.wrn{display:flex;color:var(--warn)}
+.pb{height:4px;border-radius:2px;background:var(--bg4);overflow:hidden;margin-top:5px;max-width:190px}
+.pb i{display:block;height:100%;background:var(--accent)}
+.pb.g i{background:var(--ok)}
+.pill{display:inline-block;padding:1px 9px;border-radius:10px;border:1px solid var(--line2);color:var(--tx2);font-size:12px}
+.pill.new{border-color:transparent;background:var(--accent-bg);color:var(--accent)}
+.cb{width:16px;height:16px;border-radius:4px;border:1.5px solid var(--line2);display:grid;place-items:center;flex:none}
+.cb.on{background:var(--accent);border-color:var(--accent);color:#08111f}
+.cb svg{width:12px;height:12px;stroke-width:2.8}
+.tr.nw{background:rgba(91,157,255,.05)}
+.rc{display:flex;flex-direction:column;gap:12px;min-height:0}
+.box{background:var(--bg1);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.box h4{margin:0 0 10px;font-size:12px;font-weight:600;color:var(--tx2)}
+.box .li{display:flex;gap:10px;align-items:flex-start;padding:6px 0;font-size:13px}
+.box .li small{display:block;color:var(--tx3);font-size:12px;line-height:1.5}
+.box .li svg{margin-top:2px}
+.box p{margin:8px 0 0;color:var(--tx3);font-size:12px;line-height:1.6}
+.cta .btn{width:100%;height:44px;justify-content:center;font-size:14px;margin-top:4px}
+.modal{position:absolute;inset:0;background:rgba(5,6,8,.62);display:grid;place-items:center}
+.dlg{width:880px;background:var(--bg1);border:1px solid var(--line2);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.5);overflow:hidden}
+.dlg h2{margin:0;padding:16px 20px;font-size:16px;font-weight:600;border-bottom:1px solid var(--line)}
+.dlg .bd{padding:16px 20px}
+.path{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;border:1px solid var(--line2);background:var(--bg0);font:13px "Cascadia Mono",Consolas}
+.path .btn{margin-left:auto;font-family:"Segoe UI","Malgun Gothic",sans-serif}
+.found{margin:12px 0 8px;color:var(--tx2)}
+.found b{color:var(--tx1);font-weight:600}
+.fr{display:grid;grid-template-columns:22px 150px 150px minmax(0,1fr);gap:0 14px;align-items:center;min-height:46px;padding:0 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px}
+.fr.bad{border-color:rgba(255,138,76,.4);background:rgba(255,138,76,.05)}
+.fr .ck{display:flex;gap:14px;font-size:12px;flex-wrap:wrap}
+.opts{display:flex;gap:22px;margin-top:12px;color:var(--tx2)}
+.opts span{display:inline-flex;align-items:center;gap:8px}
+.dlg .ft{display:flex;align-items:center;gap:10px;padding:14px 20px;border-top:1px solid var(--line);background:var(--bg2)}
+.dlg .ft p{margin:0;color:var(--tx3);font-size:12px;line-height:1.5;max-width:520px}
+.dlg .ft .sp{margin-left:auto;display:flex;gap:8px}
+
+.banner.gd{border-color:rgba(61,214,140,.4);background:var(--ok-bg)}
+.banner.gd svg{color:var(--ok)}
+.rbar{display:flex;height:30px;border-radius:6px;margin:12px 0 4px;position:relative}
+.rbar i{display:flex;align-items:center;justify-content:center;font-style:normal;font-size:12px;font-weight:600;color:#0b0d10;overflow:hidden;white-space:nowrap}
+.rbar i:first-child{border-radius:6px 0 0 6px}
+.rbar i:nth-child(3){border-radius:0 6px 6px 0}
+.rbar u{position:absolute;top:-5px;bottom:-5px;width:2px;background:#fff;border-radius:1px}
+.rnote{display:flex;justify-content:space-between;color:var(--tx3);font-size:12px}
+.lgd{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px}
+.lgd div{display:flex;gap:8px;align-items:center;font-size:13px}
+.lgd small{color:var(--tx2);font-size:12px}
+.sdot{width:10px;height:10px;border-radius:3px;flex:none}
+.tr.sx{grid-template-columns:30px 190px 150px 80px 120px 130px 130px minmax(0,1fr)}
+.s3{display:inline-flex;border:1px solid var(--line2);border-radius:7px;overflow:hidden;justify-self:end}
+.s3 button{height:28px;padding:0 15px;font-size:12px;color:var(--tx2);border-right:1px solid var(--line2)}
+.s3 button:last-child{border-right:0}
+.s3 button:hover{background:var(--bg3)}
+.s3 button.on{color:#0b0d10;font-weight:600}
+.chipg{display:inline-flex;align-items:center;gap:6px;padding:1px 9px;border-radius:10px;background:var(--bg3);border:1px solid var(--line2);font-size:12px}
+.fm{display:grid;grid-template-columns:22px 170px minmax(0,1fr) 300px;gap:0 14px;align-items:center;min-height:58px;padding:0 16px;border-bottom:1px solid var(--line)}
+.fm:last-child{border-bottom:0}
+.fm b{font-weight:600}
+.fm small{display:block;color:var(--tx3);font-size:12px}
+.fm .mono{color:var(--tx2);font-size:12px}
+.cd{display:block;padding:10px 12px;border-radius:8px;background:var(--bg0);border:1px solid var(--line);font:12px/1.6 "Cascadia Mono",Consolas;color:var(--tx1);white-space:pre-wrap;overflow-wrap:anywhere}
+.sec2{margin:16px 0 8px;font-size:12px;font-weight:600;color:var(--tx2)}
+.runrow{display:flex;align-items:center;gap:14px;margin-top:14px}
+.runrow .btn{height:44px;padding:0 26px;font-size:14px}
+.runrow span{color:var(--tx3);font-size:12px}
+
+.status{grid-column:1/4;display:flex;align-items:center;gap:18px;padding:0 14px;border-top:1px solid var(--line);font-size:12px;color:var(--tx3)}
+.status .r{margin-left:auto;color:var(--hold)}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="top" id="top"></header>
+  <aside class="list" id="list"></aside>
+  <main class="stage" id="stage"></main>
+  <aside class="side" id="side"></aside>
+  <footer class="status" id="status"></footer>
+</div>
+<script src="mock-data.js"></script>
+<script>
+const P = {
+  cursor:'<path d="M5 3l14 7-6 2-2 6z"/>',
+  ai:'<path d="M11 3l1.9 5.1L18 10l-5.1 1.9L11 17l-1.9-5.1L4 10l5.1-1.9z"/><path d="M18.5 15l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/>',
+  brush:'<path d="M9.5 14.5L19 4.5a1.6 1.6 0 012.2 2.3L11.5 16.6"/><path d="M4 20c2.8.3 6.6-.4 6.9-3.2.2-1.7-1.1-3-2.8-2.8C5.6 14.3 5.6 17.5 4 20z"/>',
+  poly:'<path d="M12 4l7.5 5.5L16.5 19h-9L4.5 9.5z"/>',
+  box:'<rect x="4" y="6" width="16" height="12" rx="1"/>',
+  undo:'<path d="M8 6L3 11l5 5"/><path d="M3 11h11a6 6 0 010 12h-2" transform="translate(0 -3)"/>',
+  redo:'<path d="M16 6l5 5-5 5"/><path d="M21 11H10a6 6 0 000 12h2" transform="translate(0 -3)"/>',
+  fit:'<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  target:'<circle cx="12" cy="12" r="5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>',
+  eye:'<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  trash:'<path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/>',
+  check:'<path d="M5 12.5l4.5 4.5L19 7"/>',
+  down:'<path d="M6 9l6 6 6-6"/>',
+  left:'<path d="M15 6l-6 6 6 6"/>',
+  right:'<path d="M9 6l6 6-6 6"/>',
+  warn:'<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.5"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  help:'<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 115 0c0 1.6-2.5 2-2.5 3.8M12 17v.5"/>',
+  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6L19 19M19 5l-1.4 1.4M6.4 17.6L5 19"/>',
+  layer:'<path d="M12 4l9 5-9 5-9-5z"/><path d="M3 14l9 5 9-5"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  loupe:'<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/>',
+  folder:'<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+  refresh:'<path d="M20 11a8 8 0 10-2.3 5.7"/><path d="M20 4v7h-7"/>',
+  info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/>',
+  shield:'<path d="M12 3l8 3v6c0 4.5-3.4 7.7-8 9-4.6-1.3-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  save:'<path d="M5 12.5l4.5 4.5L19 7"/>'
+};
+const ic = n => `<svg class="i" viewBox="0 0 24 24">${P[n]}</svg>`;
+const CAM = MOCK.main.frames, W = 1440, H = 1080;
+const q = new URLSearchParams(location.search);
+const S = {stage:q.get('stage') || 'review', dialog:false, assign:{1:'test',2:'train',3:'train',4:'train',5:'train',6:'train',7:'val',8:'train',9:'train'}, groups:{8:'A',9:'A'}, focus:null, sel:null, tool:'select', mask:true, box:false, proposal:false, view:null,
+           review:['todo','todo','todo'], off:{}, gone:{}, occ:{}, edited:{}};
+const k = (c,b) => c+'-'+b;
+const off = (c,b) => S.off[k(c,b)] || (S.off[k(c,b)] = {t:0,r:0,b:0,l:0});
+const dbox = (c,b) => { const [x,y,w,h] = CAM[c].boxes[b].bbox, o = off(c,b); return [x-o.l, y-o.t, w+o.l+o.r, h+o.t+o.b]; };
+const balls = c => CAM[c].boxes.map((_,b) => b).filter(b => !S.gone[k(c,b)]);
+const isSel = (c,b) => S.sel && S.sel.c === c && S.sel.b === b;
+const SRC = {auto_sam:'SAM', auto_tracking:'추적', manual:'수동'};
+const STATE = {todo:'미검수', done:'확인됨', hold:'보류', edit:'수정 중'};
+const camState = c => S.review[c] === 'todo' && S.edited[c] ? 'edit' : S.review[c];
+const BR = c => c === 0 ? 'filter:brightness(1.55) contrast(1.04);' : '';
+const pts = poly => poly.map(p => (p[0]+.5)+','+(p[1]+.5)).join(' ');
+
+function masks(c, withBox){
+  return balls(c).map(b => {
+    const box = CAM[c].boxes[b], s = isSel(c,b), [x,y,w,h] = dbox(c,b), o = off(c,b);
+    let g = box.contours.map(p => `<polygon class="m${s?' s':''}" data-act="ball" data-c="${c}" data-b="${b}" points="${pts(p)}"/>`).join('');
+    if (withBox && (S.box || s)) {
+      if (s && (o.t||o.r||o.b||o.l)) { const [bx,by,bw,bh] = box.bbox; g += `<rect class="tight" x="${bx}" y="${by}" width="${bw}" height="${bh}"/>`; }
+      g += `<rect class="bxs" x="${x}" y="${y}" width="${w}" height="${h}"/><rect class="bx" x="${x}" y="${y}" width="${w}" height="${h}"/>`;
+    }
+    return g;
+  }).join('');
+}
+function nums(c){
+  return balls(c).map((b,i) => { const [x,y,w] = dbox(c,b);
+    return `<span class="num" style="left:${(x+w/2)/W*100}%;top:${y/H*100}%${isSel(c,b)?';color:var(--sel)':''}">${i+1}</span>`; }).join('');
+}
+function crop(c, b, i, small){
+  const box = CAM[c].boxes[b], [x,y,w,h] = dbox(c,b), R = Math.max(w,h)*2.1, cx = x+w/2, cy = y+h/2, o = off(c,b);
+  const x0 = cx-R/2, y0 = cy-R/2, s = isSel(c,b);
+  const style = `${BR(c)}background-image:url(${CAM[c].file});background-size:${W/R*100}% ${H/R*100}%;background-position:${x0/(W-R)*100}% ${y0/(H-R)*100}%`;
+  let g = box.contours.map(p => `<polygon class="m${s?' s':''}" points="${pts(p)}"/>`).join('');
+  if (S.box || o.t||o.r||o.b||o.l) g += `<rect class="bxs" x="${x}" y="${y}" width="${w}" height="${h}"/><rect class="bx" x="${x}" y="${y}" width="${w}" height="${h}"/>`;
+  return `<div class="crop${s?' s':''}" data-act="ball" data-c="${c}" data-b="${b}"><div class="c"><div class="bg" style="${style}"></div>
+    <svg class="o nofill" viewBox="${x0} ${y0} ${R} ${R}">${g}</svg></div>
+    <div class="cap"><b>${i+1}</b>${small?'':`<span class="mono">${w}×${h}</span>`}${S.edited[k(c,b)]?'<span style="color:var(--accent)">수정됨</span>':''}<span class="tag">${SRC[box.source]}</span></div></div>`;
+}
+function chip(c){ const st = camState(c); return `<span class="chip ${st}" data-act="toggle" data-c="${c}">${st==='done'?ic('check'):''}${STATE[st]}</span>`; }
+function tileOv(c){
+  const f = CAM[c], list = balls(c);
+  return `<section class="tile"><div class="th"><kbd>${c+1}</kbd><b>${f.kind} ${f.key}</b><span class="meta">공 ${list.length}개</span>${chip(c)}</div>
+    <div class="view" style="aspect-ratio:4/3" data-act="focus" data-c="${c}"><div class="im" style="${BR(c)}background-image:url(${f.file})"></div>
+      <svg class="o${S.mask?'':' nofill'}" viewBox="0 0 ${W} ${H}">${masks(c,true)}</svg>${nums(c)}</div>
+    <div class="crops">${list.map((b,i) => crop(c,b,i)).join('')}
+      <div class="crop add" data-act="add" data-c="${c}"><div class="c"><div>${ic('plus')}빠진 공 추가<br>영상에서 공을 클릭</div></div></div></div></section>`;
+}
+function tileSm(c){
+  const f = CAM[c], list = balls(c), st = camState(c);
+  return `<section class="tile sm"><div class="th"><kbd>${c+1}</kbd><b>${f.kind} ${f.key}</b><span class="dot ${st}" style="margin-left:auto"></span></div>
+    <div class="view" style="aspect-ratio:4/3" data-act="focus" data-c="${c}"><div class="im" style="${BR(c)}background-image:url(${f.file})"></div>
+      <svg class="o${S.mask?'':' nofill'}" viewBox="0 0 ${W} ${H}">${masks(c,false)}</svg></div>
+    <div class="crops">${list.map((b,i) => crop(c,b,i,true)).join('')}</div></section>`;
+}
+const TOOLS = [['select','cursor','V','선택'],['ai','ai','S','AI 분할'],['brush','brush','B','브러시'],['poly','poly','P','폴리곤'],['box','box','R','박스']];
+const OPT = {
+  select:'<b>선택</b> 공을 클릭 · 빈 곳을 끌면 화면 이동 · 방향키로 박스 경계 1픽셀',
+  ai:'<b>AI 분할</b> <span class="g">왼쪽 클릭 포함</span> · <span class="r">오른쪽 클릭 제외</span> · 끌어서 박스 지정 · <kbd>Enter</kbd> 반영',
+  brush:'<b>브러시</b> 왼쪽 버튼으로 칠하기 · 오른쪽 버튼으로 지우기 · <kbd>[</kbd> <kbd>]</kbd> 굵기 7px',
+  poly:'<b>폴리곤</b> 둘레를 따라 클릭 · <kbd>Enter</kbd> 닫기 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 마지막 점 취소',
+  box:'<b>박스</b> 끌어서 사각형 그리기 · 마스크 없이 박스만 저장'
+};
+let VP = {w:864, h:858};
+function viewOf(c){
+  if (S.view) return S.view;
+  if (S.sel && S.sel.c === c) { const [x,y,w,h] = dbox(c,S.sel.b), s = Math.min(14, Math.max(.6, VP.h*.34/Math.max(w,h)));
+    return {s, tx:VP.w/2-(x+w/2)*s, ty:VP.h/2-(y+h/2)*s}; }
+  const s = Math.min(VP.w/W, VP.h/H); return {s, tx:(VP.w-W*s)/2, ty:(VP.h-H*s)/2};
+}
+function tileBig(c){
+  const f = CAM[c], v = viewOf(c), vb = `${-v.tx/v.s} ${-v.ty/v.s} ${VP.w/v.s} ${VP.h/v.s}`;
+  let extra = '';
+  if (S.sel && S.sel.c === c) {
+    const [x,y,w,h] = dbox(c,S.sel.b), sx = n => n*v.s+v.tx, sy = n => n*v.s+v.ty;
+    extra += `<span class="dim" style="left:${sx(x+w/2)}px;top:${sy(y)}px">${w} × ${h} px</span>`;
+    [[x+w/2,y],[x+w,y+h/2],[x+w/2,y+h],[x,y+h/2]].forEach(p => extra += `<i class="hd" style="left:${sx(p[0])}px;top:${sy(p[1])}px"></i>`);
+    if (S.proposal) {
+      extra += `<i class="pt g" style="left:${sx(x+w*.42)}px;top:${sy(y+h*.5)}px">+</i><i class="pt r" style="left:${sx(x+w*1.12)}px;top:${sy(y+h*.9)}px">−</i>`;
+      extra += `<div class="pbar" style="left:${sx(x+w/2)}px;top:${sy(y+h)+22}px"><span>제안 미확정</span><button class="p" data-act="apply">반영 <kbd>Enter</kbd></button><button data-act="cancel">취소 <kbd>Esc</kbd></button></div>`;
+    }
+  }
+  let prop = '';
+  if (S.proposal && S.sel && S.sel.c === c) {
+    const [x,y,w,h] = dbox(c,S.sel.b), cx = x+w/2, cy = y+h/2;
+    prop = CAM[c].boxes[S.sel.b].contours.map(p => `<polygon class="pr" points="${p.map(q => (cx+(q[0]+.5-cx)*.93)+','+(cy+(q[1]+.5-cy)*.93)).join(' ')}"/>`).join('');
+  }
+  const grid = v.s >= 5 ? `<div class="grid" style="background-image:linear-gradient(to right,rgba(255,255,255,.09) 1px,transparent 1px),linear-gradient(to bottom,rgba(255,255,255,.09) 1px,transparent 1px);background-size:${v.s}px ${v.s}px;background-position:${v.tx%v.s}px ${v.ty%v.s}px"></div>` : '';
+  return `<section class="tile big"><div class="th"><kbd>${c+1}</kbd><b>${f.kind} ${f.key}</b><span class="meta">프레임 ${f.index} · 공 ${balls(c).length}개 · 수신 시각 ${f.delta_ms>=0?'+':''}${f.delta_ms.toFixed(2)}ms</span>${chip(c)}</div>
+    <div class="vp" id="vp" data-c="${c}"><div class="im" style="${BR(c)}background-image:url(${f.file});left:${v.tx}px;top:${v.ty}px;width:${W*v.s}px;height:${H*v.s}px"></div>${grid}
+      <svg class="o${S.mask?'':' nofill'}" viewBox="${vb}" preserveAspectRatio="none">${masks(c,true)}${prop}</svg>${extra}
+      <div class="rail">${TOOLS.map(t => `<button class="${S.tool===t[0]?'on':''}" data-act="tool" data-t="${t[0]}" title="${t[3]}">${ic(t[1])}<em>${t[2]}</em></button>`).join('')}<hr>
+        <button data-act="undo" title="실행 취소">${ic('undo')}</button><button title="다시 실행">${ic('redo')}</button><hr>
+        <button data-act="fit" title="화면 맞춤">${ic('fit')}<em>F</em></button><button data-act="zoomsel" title="선택한 공으로 확대">${ic('target')}<em>Z</em></button></div>
+      <div class="opt">${OPT[S.tool]}</div>
+      <div class="zoom"><span class="mono">${Math.round(v.s*100)}%</span><span>원본 1픽셀 = 화면 ${v.s.toFixed(1)}픽셀</span></div>
+      <div class="mini"><div class="im" style="${BR(c)}background-image:url(${f.file})"></div><i style="left:${Math.max(0,-v.tx/v.s/W*100)}%;top:${Math.max(0,-v.ty/v.s/H*100)}%;width:${Math.min(100,VP.w/v.s/W*100)}%;height:${Math.min(100,VP.h/v.s/H*100)}%"></i></div></div></section>`;
+}
+function renderStage(){
+  const f = S.focus, total = CAM.reduce((n,_,c) => n+balls(c).length, 0);
+  const tiles = f === null ? [0,1,2].map(tileOv).join('') : [0,1,2].map(c => c === f ? tileBig(c) : tileSm(c)).join('');
+  const hint = f === null
+    ? `<span><kbd>클릭</kbd> 그 카메라를 크게 열고 편집</span><span><kbd>Tab</kbd> 공을 하나씩 확대</span><span><kbd>E</kbd> 세 장 확인하고 다음 장면</span><span><kbd>Q</kbd> 보류</span><span><kbd>A</kbd> <kbd>D</kbd> 이전·다음 장면</span>`
+    : `<span><kbd>Esc</kbd> 세 장 보기로</span><span><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> 카메라 전환</span><span><kbd>Tab</kbd> 다음 공</span><span><kbd>←↑↓→</kbd> 박스 경계 바깥으로 1픽셀 · <kbd>Shift</kbd> 안으로</span><span><kbd>Del</kbd> 공 삭제</span><span><kbd>E</kbd> 확인하고 다음 장면</span>`;
+  document.getElementById('stage').innerHTML =
+    `<div class="scenebar"><div class="crumb"><span>촬영 ${String(MOCK.recording_number).padStart(2,'0')}</span>${ic('right')}프레임 ${String(MOCK.main.index).padStart(4,'0')}</div>
+      <span class="sync">카메라 3대 · 공 ${total}개 · 수신 시각 차 최대 ${Math.max(...CAM.map(c => Math.abs(c.delta_ms))).toFixed(1)}ms</span>
+      <div class="vt"><button class="tg ${S.mask?'on':''}" data-act="mask">${ic('layer')}마스크 채움 <kbd>M</kbd></button><button class="tg ${S.box?'on':''}" data-act="boxes">${ic('box')}박스 <kbd>X</kbd></button>
+        <button class="tg on">${ic('loupe')}돋보기</button><span class="slider">${ic('sun')}표시 밝기<u></u></span></div></div>
+    <div class="tiles ${f === null ? 'ov' : 'f'+f}">${tiles}</div><div class="hint">${hint}</div><div class="toast" id="toast"></div>`;
+  const vp = document.getElementById('vp');
+  if (vp && (Math.abs(vp.clientWidth-VP.w) > 1 || Math.abs(vp.clientHeight-VP.h) > 1)) { VP = {w:vp.clientWidth, h:vp.clientHeight}; renderStage(); }
+}
+function stepper(label, value, act){
+  return `<div class="stp"><button data-act="nudge" data-e="${act}" data-d="-1" title="안으로 1픽셀">−</button><span class="${value?'nz':''}">${value>0?'+':''}${value}</span><button data-act="nudge" data-e="${act}" data-d="1" title="바깥으로 1픽셀">+</button></div>`;
+}
+function renderSide(){
+  let h = `<div class="sec"><h4>이 장면의 공 <span>${CAM.reduce((n,_,c) => n+balls(c).length, 0)}개</span></h4>`;
+  CAM.forEach((f,c) => {
+    h += `<div class="og"><span class="dot ${camState(c)}"></span>${f.kind} ${f.key}</div>`;
+    balls(c).forEach((b,i) => { const [,,w,hh] = dbox(c,b), box = f.boxes[b];
+      h += `<div class="ob${isSel(c,b)?' s':''}" data-act="ball" data-c="${c}" data-b="${b}"><i>${i+1}</i>공 ${i+1}<span class="sz">${w}×${hh}</span>${S.edited[k(c,b)]?'<span class="ed">수정됨</span>':''}${S.occ[k(c,b)]?'<span class="ed" style="color:var(--hold)">가림</span>':''}<span class="ic"><span class="tag" style="margin:0">${SRC[box.source]}</span>${ic('eye')}${ic('trash')}</span></div>`; });
+  });
+  h += '</div>';
+  if (S.sel) {
+    const {c,b} = S.sel, [x,y,w,hh] = dbox(c,b), o = off(c,b), f = CAM[c], n = balls(c).indexOf(b)+1;
+    h += `<div class="sec"><h4>${f.kind} ${f.key} · 공 ${n} <span>${f.boxes[b].source==='auto_sam'?'자동 분할 (SAM)':'자동 추적'}</span></h4>
+      <div class="kv">일부 가림 <span><kbd>O</kbd><span class="sw ${S.occ[k(c,b)]?'on':''}" data-act="occ"></span></span></div>
+      <h4 style="margin-top:10px">박스 보정 <span>원본 1픽셀 단위</span></h4>
+      <div class="nudge"><div class="pad"><span></span>${stepper('위',o.t,'t')}<span></span>
+        ${stepper('왼',o.l,'l')}<div class="bxp"><b>${w} × ${hh}</b></div>${stepper('오른',o.r,'r')}
+        <span></span>${stepper('아래',o.b,'b')}<span></span></div>
+        <div class="xy"><div><span>X</span>${x}</div><div><span>Y</span>${y}</div><div><span>W</span>${w}</div><div><span>H</span>${hh}</div></div>
+        <div class="nf"><span>${(o.t||o.r||o.b||o.l)?'마스크 외곽에서 보정됨':'마스크 외곽과 같음'}</span><button class="lnk" data-act="reset">마스크에 맞춤</button></div></div>
+      <div class="keys"><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> 그 방향 경계를 바깥으로 1픽셀<br><kbd>Shift</kbd> + 방향키는 안으로 1픽셀 · 마스크는 그대로</div></div>`;
+  } else {
+    const counts = CAM.map((_,c) => balls(c).length), same = counts.every(n => n === counts[0]);
+    h += `<div class="sec"><h4>장면 요약</h4>${CAM.map((f,c) => `<div class="sum"><span class="dot ${camState(c)}"></span>${f.kind} ${f.key}<span class="n">공 ${counts[c]}개 · ${STATE[camState(c)]}</span></div>`).join('')}
+      <p class="note">${same ? '세 카메라의 공 개수가 같습니다.' : '<span style="color:var(--warn)">카메라마다 공 개수가 다릅니다. 빠진 공이 없는지 확인하세요.</span>'}<br>공을 클릭하면 박스 보정과 속성이 여기에 나옵니다.</p></div>`;
+  }
+  h += `<div class="act"><button class="p" data-act="confirm">세 장 확인하고 다음 장면 <kbd>E</kbd></button>
+    <div class="r2"><button data-act="hold">${ic('clock')}보류 <kbd>Q</kbd></button><button data-act="next">다음 미검수 <kbd>N</kbd></button></div>
+    <p>확인한 뒤 수정하면 그 이미지의 확인이 풀립니다.</p></div>`;
+  document.getElementById('side').innerHTML = h;
+}
+function rowState(r){
+  return r.selected.map((on,c) => !on ? 'dup' : r.index === MOCK.main.index ? camState(c) : r.index > MOCK.main.index ? 'todo' : (r.index === 18 && c === 0) ? 'hold' : 'done');
+}
+function renderList(){
+  const rows = MOCK.rows.filter(r => r.selected.some(Boolean)), hidden = MOCK.rows.length-rows.length;
+  const done = rows.filter(r => rowState(r).every(s => s === 'done' || s === 'dup')).length;
+  document.getElementById('list').innerHTML =
+    `<div class="lh"><h3>장면 목록 <span>대표 장면 1,488개</span></h3>
+      <div class="seg"><button class="on">전체</button><button>미검수</button><button>보류</button><button>확인됨</button></div>
+      <div class="lopt"><span class="chk"><i>${ic('check')}</i>반복 장면 숨김</span><span>촬영 ${MOCK.recordings}개</span></div></div>
+    <div class="rows"><div class="grp">${ic('down')}<b>촬영 ${String(MOCK.recording_number).padStart(2,'0')}</b>${MOCK.recording_scenes}장면<span class="cab"><span>C</span><span>A</span><span>B</span></span></div>
+    ${rows.map(r => { const st = rowState(r), diff = !r.counts.every(n => n === r.counts[0]);
+      return `<div class="row${r.index === MOCK.main.index ? ' cur' : ''}"><img src="${r.thumb}" alt=""><div class="t"><div class="t1">프레임 ${String(r.index).padStart(4,'0')}<small>${r.seconds.toFixed(2)}초</small></div>
+        <div class="t2">${diff ? ic('warn') : ''}공 ${r.counts.join(' · ')}</div></div><div class="dots">${st.map(s => `<span class="dot ${s}"></span>`).join('')}</div></div>`; }).join('')}</div>
+    <div class="lf"><button>${ic('left')}이전 <kbd>A</kbd></button><button>다음 <kbd>D</kbd>${ic('right')}</button><button class="p">다음 미검수 <kbd>N</kbd></button></div>`;
+  renderTop();
+}
+const STEPS = [['prep','데이터 준비'],['review','검수'],['split','분할'],['export','내보내기']];
+function renderTop(){
+  const review = S.stage === 'review', at = STEPS.findIndex(x => x[0] === S.stage);
+  const images = review ? MOCK.rows.reduce((n,r) => n+rowState(r).filter(s => s === 'done').length, 0) : S.stage === 'prep' ? MOCK.recs.reduce((n,r) => n+r.reviewed, 0) : MOCK.totals.selected;
+  document.getElementById('top').innerHTML =
+    `<div class="brand"><i></i>Boccia Labeler</div><div class="proj">보치아 공 라벨 프로젝트</div>
+     <div class="steps">${STEPS.map((x,i) => `${i ? '<span class="sep"></span>' : ''}<div class="step${i === at ? ' on' : i < at ? ' done' : ''}" data-act="stage" data-s="${x[0]}"><b>${i < at ? '✓' : i+1}</b>${x[1]}</div>`).join('')}</div>
+     <div class="prog">확인한 이미지 <b class="mono" style="color:var(--tx1);font-weight:400">${images.toLocaleString()} / ${MOCK.totals.selected.toLocaleString()}</b><span class="bar"><i style="width:${Math.max(2,images/MOCK.totals.selected*100)}%"></i></span></div>
+     <div class="saved">${ic('save')}자동 저장됨</div><button class="tbtn">${ic('help')}단축키</button>`;
+}
+const NEW = [
+  {started:'10-09 14:02:11', seconds:5.2, frames:[156,156,156], megabytes:372, ok:true},
+  {started:'10-09 14:03:40', seconds:6.7, frames:[201,201,201], megabytes:478, ok:true},
+  {started:'10-09 14:05:02', seconds:4.9, frames:[148,148,148], megabytes:352, ok:true},
+  {started:'10-09 14:06:30', seconds:2.1, frames:[63,63,41], megabytes:132, ok:false}
+];
+const cbx = on => `<span class="cb${on ? ' on' : ''}">${on ? ic('check') : ''}</span>`;
+function renderPrep(){
+  const R = MOCK.recs, T = MOCK.totals, sum = key => R.reduce((n,r) => n+r[key], 0), scenes = sum('scenes'), empty = sum('empty');
+  const group = R[0].group, giga = (sum('megabytes')/1000).toFixed(1), good = NEW.filter(n => n.ok);
+  const row = r => `<div class="tr"><span class="nb">${String(r.number).padStart(2,'0')}</span>
+    <div class="c2"><b>${r.started}</b><small>${r.seconds.toFixed(1)}초 · ${r.megabytes}MB</small></div>
+    <div class="c2 mono">${r.frames[0]} × ${r.frames.length}대</div>
+    <div class="c2"><span class="okc">${ic('check')}확인됨</span><small>누락 ${r.gaps} · 손상 ${r.invalid}</small></div>
+    <div class="c2"><b>${r.images.toLocaleString()}장 완료 · 공 후보 ${r.boxes.toLocaleString()}개</b>${r.empty ? `<small class="wrn">${ic('warn')}후보 없는 이미지 ${r.empty}장</small>` : '<small>모든 이미지에 후보 있음</small>'}</div>
+    <div class="c2"><b>검수 대상 ${r.selected}장</b><small>반복 장면 ${r.images-r.selected}장 보관</small></div>
+    <div class="c2"><b class="mono">${r.reviewed} / ${r.selected}</b><div class="pb g"><i style="width:${r.reviewed/r.selected*100}%"></i></div></div>
+    <div><span class="pill">미지정</span></div></div>`;
+  const fresh = n => `<div class="tr nw">${cbx(true)}
+    <div class="c2"><b>${n.started}</b><small>${n.seconds.toFixed(1)}초 · ${n.megabytes}MB</small></div>
+    <div class="c2 mono">${n.frames[0]} × 3대</div>
+    <div class="c2"><span class="okc">${ic('check')}확인됨</span><small>누락 0 · 손상 0</small></div>
+    <div class="c2"><small>추가하면 자동으로 시작</small></div><div class="c2"><small>자동 초안 뒤에 적용</small></div><div class="c2"><small>—</small></div><div><span class="pill new">새 촬영</span></div></div>`;
+  const dialog = !S.dialog ? '' : `<div class="modal"><div class="dlg"><h2>촬영 폴더 추가</h2><div class="bd">
+      <div class="path">${ic('folder')}D:\\works\\bochia\\data\\imports\\2026-10-09-field<button class="btn sm">다른 폴더 선택</button></div>
+      <p class="found">촬영 <b>${NEW.length}개</b>를 찾았습니다 · 새 촬영 <b>${good.length}개</b> · 이미 추가됨 0개 · <span class="wrn">문제 있음 1개</span></p>
+      ${NEW.map(n => `<div class="fr${n.ok ? '' : ' bad'}">${cbx(n.ok)}<div class="c2"><b>${n.started}</b><small>${n.seconds.toFixed(1)}초 · ${n.megabytes}MB</small></div>
+        <div class="c2 mono">${n.ok ? n.frames[0]+' × 3대' : n.frames.join(' / ')}</div>
+        <div class="ck">${n.ok ? `<span class="okc">${ic('check')}촬영 완료</span><span class="okc">${ic('check')}프레임 누락 없음</span><span class="okc">${ic('check')}카메라 3대 프레임 수 일치</span>`
+          : `<span class="wrn">${ic('warn')}촬영이 끝나기 전에 중단됨</span><span class="wrn">${ic('warn')}모노 B가 22장 부족</span>`}</div></div>`).join('')}
+      <div class="opts"><span>${cbx(true)}추가한 뒤 자동 초안 만들기</span><span>${cbx(true)}반복 장면 필터 적용</span></div></div>
+      <div class="ft"><p>원본은 이 위치에서 그대로 읽습니다. 복사하거나 바꾸지 않습니다.<br>이미 있는 촬영의 라벨과 검수 상태는 그대로 유지됩니다.</p>
+        <div class="sp"><button class="btn" data-act="dialog">취소</button><button class="btn pri" data-act="dialog">촬영 ${good.length}개 추가</button></div></div></div></div>`;
+  document.getElementById('stage').innerHTML = `<div class="pw"><div>
+    <div class="ph"><div><h1>데이터 준비</h1><p>현장 PC에서 복사해 온 촬영 폴더를 추가하고, 자동 초안과 반복 장면 필터를 거쳐 검수 대상을 만듭니다.</p></div>
+      <div class="sp"><button class="btn">${ic('refresh')}가져오기 폴더 다시 훑기</button><button class="btn pri" data-act="dialog">${ic('folder')}촬영 폴더 추가</button></div></div>
+    <div class="cards"><div class="card"><small>추가된 촬영</small><b>${R.length}개</b><span>카메라 ${MOCK.cameras.length}대 · ${giga}GB</span></div>
+      <div class="card"><small>원본 이미지</small><b>${T.images.toLocaleString()}장</b><span>카메라별 ${(T.images/3).toLocaleString()}장</span></div>
+      <div class="card"><small>자동 초안</small><b>${T.images.toLocaleString()}장 완료</b><span>공 후보 ${T.boxes.toLocaleString()}개 · 후보 없는 이미지 ${empty}장</span></div>
+      <div class="card"><small>검수 대상</small><b>${T.selected.toLocaleString()}장</b><span>장면 ${scenes.toLocaleString()}개 · 반복 장면 ${(T.images-T.selected).toLocaleString()}장 보관</span></div></div>
+    <div class="banner">${ic('info')}<span>가져오기 폴더에서 새 촬영 <b>${good.length}개</b>를 찾았습니다</span><span class="mono">data/imports/2026-10-09-field</span><button class="btn sm" data-act="dialog">살펴보고 추가</button></div>
+    <div class="tbl"><div class="tr hd2"><span></span><span>촬영</span><span>프레임</span><span>원본</span><span>자동 초안</span><span>반복 장면 필터</span><span>검수</span><span>분할</span></div>
+      <div class="gr">${ic('folder')}<b>${group}</b><span class="mono">${MOCK.source}/${group}</span><span class="rt"><span class="okc">${ic('check')}원본 위치 확인됨</span>촬영 ${R.length}개</span></div>
+      ${R.map(row).join('')}
+      <div class="gr">${ic('folder')}<b>2026-10-09-field</b><span class="mono">${MOCK.source}/2026-10-09-field</span><span class="rt"><span class="pill new">추가 전</span><button class="btn sm pri" data-act="dialog">선택한 ${good.length}개 추가</button></span></div>
+      ${good.map(fresh).join('')}</div></div>
+    <div class="rc"><div class="box cta"><h4>다음 단계</h4><div class="li"><span class="okc">${ic('check')}</span><div>자동 초안과 반복 장면 필터가 끝났습니다<small>검수 대상 ${T.selected.toLocaleString()}장 · 확인한 이미지 ${sum('reviewed')}장</small></div></div>
+        <button class="btn go" data-act="stage" data-s="review">검수 시작 ${ic('right')}</button><p>자동 초안은 초안입니다. 사람이 확인한 이미지만 학습 데이터로 내보냅니다.</p></div>
+      <div class="box"><h4>최근 작업</h4><div class="li"><span class="okc">${ic('check')}</span><div>자동 초안 ${T.images.toLocaleString()}장<small>10-03 완료 · 원형 후보와 다중 카메라 대응으로 시작점 찾기</small></div></div>
+        <div class="li"><span class="okc">${ic('check')}</span><div>반복 장면 필터<small>10-03 완료 · ${(T.images-T.selected).toLocaleString()}장 보관</small></div></div>
+        <p>새 촬영을 추가하면 그 촬영만 자동 초안과 필터를 돌립니다. 진행률과 중단 버튼이 여기에 나옵니다.</p></div>
+      <div class="box"><h4>카메라</h4>${MOCK.cameras.map(c => `<div class="kv">${c.name} · ${c.kind}<b class="mono">${c.serial}</b></div>`).join('')}</div>
+      <div class="box"><h4>원본 보호</h4><div class="li">${ic('shield')}<div>원본 촬영 파일은 읽기만 합니다<small>복사, 수정, 삭제하지 않습니다. 폴더를 옮겼다면 그 촬영 묶음에서 위치를 다시 지정합니다.</small></div></div></div></div>
+    ${dialog}</div>`;
+}
+
+const SP = {train:['학습','#5b9dff'], val:['검증','#b48cff'], test:['평가','#ff7eb6']};
+const VERSION = '3f9a2c1e';
+function splitTotals(){
+  const t = {}; Object.keys(SP).forEach(key => t[key] = {img:0, ball:0, empty:0, recs:[]});
+  MOCK.recs.forEach(r => { const x = t[S.assign[r.number]]; if (!x) return; x.img += r.selected; x.ball += r.sboxes; x.empty += r.sempty; x.recs.push(r.number); });
+  return t;
+}
+function renderSplit(){
+  const R = MOCK.recs, T = splitTotals(), all = MOCK.totals.selected, keys = Object.keys(SP), pct = key => T[key].img/all*100;
+  const names = list => list.map(key => SP[key][0]).join('과 ');
+  const noEmpty = keys.filter(key => !T[key].empty), single = keys.filter(key => T[key].recs.length < 2), missing = keys.filter(key => !T[key].img);
+  const withEmpty = R.filter(r => r.sempty).map(r => String(r.number).padStart(2,'0')).join(', ');
+  const item = (ok, text, sub) => `<div class="li"><span class="${ok ? 'okc' : 'wrn'}">${ic(ok ? 'check' : 'warn')}</span><div>${text}${sub ? `<small>${sub}</small>` : ''}</div></div>`;
+  const row = r => `<div class="tr sx"><span class="nb">${String(r.number).padStart(2,'0')}</span>
+    <div class="c2"><b>${r.started}</b><small>${r.seconds.toFixed(1)}초</small></div>
+    <div class="c2"><b class="mono">${r.selected}장</b><small>장면 ${r.scenes}개</small></div>
+    <div class="c2 mono">${r.sboxes.toLocaleString()}</div>
+    <div class="c2 mono">${r.sempty ? r.sempty+'장' : '<span style="color:var(--tx3)">없음</span>'}</div>
+    <div class="c2 mono">${r.ssmall}개 <span style="color:var(--tx3)">${Math.round(r.ssmall/Math.max(1,r.sboxes)*100)}%</span></div>
+    <div>${S.groups[r.number] ? `<span class="chipg">묶음 ${S.groups[r.number]}</span>` : '<span style="color:var(--tx3)">단독</span>'}</div>
+    <div class="s3">${keys.map(key => `<button class="${S.assign[r.number] === key ? 'on' : ''}" style="${S.assign[r.number] === key ? 'background:'+SP[key][1] : ''}" data-act="assign" data-n="${r.number}" data-s="${key}">${SP[key][0]}</button>`).join('')}</div></div>`;
+  document.getElementById('stage').innerHTML = `<div class="pw"><div>
+    <div class="ph"><div><h1>분할</h1><p>확인한 이미지를 학습·검증·평가로 나눕니다. 같은 촬영의 카메라 3대와 연속 프레임은 항상 같은 쪽에 들어갑니다.</p></div>
+      <div class="sp"><button class="btn">선택한 촬영을 같은 배치로 묶기</button><button class="btn" data-act="propose">${ic('refresh')}배분안 다시 제안</button></div></div>
+    <div class="banner gd">${ic('check')}<span>검수 대상 <b>${all.toLocaleString()}장</b>을 모두 확인했습니다</span><span class="mono">보류 0장 · 미검수 0장</span></div>
+    <div class="box"><div class="rnote"><b style="color:var(--tx2);font-weight:600">이미지 기준 비율</b><span>목표 80 / 10 / 10 · 흰 선이 목표 위치 <button class="lnk" style="margin-left:8px">목표 바꾸기</button></span></div>
+      <div class="rbar">${keys.map(key => `<i style="width:${pct(key)}%;background:${SP[key][1]}">${pct(key) > 4 ? SP[key][0]+' '+pct(key).toFixed(1)+'%' : ''}</i>`).join('')}<u style="left:80%"></u><u style="left:90%"></u></div>
+      <div class="lgd">${keys.map(key => `<div><span class="sdot" style="background:${SP[key][1]}"></span><b>${SP[key][0]}</b><small>촬영 ${T[key].recs.length}개 · ${T[key].img.toLocaleString()}장 · 공 ${T[key].ball.toLocaleString()}개 · 공 없는 이미지 ${T[key].empty}장</small></div>`).join('')}</div></div>
+    <div class="tbl" style="margin-top:12px"><div class="tr sx hd2"><span></span><span>촬영</span><span>확인한 이미지</span><span>공</span><span>공 없는 이미지</span><span>작은 공 (32픽셀 미만)</span><span>같은 배치 묶음</span><span style="justify-self:end">배정</span></div>
+      <div class="gr">${ic('folder')}<b>${R[0].group}</b><span class="mono">촬영 ${R.length}개 · 모두 10-02 촬영</span><span class="rt">묶음 전체를 한쪽으로 <span class="s3">${keys.map(key => `<button>${SP[key][0]}</button>`).join('')}</span></span></div>
+      ${R.map(row).join('')}</div></div>
+    <div class="rc"><div class="box"><h4>점검</h4>
+        ${item(true, '같은 촬영과 같은 묶음이 두 쪽에 걸치지 않습니다')}
+        ${missing.length ? item(false, names(missing)+'에 이미지가 없습니다') : item(true, '학습·검증·평가에 모두 이미지가 있습니다')}
+        ${noEmpty.length ? item(false, names(noEmpty)+'에 공 없는 이미지가 없습니다', '공 없는 이미지가 있는 촬영: '+withEmpty) : item(true, '세 쪽 모두 공 없는 이미지가 들어 있습니다')}
+        ${single.length ? item(false, names(single)+(single[single.length-1] === 'test' ? '가' : '이')+' 촬영 1개뿐입니다', '장면 다양성이 낮아 점수가 그 촬영에 좌우됩니다') : ''}
+        ${item(false, '모든 촬영이 같은 날입니다', '다른 날 촬영이 들어오면 평가에 넣는 것을 권합니다')}</div>
+      <div class="box cta"><h4>확정</h4><button class="btn go" data-act="stage" data-s="export">분할 확정 ${ic('right')}</button>
+        <p>확정하면 이 배정과 라벨 상태가 데이터 버전으로 기록됩니다. 확정한 뒤 라벨을 고치면 다시 확정해야 내보낼 수 있습니다.</p>
+        <p>평가에 넣은 촬영은 첫 학습 뒤에는 바꾸지 않습니다. 모든 모델을 같은 평가 세트로 비교하기 위해서입니다.</p></div>
+      <div class="box"><h4>새 촬영이 들어오면</h4><div class="li">${ic('info')}<div>미지정으로 추가됩니다<small>평가 세트를 그대로 두려면 학습이나 검증에 넣습니다. 검수가 끝나야 다시 확정할 수 있습니다.</small></div></div></div></div></div>`;
+}
+function renderExport(){
+  const T = splitTotals(), all = MOCK.totals.selected, keys = Object.keys(SP);
+  const folder = `output\\native-labeler\\exports\\20261012-152000-${VERSION}`;
+  const fm = (on, title, sub, files, target) => `<div class="fm">${cbx(on)}<div><b>${title}</b><small>${sub}</small></div><div class="mono">${files}</div><div class="c2">${target}</div></div>`;
+  document.getElementById('stage').innerHTML = `<div class="pw"><div>
+    <div class="ph"><div><h1>내보내기</h1><p>확정한 데이터 버전을 학습용 폴더로 내보냅니다. 확인하지 않은 이미지는 들어가지 않습니다.</p></div></div>
+    <div class="cards"><div class="card"><small>데이터 버전</small><b class="mono">${VERSION}</b><span>10-12 15:20 확정 · 이미지 ${all.toLocaleString()}장</span></div>
+      ${keys.map(key => `<div class="card"><small style="display:flex;align-items:center;gap:6px"><span class="sdot" style="background:${SP[key][1]}"></span>${SP[key][0]}</small><b>${T[key].img.toLocaleString()}장</b><span>촬영 ${T[key].recs.length}개 · 공 ${T[key].ball.toLocaleString()}개</span></div>`).join('')}</div>
+    <div class="sec2">형식</div>
+    <div class="tbl">
+      ${fm(true, 'YOLO 검출 라벨', '보정한 검출 박스', 'labels/{train,val,test}/*.txt · data.yaml', '<b>YOLO26</b><small>data.yaml을 그대로 지정</small>')}
+      ${fm(true, 'COCO 검출', '보정한 검출 박스', 'annotations/instances_detection_{train,val,test}.json', '<b>D-FINE-S · RT-DETRv2-S · Faster R-CNN</b><small>같은 박스, 같은 분할</small>')}
+      ${fm(true, 'COCO 마스크', '마스크와 마스크 외곽 박스', 'annotations/instances_{train,val,test}.json', '<b>분할 실험용</b><small>보정값과 무관하게 마스크 그대로</small>')}
+      ${fm(false, '공 조각 이미지', '검출 박스로 잘라낸 PNG', 'crops/{train,val,test}/*.png', '<b>분류 실험용</b><small>선택 사항</small>')}</div>
+    <div class="sec2">항상 포함</div>
+    <div class="box" style="padding:10px 16px"><div class="kv">원본 이미지<b class="mono">images/{train,val,test}/*.png · 화면 밝기와 오버레이는 들어가지 않음</b></div>
+      <div class="kv">기록<b class="mono">manifest.json · 원본 위치, 촬영별 배정, 묶음, 데이터 버전</b></div></div>
+    <div class="sec2">저장 위치</div>
+    <div class="path">${ic('folder')}D:\\works\\bochia\\${folder}<button class="btn sm">폴더 바꾸기</button></div>
+    <div class="runrow"><button class="btn go">내보내기</button><span>이미지 ${all.toLocaleString()}장 · 예상 크기 약 8GB · 끝나면 이 화면에 결과가 남습니다</span></div></div>
+    <div class="rc"><div class="box"><h4>학습 시작</h4><div class="li" style="padding-top:0"><div>YOLO26<small>내보낸 폴더의 data.yaml을 지정합니다</small></div><button class="lnk" style="margin-left:auto">복사</button></div>
+        <code class="cd">yolo detect train data="…${folder.slice(folder.indexOf('exports')-1)}\\data.yaml" model=yolo26s.pt imgsz=1440 batch=-1</code>
+        <div class="li"><div>D-FINE-S · RT-DETRv2-S · Faster R-CNN<small>annotations/instances_detection_*.json과 images/를 지정합니다</small></div></div></div>
+      <div class="box"><h4>내보내기 기록</h4><div class="li"><span class="okc">${ic('check')}</span><div><span class="mono">${VERSION}</span> · 10-12 15:31<small>${all.toLocaleString()}장 · 학습 ${T.train.img.toLocaleString()} / 검증 ${T.val.img} / 평가 ${T.test.img}</small></div><button class="lnk" style="margin-left:auto">폴더 열기</button></div></div>
+      <div class="box"><h4>비교 원칙</h4><div class="li">${ic('shield')}<div>모든 모델은 같은 데이터 버전으로 학습하고 같은 평가 세트로 비교합니다<small>라벨이나 배정이 하나라도 바뀌면 데이터 버전이 달라집니다.</small></div></div></div></div></div>`;
+}
+function renderStatus(msg){
+  const f = S.focus, v = f === null ? null : viewOf(f);
+  document.getElementById('status').innerHTML =
+    `<span>${f === null ? '세 장 보기' : CAM[f].kind+' '+CAM[f].key+' 편집'}</span><span class="mono">${v ? '확대 '+Math.round(v.s*100)+'%' : '원본 1440 × 1080'}</span>
+     <span>밝기 조절은 화면 표시에만 적용</span><span>AI 분할 모델 준비됨</span><span class="r">UI 시안 · 검수 상태와 진행률은 예시이며 실제 라벨에 저장하지 않습니다</span>`;
+}
+function render(){
+  document.getElementById('app').classList.toggle('page', S.stage !== 'review');
+  if (S.stage === 'review') { renderStage(); renderSide(); renderList(); renderStatus(); return; }
+  const name = STEPS.find(x => x[0] === S.stage)[1];
+  if (S.stage === 'prep') renderPrep(); else if (S.stage === 'split') renderSplit(); else renderExport();
+  renderTop();
+  const note = S.stage === 'prep' ? '촬영 9개의 수치는 실제 값이고, 새 촬영과 추가 창은 예시입니다' : '검수가 모두 끝났다고 가정한 예시입니다. 공 개수는 자동 초안 기준이고 묶음 A, 데이터 버전, 날짜는 예시입니다';
+  document.getElementById('status').innerHTML = `<span>${name}</span><span>원본 위치 ${MOCK.source}</span><span class="r">UI 시안 · ${note}</span>`;
+}
+let toastTimer;
+function toast(t){ const el = document.getElementById('toast'); if (!el) return; el.textContent = t; el.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('on'), 2200); }
+function select(c,b){ S.focus = c; S.sel = {c,b}; S.view = null; S.proposal = false; render(); }
+function touch(c,b){ S.edited[k(c,b)] = true; S.edited[c] = true; if (S.review[c] === 'done') S.review[c] = 'todo'; }
+function nudge(e, d){
+  if (!S.sel) return; const {c,b} = S.sel, o = off(c,b), [x,y,w,h] = dbox(c,b);
+  if (d < 0 && ((e === 't' || e === 'b') ? h <= 1 : w <= 1)) return;
+  if (d > 0 && ((e === 't' && y <= 0) || (e === 'l' && x <= 0) || (e === 'r' && x+w >= W) || (e === 'b' && y+h >= H))) return;
+  o[e] += d; touch(c,b); render();
+}
+function cycle(dir){
+  const all = []; CAM.forEach((_,c) => balls(c).forEach(b => all.push({c,b})));
+  if (!all.length) return; let i = S.sel ? all.findIndex(p => p.c === S.sel.c && p.b === S.sel.b) : (dir > 0 ? -1 : 0);
+  const n = all[(i+dir+all.length)%all.length]; select(n.c, n.b);
+}
+function confirmAll(){ S.review = ['done','done','done']; S.edited[0] = S.edited[1] = S.edited[2] = false; render(); toast('세 장 확인 완료 · 실제 앱에서는 다음 미검수 장면으로 넘어갑니다'); }
+function act(a, d){
+  if (a === 'stage') { S.stage = d.s; S.dialog = false; render(); }
+  else if (a === 'dialog') { S.dialog = !S.dialog; render(); }
+  else if (a === 'assign') { const g = S.groups[d.n]; MOCK.recs.forEach(r => { if (r.number === +d.n || (g && S.groups[r.number] === g)) S.assign[r.number] = d.s; }); render(); }
+  else if (a === 'propose') { S.assign = {1:'test',2:'train',3:'train',4:'train',5:'train',6:'train',7:'val',8:'train',9:'train'}; render(); }
+  else if (a === 'focus') { S.focus = +d.c; S.sel = null; S.view = null; S.proposal = false; render(); }
+  else if (a === 'ball') { if (S.tool === 'ai' && S.focus === +d.c) { S.sel = {c:+d.c, b:+d.b}; S.view = S.view; S.proposal = true; render(); } else select(+d.c, +d.b); }
+  else if (a === 'add') { S.focus = +d.c; S.sel = null; S.view = null; S.tool = 'ai'; render(); toast('AI 분할: 빠진 공을 클릭하면 윤곽을 제안합니다'); }
+  else if (a === 'tool') { S.tool = d.t; S.proposal = false; render(); }
+  else if (a === 'mask') { S.mask = !S.mask; render(); }
+  else if (a === 'boxes') { S.box = !S.box; render(); }
+  else if (a === 'fit') { S.sel = null; S.view = null; render(); }
+  else if (a === 'zoomsel') { S.view = null; render(); }
+  else if (a === 'nudge') nudge(d.e, +d.d);
+  else if (a === 'reset' && S.sel) { S.off[k(S.sel.c,S.sel.b)] = {t:0,r:0,b:0,l:0}; render(); }
+  else if (a === 'occ' && S.sel) { const id = k(S.sel.c,S.sel.b); S.occ[id] = !S.occ[id]; touch(S.sel.c,S.sel.b); render(); }
+  else if (a === 'toggle') { const c = +d.c; S.review[c] = S.review[c] === 'done' ? 'todo' : 'done'; S.edited[c] = false; render(); }
+  else if (a === 'confirm') confirmAll();
+  else if (a === 'hold') { const c = S.focus === null ? [0,1,2] : [S.focus]; c.forEach(i => S.review[i] = S.review[i] === 'hold' ? 'todo' : 'hold'); render(); toast('보류로 표시했습니다 · 목록의 보류 필터에서 다시 볼 수 있습니다'); }
+  else if (a === 'apply' && S.sel) { S.proposal = false; touch(S.sel.c,S.sel.b); render(); toast('제안을 반영했습니다 · 시안에서는 윤곽을 바꾸지 않습니다'); }
+  else if (a === 'cancel') { S.proposal = false; render(); }
+  else if (a === 'next') toast('실제 앱에서는 다음 미검수 장면으로 이동합니다');
+}
+document.addEventListener('click', e => { const t = e.target.closest('[data-act]'); if (!t) return; e.stopPropagation(); act(t.dataset.act, t.dataset); });
+document.addEventListener('contextmenu', e => { if (e.target.closest('.vp')) e.preventDefault(); });
+const ARROW = {ArrowUp:'t', ArrowDown:'b', ArrowLeft:'l', ArrowRight:'r'};
+document.addEventListener('keydown', e => {
+  const key = e.key;
+  if (S.stage !== 'review') { if (key === 'Escape' && S.dialog) { S.dialog = false; render(); } return; }
+  if (ARROW[key]) { e.preventDefault(); nudge(ARROW[key], e.shiftKey ? -1 : 1); return; }
+  if (key === 'Tab') { e.preventDefault(); cycle(e.shiftKey ? -1 : 1); return; }
+  if (key === 'Escape') { if (S.proposal) S.proposal = false; else if (S.sel) { S.sel = null; S.view = null; } else S.focus = null; render(); return; }
+  if (key === 'Enter' && S.proposal) { act('apply'); return; }
+  if (key === 'Delete' && S.sel) { S.gone[k(S.sel.c,S.sel.b)] = true; S.edited[S.sel.c] = true; if (S.review[S.sel.c] === 'done') S.review[S.sel.c] = 'todo'; S.sel = null; S.view = null; render(); toast('공을 삭제했습니다 · Ctrl+Z로 되돌립니다'); return; }
+  if (e.ctrlKey && key.toLowerCase() === 'z') { S.gone = {}; S.off = {}; render(); toast('실행 취소'); return; }
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const m = {'1':()=>act('focus',{c:0}), '2':()=>act('focus',{c:1}), '3':()=>act('focus',{c:2}), e:confirmAll, q:()=>act('hold'), n:()=>act('next'),
+    m:()=>act('mask'), x:()=>act('boxes'), f:()=>act('fit'), z:()=>act('zoomsel'), o:()=>act('occ'),
+    v:()=>act('tool',{t:'select'}), s:()=>act('tool',{t:'ai'}), b:()=>act('tool',{t:'brush'}), p:()=>act('tool',{t:'poly'}), r:()=>act('tool',{t:'box'})}[key.toLowerCase()];
+  if (m) { e.preventDefault(); m(); }
+});
+let scale = 1, drag = null;
+document.addEventListener('wheel', e => {
+  const vp = e.target.closest('.vp'); if (!vp) return; e.preventDefault();
+  const r = vp.getBoundingClientRect(), mx = (e.clientX-r.left)/scale, my = (e.clientY-r.top)/scale, v = viewOf(S.focus);
+  const s = Math.min(24, Math.max(.3, v.s*(e.deltaY < 0 ? 1.2 : 1/1.2)));
+  S.view = {s, tx:mx-(mx-v.tx)*s/v.s, ty:my-(my-v.ty)*s/v.s}; renderStage(); renderStatus();
+}, {passive:false});
+document.addEventListener('mousedown', e => { const vp = e.target.closest('.vp'); if (!vp || e.target.closest('[data-act]')) return; const v = viewOf(S.focus); drag = {x:e.clientX, y:e.clientY, v:{...v}}; });
+document.addEventListener('mousemove', e => { if (!drag) return; S.view = {s:drag.v.s, tx:drag.v.tx+(e.clientX-drag.x)/scale, ty:drag.v.ty+(e.clientY-drag.y)/scale}; renderStage(); });
+document.addEventListener('mouseup', () => drag = null);
+function fit(){ scale = Math.min(innerWidth/1920, innerHeight/1080); const app = document.getElementById('app'); app.style.transform = `scale(${scale})`; app.style.left = (innerWidth-1920*scale)/2+'px'; app.style.top = (innerHeight-1080*scale)/2+'px'; }
+addEventListener('resize', fit);
+const shot = q.get('shot');
+if (shot === 'add') { S.stage = 'prep'; S.dialog = true; }
+if (shot === 'prep') S.stage = 'prep';
+if (shot === 'split') S.stage = 'split';
+if (shot === 'export') S.stage = 'export';
+if (shot === 'focus') { S.focus = 0; S.sel = {c:0,b:2}; S.box = true; S.off['0-2'] = {t:1,r:1,b:0,l:0}; S.edited['0-2'] = true; S.edited[0] = true; S.review = ['todo','done','done']; }
+if (shot === 'ai') { S.focus = 1; S.sel = {c:1,b:2}; S.tool = 'ai'; S.proposal = true; S.review = ['done','todo','todo']; S.edited[1] = true; }
+fit(); render();
+</script>
+</body>
+</html>
