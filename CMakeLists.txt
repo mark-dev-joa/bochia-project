@@ -99,7 +99,7 @@ add_custom_command(TARGET boccia_calibration POST_BUILD
 # Native annotation UI shares the proven local inference/store engine, not a webview.
 find_program(BOCCIA_LABELER_PYTHON NAMES python python3
   HINTS "C:/Users/PC/AppData/Local/Programs/Python/Python312" REQUIRED)
-add_library(native_labeler_model src/native_labeler_model.cpp)
+add_library(native_labeler_model src/native_labeler_model.cpp src/native_labeler_view.cpp)
 target_include_directories(native_labeler_model PUBLIC src ${OpenCV_INCLUDE_DIRS} "${DEPENDENCY_ROOT}/nlohmann/include")
 target_link_libraries(native_labeler_model PUBLIC ${OpenCV_LIBS})
 add_executable(boccia_labeler WIN32 src/native_labeler_main.cpp src/native_labeler_app.cpp src/native_labeler_client.cpp)
