@@ -124,6 +124,7 @@ private:
     void cancel();
     void apply();
     void undo();
+    void removeSelected();
     void segment(cv::Point2d point, bool negative);
     void segmentBox(cv::Rect2d box);
     void polygonProposal();

@@ -53,7 +53,7 @@ int main() {
                     if(mode==L"editor"||mode==L"focus"){if(selectCamera>=0)application.selectForCapture(selectCamera,selectRank);else application.showEditor(0);}
                     else if(mode==L"prepare")application.showPage(0);else if(mode==L"split")application.showPage(2);else if(mode==L"export")application.showPage(3);
                     stage=2;}
-                else if(stage==2&&selfTest&&application.canClose()&&application.settled()){if(!application.selfCheckStep(checkStep++)){std::cout<<"PASS: select, zoom, one-pixel edge correction, ball cycling, scene confirm and the next scene fetched ahead\n";selfTest=false;}}
+                else if(stage==2&&selfTest&&application.canClose()&&application.settled()){if(!application.selfCheckStep(checkStep++)){std::cout<<"PASS: select, zoom, one-pixel edge correction, delete and undo, ball cycling, scene confirm and the next scene fetched ahead\n";selfTest=false;}}
                 else if(stage==2&&stageTest&&application.canClose()&&application.settled()){if(!application.stageCheckStep(checkStep++)){std::cout<<"PASS: split plan, grouping, confirm, export and export history\n";stageTest=false;}}
             }
             ImGui_ImplOpenGL3_NewFrame();ImGui_ImplGlfw_NewFrame();ImGui::NewFrame();application.draw();

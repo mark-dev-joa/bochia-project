@@ -207,6 +207,11 @@ void Application::apply() {
         cancel();changed();message_="윤곽 반영 · 박스는 마스크에서 다시 계산했습니다.";
     } catch(const std::exception& error){error_=error.what();}
 }
+void Application::removeSelected(){
+    if(frames_.empty()||!editor_||pending()||busy())return;
+    auto& objects=current().annotation["boxes"];if(selected_<0||selected_>=int(objects.size()))return;
+    checkpoint();objects.erase(objects.begin()+selected_);selected_=-1;current().scale=0;changed();
+}
 void Application::undo(){if(busy())return;if(pending()){cancel();return;}auto& f=current();if(f.history.empty())return;f.annotation=f.history.back();f.history.pop_back();selected_=f.annotation["boxes"].empty()?-1:std::min(selected_,int(f.annotation["boxes"].size())-1);changed();}
 void Application::segment(cv::Point2d point,bool negative) {
     if(busy())return;
@@ -327,9 +332,12 @@ bool Application::selfCheckStep(int step) {
         expect(box.at("bbox")==before.at("bbox")&&box.value("segmentation",Json())==before.value("segmentation",Json()),"box correction changed the mask");
         expect(current().member.value("status","")=="editing","an edited image must leave the confirmed state");nudge(0,false);return true;}
     case 3:{expect(detectionBox(current().annotation["boxes"][selected_])==detectionBox(before),"shrinking did not restore the box");
-        const BallRef was{camera_,selected_};cycle(1);expect(camera_!=was.camera||selected_!=was.index,"Tab did not move to another ball");return true;}
-    case 4:review(Scope::Scene,false);return true;
-    case 5:{for(const auto& member:catalog_["scenes"][checkedScene]["members"])expect(!member.value("selected",true)||member.value("reviewed",false),"scene confirm left an image unconfirmed");
+        const Json boxes=current().annotation["boxes"];
+        removeSelected();expect(current().annotation["boxes"].size()+1==boxes.size()&&selected_<0,"delete did not remove the selected ball");
+        undo();expect(current().annotation["boxes"]==boxes,"undo did not bring the deleted ball back");return true;}
+    case 4:{select(0,sorted(frames_.at(0)).front());const BallRef was{camera_,selected_};cycle(1);expect(camera_!=was.camera||selected_!=was.index,"Tab did not move to another ball");return true;}
+    case 5:review(Scope::Scene,false);return true;
+    case 6:{for(const auto& member:catalog_["scenes"][checkedScene]["members"])expect(!member.value("selected",true)||member.value("reviewed",false),"scene confirm left an image unconfirmed");
         expect(scene_!=checkedScene&&!editor_,"confirm did not advance to the next unreviewed scene");
         expect(aheadHits_>0,"the next unreviewed scene was not fetched ahead");return false;}
     }
@@ -408,7 +416,7 @@ void Application::keys() {
     auto& objects=current().annotation["boxes"];
     if(selected_<0||selected_>=int(objects.size()))return;
     if(pressed(ImGuiKey_O)){checkpoint();objects[selected_]["occluded"]=!objects[selected_].value("occluded",false);changed();}
-    if(pressed(ImGuiKey_Delete)){checkpoint();objects.erase(objects.begin()+selected_);selected_=-1;current().scale=0;changed();}
+    if(pressed(ImGuiKey_Delete))removeSelected();
 }
 void Application::topBar() {
     const float width=ImGui::GetContentRegionAvail().x,height=48;const ImVec2 origin=ImGui::GetCursorScreenPos();

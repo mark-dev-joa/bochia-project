@@ -186,9 +186,10 @@ void Application::queue() {
     ImGui::PushFont(nullptr, theme::px(theme::caption));
     const float each = (width - 21 - 12) / 3.5f;
     ImGui::SetCursorScreenPos({origin.x + 10, bottom + 9});
-    if (ImGui::Button("이전  A", {each, 28})) later_ = [this] { stepRow(-1); };
-    ImGui::SameLine(0, 6); if (ImGui::Button("다음  D", {each, 28})) later_ = [this] { stepRow(1); };
-    ImGui::SameLine(0, 6); if (ImGui::Button("다음 미검수  N", {each * 1.5f, 28})) later_ = [this] { if (guard()) nextUnreviewed(); };
+    const bool keys = width >= 260;   // the narrow list has no room for the key letters; the hint bar still shows them
+    if (ImGui::Button(keys ? "이전  A" : "이전", {each, 28})) later_ = [this] { stepRow(-1); };
+    ImGui::SameLine(0, 6); if (ImGui::Button(keys ? "다음  D" : "다음", {each, 28})) later_ = [this] { stepRow(1); };
+    ImGui::SameLine(0, 6); if (ImGui::Button(keys ? "다음 미검수  N" : "다음 미검수", {each * 1.5f, 28})) later_ = [this] { if (guard()) nextUnreviewed(); };
     ImGui::PopFont();
 }
 
@@ -691,7 +692,16 @@ void Application::sidePanel() {
             const bool active = editor_ && slot == camera_ && ball == selected_;
             const ImVec2 p{x - 6, base.y + y}, q{x + width + 6, base.y + y + 30};
             ImGui::SetCursorScreenPos(p); ImGui::PushID(slot * 100 + ball);
+            ImGui::SetNextItemAllowOverlap();   // the selected row carries a delete button on top
             const bool clicked = ImGui::InvisibleButton("##ball", {q.x - p.x, 30}), hovered = ImGui::IsItemHovered();
+            bool removing = false;
+            if (active) {
+                ImGui::SetCursorScreenPos({q.x - 30, p.y + 4});
+                if (ImGui::InvisibleButton("##delete", {24, 22})) later_ = [this] { removeSelected(); };
+                removing = ImGui::IsItemHovered();
+                if (removing) ImGui::SetTooltip("이 공 삭제 (Delete)");
+                theme::icon(list, theme::Icon::Trash, {q.x - 18, p.y + 15}, 12, removing ? theme::warn : theme::text2);
+            }
             ImGui::PopID();
             if (active) { list->AddRectFilled(p, q, theme::rgb(0xffd84a, 26), 6); list->AddRect(p, q, theme::rgb(0xffd84a, 115), 6); }
             else if (hovered) list->AddRectFilled(p, q, theme::bg2, 6);
@@ -707,10 +717,10 @@ void Application::sidePanel() {
             if (boxes[ball].contains("detection_bbox")) { theme::write(list, {tx, p.y + 9}, theme::accent, "보정", 11); tx += theme::extent("보정", 11).x + 6; }
             if (boxes[ball].value("occluded", false)) theme::write(list, {tx, p.y + 9}, theme::hold, "가림", 11);
             const char* tag = sourceTag(boxes[ball]);
-            const float tagWidth = theme::extent(tag, 11).x + 10;
-            list->AddRect({q.x - 8 - tagWidth, p.y + 7}, {q.x - 8, p.y + 23}, theme::line, 4);
-            theme::write(list, {q.x - 3 - tagWidth, p.y + 8}, theme::text3, tag, 11);
-            if (clicked) later_ = [this, slot, ball] { select(slot, ball); };
+            const float tagWidth = theme::extent(tag, 11).x + 10, tagRight = q.x - 8 - (active ? 26 : 0);
+            list->AddRect({tagRight - tagWidth, p.y + 7}, {tagRight, p.y + 23}, theme::line, 4);
+            theme::write(list, {tagRight + 5 - tagWidth, p.y + 8}, theme::text3, tag, 11);
+            if (clicked && !removing) later_ = [this, slot, ball] { select(slot, ball); };
             y += 30;
         }
         y += 4;
