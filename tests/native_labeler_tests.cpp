@@ -29,6 +29,19 @@ void viewTests() {
     check(about(crop.width, 58.8) && about(crop.x, 800.6) && about(crop.y, 449.6), "crop is not centered");
     auto corner = cropRegion({2, 3, 20, 20}, 1440, 1080);
     check(about(corner.x, 0) && about(corner.y, 0) && about(corner.width, 42), "crop must shift inside the image");
+    check(memberState(Json::parse(R"({"selected":false,"status":"reviewed"})")) == MemberState::Duplicate, "unselected frame is a duplicate");
+    check(memberState(Json::parse(R"({"status":"reviewed"})")) == MemberState::Done && memberState(Json::parse(R"({"status":"hold"})")) == MemberState::Hold
+        && memberState(Json::parse(R"({"status":"editing"})")) == MemberState::Editing && memberState(Json::object()) == MemberState::Todo, "member state mapping wrong");
+    auto scene = Json::parse(R"({"members":[{"count":2},{"count":2},{"count":3,"selected":false}]})");
+    check(!countsDiffer(scene), "duplicates must not trigger a count warning");
+    scene["members"][1]["count"] = 1;
+    check(countsDiffer(scene), "different ball counts must warn");
+    std::vector<Json> annotations = {Json::parse(R"({"boxes":[{"bbox":[50,0,5,5]},{"bbox":[10,0,5,5]}]})"), Json::parse(R"({"boxes":[{"bbox":[5,0,5,5]}]})")};
+    auto order = ballOrder(annotations);
+    check(order.size() == 3 && order[0].camera == 0 && order[0].index == 1 && order[1].index == 0 && order[2].camera == 1, "ball order must follow camera then x");
+    auto begin = nextBall(order, {}, 1), wrapped = nextBall(order, order[2], 1), back = nextBall(order, order[0], -1);
+    check(begin.camera == 0 && begin.index == 1 && wrapped.camera == 0 && wrapped.index == 1 && back.camera == 1, "ball cycling wrong");
+    check(nextBall({}, {}, 1).camera == -1, "empty scene has no ball to select");
 }
 int main(int argc,char** argv){try{
     viewTests();

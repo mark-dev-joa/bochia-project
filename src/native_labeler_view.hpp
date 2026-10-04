@@ -14,4 +14,12 @@ View fitView(int imageWidth, int imageHeight, float viewWidth, float viewHeight)
 View ballView(const cv::Rect2d& box, int imageWidth, int imageHeight, float viewWidth, float viewHeight);
 // 공 확대 조각의 정사각형 영역. 이미지 가장자리에서는 줄이지 않고 안쪽으로 민다.
 cv::Rect2d cropRegion(const cv::Rect2d& box, int imageWidth, int imageHeight, double factor = 2.1);
+enum class MemberState { Todo, Editing, Done, Hold, Duplicate };
+struct BallRef { int camera = -1, index = -1; };
+MemberState memberState(const Json& member);
+// 검수 대상인 카메라끼리 공 개수가 다르면 true.
+bool countsDiffer(const Json& scene);
+// 카메라 순서, 그 안에서는 박스의 왼쪽 좌표 순서.
+std::vector<BallRef> ballOrder(const std::vector<Json>& annotations);
+BallRef nextBall(const std::vector<BallRef>& order, BallRef current, int step);
 }
