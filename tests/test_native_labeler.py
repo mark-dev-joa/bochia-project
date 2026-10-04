@@ -73,12 +73,16 @@ class NativeWorkflowTests(unittest.TestCase):
         native = native_catalog(self.project)
         self.assertEqual(native["target_images"], 18)
         self.assertEqual(native["reviewed_target_images"], 18)
-        self.confirm()
+        confirmed = self.confirm()
         self.assertTrue(split_valid(self.project))
+        fingerprint = self.project.state["native_split"]["fingerprint"]
+        self.assertEqual(confirmed["fingerprint"], fingerprint)
+        self.assertEqual(native_catalog(self.project)["fingerprint"], fingerprint)
         restored = type(self.project)(self.catalog, self.project_path, self.root / "exports")
         self.assertTrue(split_valid(restored))
         self.save(reviewed=False)
         self.assertFalse(split_valid(self.project))
+        self.assertIsNone(native_catalog(self.project)["fingerprint"])
         with self.assertRaises(ValueError):
             native_action(self.project, "export", {"crops": False})
 
@@ -186,7 +190,7 @@ class NativeWorkflowTests(unittest.TestCase):
         try:
             with urlopen(base + "/api/native/catalog") as response:
                 value = json.load(response)
-            self.assertEqual(value["api_version"], 1)
+            self.assertEqual(value["api_version"], 2)
             self.assertEqual(value["target_images"], 18)
             keys = [member["key"] for member in value["scenes"][0]["members"]]
             body = json.dumps({"keys": keys, "expected_revision": 0}).encode()

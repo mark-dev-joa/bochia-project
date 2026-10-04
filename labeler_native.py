@@ -142,11 +142,14 @@ def native_catalog(project):
                 if member["selected"]:
                     count += 1
                     reviewed += member["reviewed"]
-        return {"api_version": 1, "source": str(project.catalog.source), "project_path": str(project.path),
+        # 2: recording stats, thumbnails, export history and the data version that the v2 screens need.
+        return {"api_version": 2, "source": str(project.catalog.source), "project_path": str(project.path),
                 "recordings": project.catalog.metadata(), "summary": summary, "scenes": scenes,
                 "target_images": count, "reviewed_target_images": reviewed,
                 "split_confirmed": split_valid(project), "groups": project.state.get("native_split", {}).get("groups", {}),
-                "stats": recording_stats(project)}
+                "stats": recording_stats(project),
+                # The data version: set only while the confirmed split still matches the labels.
+                "fingerprint": project.state["native_split"]["fingerprint"] if split_valid(project) else None}
 
 
 def group_plan(project, groups):
@@ -227,7 +230,7 @@ def native_action(project, action, payload):
                 state["native_split"] = {"groups": dict(groups), "splits": dict(splits),
                                          "fingerprint": fingerprint(project, state)}
             summary = project.mutate(payload["expected_revision"], update)
-            return {"summary": summary, "split_confirmed": True}
+            return {"summary": summary, "split_confirmed": True, "fingerprint": project.state["native_split"]["fingerprint"]}
     if action == "export":
         with project.lock:
             if not split_valid(project):
