@@ -253,7 +253,7 @@ void Application::preparePage() {
 void Application::proposeSplit() {
     const auto client = client_; const auto groups = groups_;
     launch("배분안 만들기", [client, groups] { return JobResult{client.post("/api/native/split-preview", {{"groups", groups}}), {}}; },
-           [this](JobResult result) { splits_ = result.data.at("splits"); catalog_["split_confirmed"] = false; message_ = "배분안입니다. 촬영별 배정을 확인하고 확정하세요."; });
+           [this](JobResult result) { splits_ = result.data.at("splits"); planEdited_ = true; message_ = "배분안입니다. 촬영별 배정을 확인하고 확정하세요."; });
 }
 // Puts the ticked recordings, and the groups they are in, into one group. It takes the split of the first one ticked.
 void Application::mergePicked() {
@@ -261,12 +261,18 @@ void Application::mergePicked() {
     mergeGroups(groups_, picked_);
     const auto group = groups_.at(picked_.front()).get<std::string>(); const auto split = splits_.value(picked_.front(), "unassigned");
     for (const auto& [recording, value] : groups_.items()) if (value.get<std::string>() == group) splits_[recording] = split;
-    picked_.clear(); catalog_["split_confirmed"] = false; message_ = "묶은 촬영은 항상 같은 쪽에 들어갑니다.";
+    picked_.clear(); planEdited_ = true; message_ = "묶은 촬영은 항상 같은 쪽에 들어갑니다.";
+}
+// A group moves together.
+void Application::assignSplit(const std::string& recording, const std::string& split) {
+    const auto group = groups_.value(recording, recording);
+    for (const auto& [other, value] : groups_.items()) if (value.get<std::string>() == group) splits_[other] = split;
+    splits_[recording] = split; planEdited_ = true;
 }
 void Application::confirmSplit() {
     const auto client = client_; Json payload = {{"groups", groups_}, {"splits", splits_}, {"expected_revision", catalog_["summary"]["revision"]}};
     launch("분할 확정", [client, payload] { return JobResult{client.post("/api/native/split-confirm", payload), {}}; }, [this](JobResult result) {
-        updateSummary(result.data.at("summary")); catalog_["split_confirmed"] = true; catalog_["fingerprint"] = result.data.value("fingerprint", "");
+        updateSummary(result.data.at("summary")); planEdited_ = false; catalog_["split_confirmed"] = true; catalog_["fingerprint"] = result.data.value("fingerprint", "");
         page_ = Page::Export; message_ = "분할을 확정했습니다. 이 데이터 버전으로 모델을 비교하세요."; refreshStage();
     });
 }
@@ -279,7 +285,7 @@ void Application::splitPage() {
     const float mergeWidth = theme::extent(mergeLabel, theme::sub).x + 28, proposeWidth = theme::extent(proposeLabel, theme::sub).x + 28;
     float y = heading(draw, stage.body, stage.bodyWidth - mergeWidth - proposeWidth - 28, "분할", "확인한 이미지를 학습·검증·평가로 나눕니다. 같은 촬영의 카메라와 연속 프레임은 항상 같은 쪽에 들어갑니다.");
     const int done = catalog_.value("reviewed_target_images", 0), target = catalog_.value("target_images", 0);
-    const bool complete = target > 0 && done == target, confirmed = catalog_.value("split_confirmed", false);
+    const bool complete = target > 0 && done == target, confirmed = splitConfirmed();
 
     ImGui::PushFont(nullptr, theme::px(theme::sub));
     ImGui::SetCursorScreenPos({right - proposeWidth - 8 - mergeWidth, stage.body.y + 14});
@@ -373,15 +379,12 @@ void Application::splitPage() {
             draw->AddRectFilled({c[5], y + 12}, {c[5] + width, y + 33}, theme::bg3, 10); draw->AddRect({c[5], y + 12}, {c[5] + width, y + 33}, theme::line2, 10);
             theme::write(draw, {c[5] + 9, y + 15}, theme::text, chip, theme::caption);
             ImGui::SetCursorScreenPos({c[5] + width + 4, y + 12});
-            if (ImGui::InvisibleButton("##leave", {36, 21})) later_ = [this, id] { leaveGroup(groups_, id); catalog_["split_confirmed"] = false; };
+            if (ImGui::InvisibleButton("##leave", {36, 21})) later_ = [this, id] { leaveGroup(groups_, id); planEdited_ = true; };
             theme::write(draw, {c[5] + width + 10, y + 15}, ImGui::IsItemHovered() ? theme::text : theme::text3, "풀기", theme::caption);
         } else theme::write(draw, {c[5], y + 14}, theme::text3, "단독", theme::sub);
         int value = -1; for (int i = 0; i < 3; ++i) if (splits_.value(id, "unassigned") == splitKeys[i]) value = i;
         ImGui::SetCursorScreenPos({assignAt, y + 9});
-        if (theme::segmented("##assign", splitNames, 3, &value, splitColors, 28, assign)) {   // a group moves together
-            for (const auto& [other, otherGroup] : groups_.items()) if (otherGroup.get<std::string>() == group) splits_[other] = splitKeys[value];
-            splits_[id] = splitKeys[value]; catalog_["split_confirmed"] = false;
-        }
+        if (theme::segmented("##assign", splitNames, 3, &value, splitColors, 28, assign)) assignSplit(id, splitKeys[value]);
         ImGui::PopID();
         y += 45;
     }
@@ -422,11 +425,11 @@ void Application::splitPage() {
 // The fingerprint of the confirmed split, empty while there is none.
 std::string Application::dataVersion() const {
     const auto found = catalog_.find("fingerprint");
-    return catalog_.value("split_confirmed", false) && found != catalog_.end() && found->is_string() ? found->get<std::string>() : "";
+    return splitConfirmed() && found != catalog_.end() && found->is_string() ? found->get<std::string>() : "";
 }
 void Application::startExport() {
     if (exportStatus_.value("status", "") == "running") { message_ = "내보내기가 진행 중입니다."; return; }
-    if (!catalog_.value("split_confirmed", false)) { message_ = "분할을 먼저 확정하세요."; openPage(Page::Split); return; }
+    if (!splitConfirmed()) { message_ = planEdited_ ? "바꾼 배정을 먼저 확정하세요." : "분할을 먼저 확정하세요."; openPage(Page::Split); return; }
     if (!guard()) return;
     const auto client = client_; const bool crops = crops_;
     launch("내보내기 시작", [client, crops] { return JobResult{client.post("/api/native/export", {{"crops", crops}}), {}}; },
@@ -437,7 +440,7 @@ void Application::exportPage() {
     const auto stage = stageFrame();
     const auto& stats = catalog_["stats"];
     float y = heading(draw, stage.body, stage.bodyWidth, "내보내기", "확정한 데이터 버전을 학습용 폴더로 내보냅니다. 확인하지 않은 이미지는 들어가지 않습니다.");
-    const bool confirmed = catalog_.value("split_confirmed", false);
+    const bool confirmed = splitConfirmed();
     const std::string fingerprint = dataVersion();
     auto totals = splitTotals(stats, splits_);
     int all = 0; for (const auto& key : splitKeys) all += totals[key].images;

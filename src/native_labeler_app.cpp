@@ -80,9 +80,10 @@ void Application::updateCatalog(Json value) {
     for(const auto& recording:catalog_["recordings"]) {
         auto id=recording.at("id").get<std::string>();
         if(!groups_.contains(id))groups_[id]=id;
-        if(!splits_.contains(id))splits_[id]=catalog_["summary"]["splits"].value(id,"unassigned");
+        if(!splits_.contains(id))splits_[id]="unassigned";
+        // Until the plan is edited on the split page it follows what the engine has stored.
+        if(!planEdited_){splits_[id]=catalog_["summary"]["splits"].value(id,"unassigned");if(catalog_["groups"].contains(id))groups_[id]=catalog_["groups"][id];}
     }
-    if(catalog_.value("split_confirmed",false))groups_=catalog_.at("groups");
 }
 void Application::updateSummary(const Json& summary) {
     catalog_["summary"]=summary; catalog_["split_confirmed"]=false;rowsDirty_=true;aheadDirty_=true;targetScenes_=-1;
@@ -363,6 +364,10 @@ bool Application::stageCheckStep(int step) {
         expect(status=="complete","the export did not finish");
         expect(!exports_.empty()&&exports_[0].value("fingerprint",Json()).is_string()&&exports_[0]["fingerprint"]==dataVersion(),"the export history does not show the finished export");
         expect(std::filesystem::exists(fromUtf8(exports_[0].value("path",""))/"data.yaml"),"the exported folder has no data.yaml");
+        // A plan changed after the confirm must not be exported as if it were the confirmed one.
+        const std::string first=splits_.begin().key();assignSplit(first,splits_[first]=="train"?"val":"train");
+        expect(!splitConfirmed()&&dataVersion().empty(),"a changed plan still counts as confirmed");
+        startExport();expect(page_==Page::Split&&exportStatus_.value("status","")=="complete","a changed plan could be exported without confirming it");
         return false;}
     }
 }

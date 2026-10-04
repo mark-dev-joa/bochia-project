@@ -83,7 +83,8 @@ private:
     bool editor_ = false, masks_ = true, boxes_ = false, representatives_ = true, crops_ = true, dragging_ = false,
          scrollToCurrent_ = false, rowsDirty_ = true, panning_ = false,
          stale_ = false,                                         // labels changed on the engine while another page was open
-         aheadDirty_ = true;                                     // the scene to fetch ahead may have changed
+         aheadDirty_ = true,                                     // the scene to fetch ahead may have changed
+         planEdited_ = false;                                    // the split plan on screen is not the one the engine has stored
     float brightness_ = 1.65f, brushSize_ = 6, radius_ = 16;
     Json proposal_;
     cv::Mat brushMask_;
@@ -160,9 +161,11 @@ private:
     void refreshStage();
     void proposeSplit();
     void mergePicked();
+    void assignSplit(const std::string& recording, const std::string& split);
     void confirmSplit();
     void startExport();
     std::string dataVersion() const;
+    bool splitConfirmed() const { return catalog_.value("split_confirmed", false) && !planEdited_; }
     void uploadTexture(GLuint& texture, const cv::Mat& bgr, bool rgba = false);
     void repaint(FrameView& frame);
     void fit(FrameView& frame, ImVec2 size, bool toBall);
