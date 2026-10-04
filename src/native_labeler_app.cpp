@@ -76,7 +76,7 @@ void Application::connect() {
     }, [this](JobResult result){ updateCatalog(result.data.at("catalog")); autoStatus_=result.data.at("auto"); message_="기존 촬영과 라벨 연결 완료"; restorePosition(); });
 }
 void Application::updateCatalog(Json value) {
-    catalog_=std::move(value);rowsDirty_=true;targetScenes_=-1;
+    catalog_=std::move(value);rowsDirty_=true;aheadDirty_=true;targetScenes_=-1;
     for(const auto& recording:catalog_["recordings"]) {
         auto id=recording.at("id").get<std::string>();
         if(!groups_.contains(id))groups_[id]=id;
@@ -85,7 +85,7 @@ void Application::updateCatalog(Json value) {
     if(catalog_.value("split_confirmed",false))groups_=catalog_.at("groups");
 }
 void Application::updateSummary(const Json& summary) {
-    catalog_["summary"]=summary; catalog_["split_confirmed"]=false;rowsDirty_=true;targetScenes_=-1;
+    catalog_["summary"]=summary; catalog_["split_confirmed"]=false;rowsDirty_=true;aheadDirty_=true;targetScenes_=-1;
     int target=0,done=0;
     for(auto& scene:catalog_["scenes"])for(auto& member:scene["members"]) {
         const auto key=member.at("key").get<std::string>();
@@ -99,14 +99,49 @@ void Application::updateSummary(const Json& summary) {
     }
 }
 void Application::releaseFrames(){for(auto& frame:frames_){if(frame.texture)glDeleteTextures(1,&frame.texture);if(frame.overlay)glDeleteTextures(1,&frame.overlay);}frames_.clear();}
+namespace {
+// The cameras of one scene are fetched at the same time; every request opens its own connection.
+JobResult fetchScene(const Client& client,const Json& scene) {
+    const auto recording=scene.at("recording").get<std::string>();
+    std::vector<std::future<FrameView>> cameras;
+    for(const auto& member:scene.at("members"))cameras.push_back(std::async(std::launch::async,[client,member,recording]{
+        FrameView frame;frame.member=member;frame.annotation=client.get("/api/frame"+Client::frameQuery(member,recording));frame.image=client.image(member,recording);return frame;}));
+    JobResult result;for(auto& camera:cameras)result.frames.push_back(camera.get());
+    return result;
+}
+}
 void Application::loadScene(int index,bool editor,int camera) {
     if(index<0||index>=int(catalog_["scenes"].size())||busy())return;
-    const auto scene=catalog_["scenes"][index]; const auto client=client_; const auto token=++generation_;
-    launch("카메라 이미지 불러오기", [client,scene]{
-        JobResult result; const auto recording=scene.at("recording").get<std::string>();
-        for(const auto& member:scene.at("members")){FrameView frame;frame.member=member;frame.annotation=client.get("/api/frame"+Client::frameQuery(member,recording));frame.annotation["review_status"]=member.value("status","draft");frame.image=client.image(member,recording);result.frames.push_back(std::move(frame));}
-        return result;
-    },[this,index,editor,camera,token](JobResult result){if(token!=generation_)return;releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor;stale_=false;scrollToCurrent_=true;cancel();message_="원본과 저장 라벨 표시 중";});
+    const auto token=++generation_;
+    auto show=[this,index,editor,camera,token](JobResult result){
+        if(token!=generation_)return;
+        // The catalog may have moved on since the images were requested, above all for a scene fetched ahead.
+        const auto& members=catalog_["scenes"][index]["members"];
+        for(size_t i=0;i<result.frames.size()&&i<members.size();++i){result.frames[i].member=members[i];result.frames[i].annotation["review_status"]=members[i].value("status","draft");}
+        releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor;stale_=false;aheadDirty_=true;scrollToCurrent_=true;cancel();message_="원본과 저장 라벨 표시 중";};
+    // A scene fetched ahead is used only if no automatic draft has been written since.
+    if(index==aheadScene_&&ahead_.valid()&&aheadAuto_==catalog_["summary"].value("auto_revision",0)){
+        const auto fetched=ahead_.share();aheadScene_=-1;++aheadHits_;
+        if(fetched.wait_for(std::chrono::seconds(0))!=std::future_status::ready){launch("카메라 이미지 불러오기",[fetched]{return fetched.get();},show);return;}
+        try{show(fetched.get());return;}catch(...){}   // fetch again below, so a failure is reported the usual way
+    }
+    const auto scene=catalog_["scenes"][index];const auto client=client_;
+    launch("카메라 이미지 불러오기",[client,scene]{return fetchScene(client,scene);},show);
+}
+// Fetches the next unreviewed scene in the background, so confirming a scene does not wait for the images.
+void Application::prefetch() {
+    if(!aheadDirty_||!ready()||busy()||page_!=Page::Review)return;
+    const int next=nextUnreviewedIndex(),revision=catalog_["summary"].value("auto_revision",0);
+    if(ahead_.valid()){
+        if(aheadScene_==next&&aheadAuto_==revision){aheadDirty_=false;return;}
+        if(ahead_.wait_for(std::chrono::seconds(0))!=std::future_status::ready)return;   // dropping a running fetch would block until it ends
+        try{ahead_.get();}catch(...){}
+    }
+    aheadDirty_=false;aheadScene_=-1;
+    if(next<0||next==scene_)return;
+    const auto client=client_;const auto scene=catalog_["scenes"][next];
+    aheadScene_=next;aheadAuto_=revision;
+    ahead_=std::async(std::launch::async,[client,scene]{return fetchScene(client,scene);});
 }
 bool Application::pending() const { return !proposal_.is_null()||!polygon_.empty()||!points_.empty()||dragging_; }
 bool Application::guard(){if(busy()){message_="처리가 끝난 뒤 이동하세요. 화면 확대·이동은 계속할 수 있습니다.";return false;}if(pending()){message_="미확정 윤곽을 반영하거나 취소하세요.";return false;}return true;}
@@ -233,7 +268,7 @@ void Application::tick(){
             if(!frames_.empty()&&current().dirty){try{preserveRecovery();message_="저장 실패 · 변경은 메모리와 recovery 폴더에 보관했습니다.";}catch(...) {}}
         }
     }
-    pumpThumbs();
+    pumpThumbs();prefetch();
     if(ready()&&!busy()&&!pending()&&current().dirty&&Clock::now()-changed_>std::chrono::milliseconds(450)&&error_.empty())save();
     const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running";
     if(activeJob&&ready()&&!busy()&&Clock::now()-poll_>std::chrono::seconds(3)&&error_.empty()&&!current().dirty&&!pending()){
@@ -295,7 +330,8 @@ bool Application::selfCheckStep(int step) {
         const BallRef was{camera_,selected_};cycle(1);expect(camera_!=was.camera||selected_!=was.index,"Tab did not move to another ball");return true;}
     case 4:review(Scope::Scene,false);return true;
     case 5:{for(const auto& member:catalog_["scenes"][checkedScene]["members"])expect(!member.value("selected",true)||member.value("reviewed",false),"scene confirm left an image unconfirmed");
-        expect(scene_!=checkedScene&&!editor_,"confirm did not advance to the next unreviewed scene");return false;}
+        expect(scene_!=checkedScene&&!editor_,"confirm did not advance to the next unreviewed scene");
+        expect(aheadHits_>0,"the next unreviewed scene was not fetched ahead");return false;}
     }
     return false;
 }
