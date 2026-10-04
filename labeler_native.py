@@ -7,6 +7,7 @@ import bisect
 import copy
 import hashlib
 import json
+import sys
 from datetime import datetime
 
 import cv2
@@ -52,12 +53,25 @@ def targets(project):
             if selection.get(member["key"], {}).get("selected", True)]
 
 
-def fingerprint(project, state=None):
+def fingerprint(project, state=None, groups=None):
+    """The data version: the labels, the review targets, and how the recordings are assigned and grouped."""
     state = state or project.state
+    if groups is None:
+        groups = state.get("native_split", {}).get("groups", {})
     selection = project.selection.view(state["frames"])["frames"]
+    batches = {}
+    for recording, group in groups.items():
+        batches.setdefault(group, []).append(recording)
     snapshot = {"source": project.catalog.signature, "frames": state["frames"],
-                "selected": sorted(key for key, value in selection.items() if value["selected"])}
+                "selected": sorted(key for key, value in selection.items() if value["selected"]),
+                # The same labels with another test set are another dataset. Group names do not matter.
+                "splits": state["splits"], "groups": sorted(sorted(members) for members in batches.values())}
     return hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def conflict(project, message):
+    """The engine module's own ConflictError, under whichever name that module was loaded (script or import)."""
+    return sys.modules[type(project).__module__].ConflictError(message)
 
 
 def split_valid(project):
@@ -146,7 +160,8 @@ def native_catalog(project):
         return {"api_version": 2, "source": str(project.catalog.source), "project_path": str(project.path),
                 "recordings": project.catalog.metadata(), "summary": summary, "scenes": scenes,
                 "target_images": count, "reviewed_target_images": reviewed,
-                "split_confirmed": split_valid(project), "groups": project.state.get("native_split", {}).get("groups", {}),
+                # The batches outlive a confirmation: a label fix must not turn them back into single recordings.
+                "split_confirmed": split_valid(project), "groups": project.state.get("native_groups") or project.state.get("native_split", {}).get("groups", {}),
                 "stats": recording_stats(project),
                 # The data version: set only while the confirmed split still matches the labels.
                 "fingerprint": project.state["native_split"]["fingerprint"] if split_valid(project) else None}
@@ -193,6 +208,10 @@ def native_action(project, action, payload):
                 raise ValueError("한 장면의 촬영만 함께 검수할 수 있습니다.")
             if not any(set(keys).issubset({member["key"] for member in scene["members"]}) for scene in scene_index(project.catalog)):
                 raise ValueError("서로 다른 시점의 프레임을 한 장면으로 검수할 수 없습니다.")
+            # The automatic draft can add balls after a screen loaded the scene. They must be seen before they are confirmed.
+            seen = payload.get("seen")
+            if seen is not None and (not isinstance(seen, dict) or any(len(frame["boxes"]) != seen.get(key) for key, frame in entries)):
+                raise conflict(project, "저장된 라벨이 화면에 표시된 것과 다릅니다. 장면을 다시 불러온 뒤 확인하세요.")
             def update(state):
                 for key, frame in entries:
                     annotation = {name: copy.deepcopy(value) for name, value in frame.items()
@@ -227,8 +246,9 @@ def native_action(project, action, payload):
                 raise ValueError("학습·검증·최종 평가에 검수 이미지가 각각 있어야 합니다.")
             def update(state):
                 state["splits"] = dict(splits)
+                state["native_groups"] = dict(groups)
                 state["native_split"] = {"groups": dict(groups), "splits": dict(splits),
-                                         "fingerprint": fingerprint(project, state)}
+                                         "fingerprint": fingerprint(project, state, groups)}
             summary = project.mutate(payload["expected_revision"], update)
             return {"summary": summary, "split_confirmed": True, "fingerprint": project.state["native_split"]["fingerprint"]}
     if action == "export":

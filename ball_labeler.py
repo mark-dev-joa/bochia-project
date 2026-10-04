@@ -243,7 +243,8 @@ class Project:
         if self.path.exists():
             self.state = json.loads(self.path.read_text(encoding="utf-8"))
             if self.state.get("version") != 1 or self.state.get("source_signature") != catalog.signature:
-                raise ValueError("기존 라벨 프로젝트와 촬영 데이터가 다릅니다. --project로 다른 저장 파일을 지정하세요.")
+                raise ValueError("기존 라벨 프로젝트와 촬영 데이터가 다릅니다. 입력 폴더에 촬영을 넣거나 뺐다면 원래대로 되돌리면 다시 열립니다. "
+                                 "다른 촬영을 새로 시작하려면 --project로 다른 저장 파일을 지정하세요.")
         else:
             self.state = {"version": 1, "source": str(catalog.source), "source_signature": catalog.signature,
                 "revision": 0, "splits": {key: "unassigned" for key in catalog.recordings}, "frames": {}}

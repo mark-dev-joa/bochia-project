@@ -86,6 +86,50 @@ class NativeWorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             native_action(self.project, "export", {"crops": False})
 
+    def test_data_version_covers_the_assignment_and_the_groups(self):
+        from labeler_native import fingerprint
+        self.review_all()
+        first = self.confirm()
+        groups = {key: key for key in self.ids}
+        splits = dict(self.project.state["splits"])
+        train = next(key for key, value in splits.items() if value == "train")
+        test = next(key for key, value in splits.items() if value == "test")
+        splits[train], splits[test] = "test", "train"
+        request = lambda: {"groups": groups, "splits": splits, "expected_revision": self.project.state["revision"]}
+        swapped = native_action(self.project, "split-confirm", request())
+        self.assertNotEqual(swapped["fingerprint"], first["fingerprint"], "the same labels with another test set are another dataset")
+        self.assertTrue(split_valid(self.project))
+        self.assertEqual(native_action(self.project, "split-confirm", request())["fingerprint"], swapped["fingerprint"])
+        # Group names do not matter, only which recordings belong together.
+        renamed = {key: "batch-" + key for key in self.ids}
+        paired = {self.ids[0]: "pair", self.ids[1]: "pair", self.ids[2]: "single"}
+        self.assertEqual(fingerprint(self.project, groups=renamed), fingerprint(self.project, groups=groups))
+        self.assertNotEqual(fingerprint(self.project, groups=paired), fingerprint(self.project, groups=groups))
+
+    def test_batch_groups_survive_a_label_fix_and_a_restart(self):
+        self.review_all()
+        groups = {key: "batch-" + key for key in self.ids}
+        plan = native_action(self.project, "split-preview", {"groups": groups})
+        native_action(self.project, "split-confirm", {**plan, "expected_revision": self.project.state["revision"]})
+        self.save(reviewed=False)
+        self.assertFalse(split_valid(self.project))
+        self.assertEqual(native_catalog(self.project)["groups"], groups)
+        restored = type(self.project)(self.catalog, self.project_path, self.root / "exports")
+        self.assertEqual(native_catalog(restored)["groups"], groups)
+
+    def test_review_refuses_labels_the_screen_has_not_shown(self):
+        from ball_labeler import ConflictError
+        key = f"{self.ids[0]}/camera-0/0"
+        keys = next([member["key"] for member in scene["members"]] for scene in scene_index(self.catalog)
+                    if key in [member["key"] for member in scene["members"]])
+        self.save(reviewed=False)   # one box arrives after a screen loaded the scene with none
+        request = lambda seen: {"keys": keys, "seen": seen, "expected_revision": self.project.state["revision"]}
+        with self.assertRaises(ConflictError):
+            native_action(self.project, "review", request(dict.fromkeys(keys, 0)))
+        self.assertFalse(self.project.state["frames"][key]["reviewed"])
+        native_action(self.project, "review", request({**dict.fromkeys(keys, 0), key: 1}))
+        self.assertTrue(self.project.state["frames"][key]["reviewed"])
+
     def test_groups_never_cross_splits_and_insufficient_groups_rejected(self):
         self.review_all()
         plan = native_action(self.project, "split-preview", {})
