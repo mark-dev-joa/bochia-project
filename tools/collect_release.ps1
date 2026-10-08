@@ -13,8 +13,11 @@ New-Item -ItemType Directory -Path $target -Force | Out-Null
 $previous = Join-Path $target 'boccia_labeler-previous.exe'
 if (Test-Path -LiteralPath $previous) { try { Remove-Item -LiteralPath $previous -Force } catch { } }
 foreach ($name in 'boccia_labeler.exe', 'opencv_world4110.dll') {
+    $source = Get-Item -LiteralPath (Join-Path $build $name)
     $destination = Join-Path $target $name
-    try { Copy-Item -LiteralPath (Join-Path $build $name) -Destination $destination -Force }
+    $existing = Get-Item -LiteralPath $destination -ErrorAction SilentlyContinue
+    if ($existing -and $existing.Length -eq $source.Length -and $existing.LastWriteTime -eq $source.LastWriteTime) { continue }   # already this build
+    try { Copy-Item -LiteralPath $source.FullName -Destination $destination -Force }
     catch {
         if ($name -ne 'boccia_labeler.exe') { throw "Could not replace $name. Close the running labeler first. ($($_.Exception.Message))" }
         Move-Item -LiteralPath $destination -Destination $previous -Force
