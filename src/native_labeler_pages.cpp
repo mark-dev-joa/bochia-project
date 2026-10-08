@@ -380,10 +380,10 @@ void Application::assignSplit(const std::string& recording, const std::string& s
     splits_[recording] = split; planEdited_ = true;
 }
 void Application::confirmSplit() {
-    const auto engine = engine_; Json payload = {{"groups", groups_}, {"splits", splits_}, {"expected_revision", catalog_["summary"]["revision"]}};
+    const auto engine = engine_; Json payload = {{"groups", groups_}, {"splits", splits_}, {"expected_revision", catalog_["summary"]["revision"]}, {"allow_unreviewed", true}};
     launch("분할 확정", [engine, payload] { return JobResult{engine->nativeAction("split-confirm", payload), {}}; }, [this](JobResult result) {
         updateSummary(result.data.at("summary")); planEdited_ = false; catalog_["split_confirmed"] = true; catalog_["fingerprint"] = result.data.value("fingerprint", "");
-        page_ = Page::Export; message_ = "분할을 확정했습니다. 이 데이터 버전으로 모델을 비교하세요."; refreshStage();
+        page_ = Page::Export; message_ = result.data.value("unreviewed", 0) > 0 ? "분할을 확정했습니다. 미검수 " + grouped(result.data.value("unreviewed", 0)) + "장은 빠지고 확인한 이미지만 내보냅니다." : "분할을 확정했습니다. 이 데이터 버전으로 모델을 비교하세요."; refreshStage();
     });
 }
 void Application::splitPage() {
@@ -408,7 +408,7 @@ void Application::splitPage() {
     draw->AddRect({left, y}, {right, y + 36}, complete ? theme::rgb(0x3dd68c, 100) : theme::rgb(0x5b9dff, 115), 10);
     if (complete) theme::check(draw, {left + 22, y + 18}, 11, theme::ok); else theme::icon(draw, theme::Icon::Info, {left + 22, y + 18}, 14, theme::accent);
     theme::write(draw, {left + 42, y + 10}, theme::text, complete ? "검수 대상 " + grouped(target) + "장을 모두 확인했습니다"
-        : "확인한 이미지 " + grouped(done) + " / " + grouped(target) + "장 · 모두 확인하면 확정할 수 있습니다", theme::sub);
+        : "확인한 이미지 " + grouped(done) + " / " + grouped(target) + "장 · 지금 확정하면 확인한 이미지만 내보내고, 나머지는 확인한 뒤 다시 확정·내보내면 됩니다", theme::sub);
     y += 36 + 12;
 
     // ratio
@@ -513,12 +513,11 @@ void Application::splitPage() {
         ImGui::SetCursorScreenPos({box.left(), box.y});
         if (theme::primaryButton(confirmed ? "확정됨 · 내보내기로" : "분할 확정", {box.inner(), 44})) later_ = [this, complete, confirmed, done, target] {
             if (confirmed) { openPage(Page::Export); return; }
-            if (!complete) { message_ = "확인하지 않은 이미지가 " + grouped(target - done) + "장 남았습니다. 모두 확인한 뒤에 확정할 수 있습니다."; return; }
-            if (guard()) confirmSplit();
+            if (guard()) confirmSplit();   // unreviewed targets stay out of the export; the message says how many
         };
         ImGui::PopFont();
         box.y += 52;
-        if (!complete) box.text("확인하지 않은 이미지 " + grouped(target - done) + "장이 남아 있어 아직 확정할 수 없습니다.", theme::hold);
+        if (!complete) box.text("확인하지 않은 이미지 " + grouped(target - done) + "장은 내보내기에서 빠집니다. 확인한 뒤 다시 확정하면 들어갑니다.", theme::hold);
         sy = box.close();
     }
     }

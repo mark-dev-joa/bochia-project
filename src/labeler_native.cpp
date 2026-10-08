@@ -428,7 +428,9 @@ Json nativeAction(Project& project, const std::string& action, const Json& paylo
         std::lock_guard guard(project.lock);
         int unresolved = 0;
         for (const auto& member : targets(project)) { const std::string key = member["key"]; if (!project.state["frames"].contains(key) || !truthy(project.state["frames"][key].value("reviewed", Json(false)))) ++unresolved; }
-        if (unresolved) throw std::runtime_error("검수 대상 " + std::to_string(unresolved) + "장이 미완료입니다. 전체 검수를 먼저 완료하세요.");
+        // Unreviewed targets no longer block the confirmation: the export takes confirmed images only, so training can
+        // start on the confirmed part while other recordings are still being reviewed (2026-10-09 user request).
+        if (unresolved && !payload.value("allow_unreviewed", false)) throw std::runtime_error("검수 대상 " + std::to_string(unresolved) + "장이 미완료입니다. 전체 검수를 먼저 완료하세요.");
         const Json groups = payload.at("groups");
         groupPlan(project, groups);
         const Json splits = payload.at("splits");
@@ -448,7 +450,7 @@ Json nativeAction(Project& project, const std::string& action, const Json& paylo
             state["splits"] = splits; state["native_groups"] = groups;
             state["native_split"] = {{"groups", groups}, {"splits", splits}, {"fingerprint", fingerprint(project, &state, &groups)}};
         });
-        return {{"summary", summary}, {"split_confirmed", true}, {"fingerprint", project.state["native_split"]["fingerprint"]}};
+        return {{"summary", summary}, {"split_confirmed", true}, {"fingerprint", project.state["native_split"]["fingerprint"]}, {"unreviewed", unresolved}};
     }
     if (action == "fill-colors") return startColorFill(project);
     if (action == "refine-circles") return startCircleRefine(project, payload.value("include_reviewed", false), payload.value("remeasure", false), payload.value("margin", -10.0));
