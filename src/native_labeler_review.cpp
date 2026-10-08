@@ -441,6 +441,14 @@ void Application::cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact) {
             theme::icon(draw, theme::Icon::Trash, {b.x - 15, a.y + 15}, 12, removing ? theme::warn : hovered ? theme::text : theme::text2);
             if (removing) ImGui::SetTooltip("이 공 삭제");
         }
+        // The colour camera's crop names the ball's colour in its corner, the same chip as the badge on the image.
+        if (const ImU32 swatch = frame.member.value("kind", "") == "컬러" ? colorSwatch(boxes[ball].value("color", "unknown")) : 0) {
+            const std::string name = cell > 70 ? colorName(boxes[ball].value("color", "unknown")) : "";
+            const float w = 20 + (name.empty() ? 0.f : theme::extent(name, 11).x + 5);
+            draw->AddRectFilled({a.x + 4, a.y + 4}, {a.x + 4 + w, a.y + 22}, theme::rgb(0x0d0f12, 210), 5);
+            colorDot(draw, {a.x + 14, a.y + 13}, swatch, 4);
+            if (!name.empty()) theme::write(draw, {a.x + 23, a.y + 6}, theme::text, name, 11);
+        }
         const std::string number = std::to_string(i + 1);
         const float font = compact ? 11.f : theme::caption;
         theme::write(draw, {a.x + 1, b.y + (compact ? 3 : 4)}, active ? theme::selected : theme::text, number, font, theme::bold);
