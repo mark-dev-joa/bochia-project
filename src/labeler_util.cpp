@@ -1,4 +1,6 @@
 #include "labeler_util.hpp"
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <bcrypt.h>
 #include <algorithm>
@@ -73,6 +75,25 @@ void atomicJson(const std::filesystem::path& path, const Json& value, bool inden
     if (!ok) throw std::runtime_error("파일을 쓰지 못했습니다: " + utf8(path));
     if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
         throw std::runtime_error("파일을 바꾸지 못했습니다 (" + std::to_string(GetLastError()) + "): " + utf8(path));
+}
+bool localPortListening(int port, int timeoutMs) {
+    WSADATA data{};
+    if (WSAStartup(MAKEWORD(2, 2), &data) != 0) return false;
+    bool listening = false;
+    const SOCKET handle = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (handle != INVALID_SOCKET) {
+        u_long nonBlocking = 1; ioctlsocket(handle, FIONBIO, &nonBlocking);
+        sockaddr_in address{}; address.sin_family = AF_INET; address.sin_port = htons(u_short(port)); inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
+        if (connect(handle, reinterpret_cast<sockaddr*>(&address), sizeof address) == 0) listening = true;
+        else if (WSAGetLastError() == WSAEWOULDBLOCK) {
+            fd_set writable; FD_ZERO(&writable); FD_SET(handle, &writable);
+            timeval timeout{timeoutMs / 1000, (timeoutMs % 1000) * 1000};
+            if (select(0, nullptr, &writable, nullptr, &timeout) == 1) { int error = 0; int size = sizeof error; getsockopt(handle, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&error), &size); listening = error == 0; }
+        }
+        closesocket(handle);
+    }
+    WSACleanup();
+    return listening;
 }
 bool pathLess(const std::filesystem::path& a, const std::filesystem::path& b) {
     auto pieces = [](const std::filesystem::path& path) {

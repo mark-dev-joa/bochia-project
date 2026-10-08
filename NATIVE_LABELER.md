@@ -1,8 +1,8 @@
 # 보치아 네이티브 라벨러
 
-2026-10-04 구현 기준. Windows C++ / Dear ImGui / OpenGL 화면에서 기존 촬영을 검수합니다.
-이미지 읽기, EfficientSAM-Ti 추론, 자동 초안, 주석 저장은 기존 Python 엔진을 localhost로 연결합니다.
-UI는 네이티브로 렌더링하며 모델은 이 PC에서 추론합니다.
+2026-10-04 구현, 2026-10-08 엔진 통합 기준. Windows C++ / Dear ImGui / OpenGL 화면에서 기존 촬영을 검수합니다.
+이미지 읽기, EfficientSAM-Ti 추론(ONNX Runtime), 자동 초안, 주석 저장, 내보내기가 모두 이 프로그램 안에서 돕니다.
+Python은 필요 없습니다. 설계는 [design/labeler-engine/DESIGN.md](design/labeler-engine/DESIGN.md)에 있습니다.
 
 ## 구현된 작업 흐름
 
@@ -27,10 +27,10 @@ UI는 네이티브로 렌더링하며 모델은 이 PC에서 추론합니다.
 `output/ball-labeler/project.json`을 `-selection.json`, `-auto-status.json`, `-native-ui.json`과 함께 복사합니다.
 이미 라벨이 있으면 복사하지 않습니다. 기존 사람 수정, 자동 마스크, 대표 프레임 선택을 이어받습니다.
 
-네이티브 기본 포트는 **8767**입니다. 기존 웹 도구의 8766 및 `output/ball-labeler/project.json`은 별도로 유지합니다.
+기존 웹 도구(`python ball_labeler.py`, 포트 8766)와 `output/ball-labeler/project.json`은 별도로 남아 있습니다.
 첫 가져오기 이후 두 프로젝트의 편집 결과는 각자 저장되므로 주 작업은 네이티브 프로젝트에서 이어갑니다.
-동일 프로젝트 파일에 서버 두 개를 연결하지 마세요. 서로 다른 서버의 메모리 상태가 충돌할 수 있습니다.
-다른 위치의 프로젝트를 열고 있던 엔진이 그 포트에 남아 있으면 앱이 "이 포트는 다른 프로젝트를 사용 중입니다"라고 알립니다. 그 엔진을 내리고 다시 실행하세요.
+같은 프로젝트 파일을 두 프로그램이 동시에 열지 마세요. 서로의 메모리 상태가 충돌합니다.
+2026-10-08 이전 빌드가 띄운 Python 엔진이 포트 8767에 남아 있으면 앱이 시작하지 않고 그 사실을 알립니다. 그 엔진을 내리고 다시 실행하세요.
 
 수정은 약 450ms 후 자동 저장합니다. 프레임 이동과 검수 완료는 저장 성공 후에 진행합니다.
 `expected_revision`이 다른 저장은 거부하고 현재 변경을 보관합니다. 원본 촬영 파일은 수정하지 않습니다.
@@ -72,9 +72,10 @@ YOLO 세그멘테이션 출력은 제공하지 않습니다. 보기 밝기와 �
 
 ## 빌드와 개발 실행
 
-현재 PC의 CMake / Visual Studio 구성과 OpenCV, GLFW, Dear ImGui 의존성을 사용합니다.
-Python은 CMake의 `BOCCIA_LABELER_PYTHON`, 작업 루트는 `BOCCIA_LABELER_ROOT`로 구성됩니다.
-Python 의존성 및 모델 준비는 `requirements-labeler.txt`, `tools/setup_labeler_assist.py`를 따릅니다.
+현재 PC의 CMake / Visual Studio 구성과 OpenCV, GLFW, Dear ImGui, zstd, ONNX Runtime 1.30(CPU) 의존성을 사용합니다.
+ONNX Runtime은 CMake의 `ONNXRUNTIME_ROOT`(기본 `<DEPENDENCY_ROOT>/onnxruntime`), 작업 루트는 `BOCCIA_LABELER_ROOT`로 구성됩니다.
+EfficientSAM 모델 파일은 실행 파일 옆 `models/efficientsam/`에서 찾고, 없으면 저장소의 `data/models/efficientsam/`
+(`python tools/setup_labeler_assist.py`로 내려받음)을 씁니다.
 
 ```powershell
 cmake --build build-labeler --config Release --target boccia_labeler native_labeler_tests -j 4
@@ -82,23 +83,22 @@ powershell -File tools/collect_release.ps1
 & .\bin\release\labeler\boccia_labeler.exe
 ```
 
-`tools/collect_release.ps1`은 빌드 결과에서 실행 파일과 DLL만 `bin/release/labeler/`에 복사합니다.
-그 아래 `data/`는 건드리지 않습니다. 다른 도구는 `bin/release/` 아래 제 폴더를 갖습니다. `bin/`은 git에 넣지 않습니다.
+`tools/collect_release.ps1`은 빌드 결과에서 실행 파일, OpenCV와 ONNX Runtime DLL, `models/efficientsam/`의 모델 파일을
+`bin/release/labeler/`에 복사합니다. 그 아래 `data/`는 건드리지 않습니다. 다른 도구는 `bin/release/` 아래 제 폴더를 갖습니다. `bin/`은 git에 넣지 않습니다.
 
-앱은 지정 포트에 올바른 프로젝트 엔진이 있으면 연결하고, 없으면 Python 엔진을 창 없이 시작합니다.
-앱이 시작한 엔진은 앱과 함께 끝납니다(앱이 비정상 종료해도 같이 끝납니다). 다른 프로그램이 띄운 엔진은 건드리지 않습니다.
-엔진의 API 버전이 4보다 낮으면 앱은 연결하지 않고 그 사실을 알려 줍니다. 2026-10-08 이전 방식으로 남아 있는 엔진이 있으면 한 번 내려야 합니다.
-엔진이 출력한 내용은 프로젝트 파일 옆의 `<프로젝트 이름>-engine.log`에 남고, 엔진이 시작하다 멈추면 앱이 그 마지막 줄을 보여 줍니다.
-
-```powershell
-Get-NetTCPConnection -LocalPort 8767 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess }
-```
+엔진은 정적 라이브러리 `labeler_engine`으로 앱에 들어 있습니다(`src/labeler_*.cpp`). 촬영 탐색과 프로젝트 열기는 시작할 때
+작업 스레드에서 1초 안에 끝나고, 내보내기·색상 채우기·자동 초안은 앱 안의 백그라운드 스레드로 돕니다.
+앱을 닫으면 색상 채우기와 자동 초안은 멈추고(자동 초안은 상태 파일에 남아 이어할 수 있음) 내보내기는 끝까지 기다립니다.
+파일 형식은 Python 엔진과 같아서 `project.json`, `-selection.json`, `-auto-status.json`, 내보낸 폴더를 웹 라벨러와 `tools/*.py`가 그대로 읽습니다.
 
 별도 입력은 옵션으로 지정합니다.
 
 ```powershell
-& .\build\Release\boccia_labeler.exe --source "D:\photos\boccia" --project "D:\labels\project.json" --export-root "D:\labels\exports" --port 8772
+& .\build-labeler\Release\boccia_labeler.exe --source "D:\photos\boccia" --project "D:\labels\project.json" --export-root "D:\labels\exports"
 ```
+
+`--build-selection`을 붙이면 창 없이 대표 프레임 필터를 다시 만들어 `<프로젝트>-selection.json`에 쓰고 끝납니다
+(`tools/filter_labeler_frames.py`와 같은 결과, 5,169장에 약 30초).
 
 현재 UI에서 새 입력 폴더를 고르는 기능은 제공하지 않으며 시작 옵션을 사용합니다.
 **입력 폴더에 촬영을 넣거나 빼면 엔진이 기존 프로젝트를 열지 않습니다.** 프로젝트가 만들 때의 촬영 목록과 묶여 있기 때문입니다. 넣은 폴더를 입력 폴더 밖으로 옮기면 다시 열립니다. 기존 라벨을 유지한 채 촬영을 추가하는 기능은 2차 계획입니다([design/labeler-v2/DESIGN.md](design/labeler-v2/DESIGN.md)의 "엔진에서 바꿀 것").
@@ -138,18 +138,26 @@ Get-NetTCPConnection -LocalPort 8767 -State Listen | ForEach-Object { Stop-Proce
 | `src/native_labeler_pages.cpp` | 데이터 준비, 분할, 내보내기 화면 |
 | `src/native_labeler_theme.cpp` | 색, 글꼴, 공용 그리기 |
 | `src/native_labeler_view.cpp` | 화면 계산: 타일 폭, 확대, 조각 영역, 분할 합계와 점검, 묶음 |
-| `src/native_labeler_client.cpp` | 로컬 엔진 통신 |
 | `src/native_labeler_model.cpp` | RLE와 픽셀 보정 |
-| `labeler_native.py` | 장면 매칭, 검수 상태, 촬영별 통계, 썸네일, 초안 마스크 넓히기, 공 색상 채우기, 묶음 분할, 내보내기 조건과 기록 |
+| `src/labeler_engine.cpp` | 화면이 부르는 엔진 파사드. 옛 HTTP 응답과 같은 JSON을 돌려줌 |
+| `src/labeler_catalog.cpp` | 촬영 탐색, 촬영 ID와 원본 서명, 원본 프레임 해독(zstd, 델타, Mono8·RGB8·BGR8·BayerRG8), 이미지 폴더 |
+| `src/labeler_store.cpp` | 프로젝트 파일 열기·원자적 저장·revision 충돌, 요약, 대표 프레임 사이드카 |
+| `src/labeler_native.cpp` | 장면 매칭, 검수, 촬영별 통계, 썸네일, 초안 마스크 넓히기, 공 색상 채우기, 묶음 분할과 데이터 지문, 보조 도구 분배 |
+| `src/labeler_export.cpp` | COCO 두 벌, YOLO, 조각, manifest 내보내기와 그 작업 |
+| `src/labeler_assist.cpp`, `src/labeler_sam.cpp` | 박스 검증, 마스크 윤곽, 공 색상, 폴리곤, EfficientSAM(ONNX Runtime) 클릭·박스 분할, 원 후보, 이전 프레임 추적 |
+| `src/labeler_selection.cpp` | 대표 프레임 필터 v2 |
+| `src/labeler_auto.cpp` | 자동 초안: 씨앗 캐시, 마스크 이동, 카메라별 작업 스레드, 상태 파일 |
+| `ball_labeler.py`, `labeler_*.py` | 웹 라벨러용 Python 엔진. 같은 파일 형식을 읽고 쓰며 네이티브 앱은 더 쓰지 않음 |
 
 ```powershell
 python -m unittest discover -s tests -p 'test*labeler*.py' -v
-ctest --test-dir build -C Release -R native_labeler_data_contracts --output-on-failure
+ctest --test-dir build-labeler -C Release -R "labeler_engine|native_labeler" --output-on-failure
 ```
 
-Python 테스트 40개와 네이티브 데이터 계약 테스트가 통과합니다.
+C++ 엔진 테스트 9묶음(Python 테스트를 같은 이름의 검사로 옮긴 것), 네이티브 데이터 계약 테스트, Python 테스트 40개가 통과합니다.
+`native_labeler_tests.exe <촬영 폴더> <프로젝트 복사본>`은 실제 촬영으로 이미지 해독, 마스크를 유지한 저장과 다시 열기, 실제 EfficientSAM 추론을 확인합니다.
 
-숨긴 창으로 실행하는 점검 옵션이 있습니다. `--smoke-hidden --no-start-server --port <포트> --project <프로젝트>`와 함께 씁니다.
+숨긴 창으로 실행하는 점검 옵션이 있습니다. `--smoke-hidden --project <프로젝트 복사본> --export-root <폴더>`와 함께 씁니다.
 
 | 옵션 | 내용 |
 | --- | --- |
@@ -159,10 +167,15 @@ Python 테스트 40개와 네이티브 데이터 계약 테스트가 통과합�
 
 두 점검은 프로젝트를 바꾸므로 작업 프로젝트가 아닌 복사본에 씁니다.
 
-2026-10-05에 작업 프로젝트의 복사본(`output/native-labeler/v2-qa-project.json`, 포트 8792)으로 확인했습니다.
-C++ 클라이언트의 실제 이미지 복원, 마스크를 유지한 보정 저장과 다시 열기, 실제 EfficientSAM 추론이 통과했습니다.
+2026-10-05에 작업 프로젝트의 복사본(`output/native-labeler/v2-qa-project.json`)으로 확인했습니다.
+실제 이미지 복원, 마스크를 유지한 보정 저장과 다시 열기, 실제 EfficientSAM 추론이 통과했습니다.
 `--self-test`가 통과했고, 다섯 화면을 1920×1080과 1280×720으로 캡처해 시안과 비교했습니다.
 `--stage-test`는 모두 확인한 작은 테스트용 촬영 세트로 통과했습니다. 실제 3,936장의 확정과 내보내기는 검수가 끝나지 않아 실행하지 않았습니다.
 캡처는 `output/native-labeler/v2-*.png`에 있습니다.
+
+2026-10-08 엔진 통합 뒤 같은 복사본으로 C++ 엔진과 Python 엔진을 대조했습니다. 원본 서명과 촬영 ID, 해독한 프레임 6장(Bayer·모노),
+요약과 프레임 응답 5,169장, 장면 색인 1,723개, 촬영 통계, 데이터 지문, EfficientSAM 분할 8건(박스·면적·품질·마스크), 원 후보, 추적 박스,
+씨앗 캐시(5,169장, 씨앗 8,630개)가 바이트 단위로 같았고, 대표 프레임 필터는 같은 3,866장을 같은 이유로 골랐습니다(32초, Python 71초).
+`--smoke-hidden`, `--self-test`, `--stage-test`도 내장 엔진으로 통과했습니다(`output/native-labeler/v3-*.png`).
 기존 원본 라벨 파일(`output/ball-labeler/project.json`)의 SHA-256은 작업 전후
 `12485efb0f227acc78c108753f1f2a510b5ae8efdda4d77a170ba64a1f56bc83`로 같습니다.

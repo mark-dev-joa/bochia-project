@@ -965,6 +965,21 @@ int main(int argc, char** argv) try {
         std::cout << "seeds covered " << cache.covered() << " keys " << cache.seeded() << " total " << cache.seedCount() << " " << cache.method() << "\n";
         return 0;
     }
+    if (argc >= 4 && std::string(argv[1]) == "--auto") {
+        // Parity with labeler_auto on a project copy: drafts every unlabelled frame with the real model and prints the counts.
+        Catalog catalog(fromUtf8(argv[2]));
+        const auto projectPath = fromUtf8(argv[3]);
+        Project project(catalog, projectPath, projectPath.parent_path() / "auto-cpp-exports");
+        AutoLabelJob job(project, fs::path(BOCCIA_TEST_ROOT), fs::path(BOCCIA_TEST_ROOT) / "data/models/efficientsam");
+        const auto started = std::chrono::steady_clock::now();
+        job.start();
+        while (job.status()["status"] == "running") Sleep(500);
+        const Json status = job.status();
+        Json summary = Json::object();
+        for (const char* name : {"status", "done", "written", "preserved", "boxes", "sam_masks", "tracked_masks", "fallback_boxes", "seed_method", "workers"}) summary[name] = status.value(name, Json());
+        std::cout << summary.dump() << " seconds " << std::round(std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() * 10) / 10 << "\n";
+        return 0;
+    }
     utilTests();
     catalogTests();
     assistTests();

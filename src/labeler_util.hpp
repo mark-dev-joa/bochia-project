@@ -26,4 +26,6 @@ std::string localStamp();                    // datetime.now().strftime("%Y%m%d-
 void atomicJson(const std::filesystem::path& path, const Json& value, bool indent);
 // The order sorted(pathlib.Path) gives on Windows: lower-cased path pieces compared one by one.
 bool pathLess(const std::filesystem::path& a, const std::filesystem::path& b);
+// True when something accepts connections on that local port, such as the Python engine of builds before 2026-10-08.
+bool localPortListening(int port, int timeoutMs = 300);
 }

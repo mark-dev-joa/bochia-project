@@ -1,4 +1,5 @@
-# Puts the latest labeler build into bin/release/labeler: the program and the DLL it runs with, nothing else.
+# Puts the latest labeler build into bin/release/labeler: the program, the DLLs it runs with and the EfficientSAM
+# model files, nothing else.
 # Usage: powershell -File tools/collect_release.ps1
 # Only the program files are replaced. bin/release/labeler/data (labels, exports) is never touched, and other
 # tools get their own folder under bin/release, such as bin/release/calibration.
@@ -12,12 +13,16 @@ if (-not (Test-Path -LiteralPath (Join-Path $build 'boccia_labeler.exe'))) { thr
 New-Item -ItemType Directory -Path $target -Force | Out-Null
 $previous = Join-Path $target 'boccia_labeler-previous.exe'
 if (Test-Path -LiteralPath $previous) { try { Remove-Item -LiteralPath $previous -Force } catch { } }
-foreach ($name in 'boccia_labeler.exe', 'opencv_world4110.dll') {
-    $source = Get-Item -LiteralPath (Join-Path $build $name)
-    $destination = Join-Path $target $name
+function Copy-Unchanged([string] $sourcePath, [string] $destination) {
+    $source = Get-Item -LiteralPath $sourcePath
     $existing = Get-Item -LiteralPath $destination -ErrorAction SilentlyContinue
-    if ($existing -and $existing.Length -eq $source.Length -and $existing.LastWriteTime -eq $source.LastWriteTime) { continue }   # already this build
-    try { Copy-Item -LiteralPath $source.FullName -Destination $destination -Force }
+    if ($existing -and $existing.Length -eq $source.Length -and $existing.LastWriteTime -eq $source.LastWriteTime) { return }   # already this build
+    New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+    Copy-Item -LiteralPath $source.FullName -Destination $destination -Force
+}
+foreach ($name in 'boccia_labeler.exe', 'opencv_world4110.dll', 'onnxruntime.dll') {
+    $destination = Join-Path $target $name
+    try { Copy-Unchanged (Join-Path $build $name) $destination }
     catch {
         if ($name -ne 'boccia_labeler.exe') { throw "Could not replace $name. Close the running labeler first. ($($_.Exception.Message))" }
         Move-Item -LiteralPath $destination -Destination $previous -Force
@@ -25,4 +30,12 @@ foreach ($name in 'boccia_labeler.exe', 'opencv_world4110.dll') {
         Write-Host 'The labeler is running; it keeps the old file until it is closed. The next start uses the new build.'
     }
 }
+# The EfficientSAM-Ti files the program segments with; the repository copy comes from tools/setup_labeler_assist.py.
+$models = Join-Path $root 'data/models/efficientsam'
+foreach ($name in 'efficientsam_ti_encoder.onnx', 'efficientsam_ti_decoder.onnx', 'LICENSE-EfficientSAM.txt', 'provenance.json') {
+    $source = Join-Path $models $name
+    if (-not (Test-Path -LiteralPath $source)) { throw "Model file missing: $source. Run python tools/setup_labeler_assist.py first." }
+    Copy-Unchanged $source (Join-Path $target "models/efficientsam/$name")
+}
 Get-ChildItem -LiteralPath $target -File -Include '*.exe', '*.dll' | ForEach-Object { '{0,-30} {1:yyyy-MM-dd HH:mm}  {2,6:N1} MB' -f $_.Name, $_.LastWriteTime, ($_.Length / 1MB) }
+Get-ChildItem -LiteralPath (Join-Path $target 'models/efficientsam') -File | ForEach-Object { '{0,-30} {1:yyyy-MM-dd HH:mm}  {2,6:N1} MB' -f ('models/efficientsam/' + $_.Name), $_.LastWriteTime, ($_.Length / 1MB) }
