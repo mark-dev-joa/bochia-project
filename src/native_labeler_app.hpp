@@ -89,6 +89,7 @@ private:
     float occlCoverage_ = .5f, occlCircularity_ = .8f, occlAspect_ = .85f;   // the dialog's thresholds; a blurred whole ball keeps about 60 % of its rim
     bool occlReviewed_ = false; int occlTrial_ = 30;
     bool propagateForce_ = false;                                // the dialog's "also the frames already up to date"
+    bool propagateCarry_ = true;                                 // the dialog's "also the empty drafts after a confirmed frame"
     bool fitCircle_ = true;                                      // proposals take the circle fit; off keeps the outline as segmented (hand-held balls)
     std::vector<FrameView> missingSamples_;                      // crops of a trial's new balls, shown in the dialog
     int missingCameras_ = 0, missingTrial_ = 30;                 // 0 colour only, 1 all cameras; frames per trial

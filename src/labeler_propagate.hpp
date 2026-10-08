@@ -9,6 +9,8 @@
 
 namespace boccia::labeler {
 Json propagationStatus(const Project& project);
-Json propagationCounts(const Project& project);   // {"representatives", "duplicates", "pending", "done"}
-Json startPropagation(Project& project, bool force);   // force: also the frames already up to date with their representative
+Json propagationCounts(const Project& project);   // {"representatives", "duplicates", "pending", "done", "carry"}
+// force: also the frames already up to date with their representative. carry: also the review targets that follow a
+// confirmed frame within 1.5 s and hold fewer balls than it get its labels as drafts (still to be confirmed by a person).
+Json startPropagation(Project& project, bool force, bool carry = true);
 }

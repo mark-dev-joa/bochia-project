@@ -577,7 +577,7 @@ void Application::confirmMissing(){
 }
 // Confirmed labels carried to the repeated frames the filter left out of the review (2026-10-08 user request).
 void Application::startPropagation(){
-    if(busy())return;const auto engine=engine_;const Json payload={{"force",propagateForce_}};
+    if(busy())return;const auto engine=engine_;const Json payload={{"force",propagateForce_},{"carry",propagateCarry_}};
     launch("라벨 전파 시작",[engine,payload]{return JobResult{engine->nativeAction("propagate-reviewed",payload),{}};},[this](JobResult result){propagationStatus_=result.data;message_="반복 프레임에 라벨을 전파하는 중입니다. 그동안 계속 작업할 수 있습니다.";});
 }
 void Application::confirmPropagation(){
@@ -595,6 +595,7 @@ void Application::confirmPropagation(){
         ImGui::PopTextWrapPos();ImGui::PopFont();
         ImGui::Dummy({0,2});
         theme::checkbox("이미 최신인 프레임도 다시 전파",&propagateForce_);
+        {char carry[160];std::snprintf(carry,sizeof carry,"확인한 프레임 뒤 1.5초 안의 검수 대상 가운데 초안이 확인본과 다른 %s장도 확인본에 맞추기 (빠진 공은 더하고 그림자 같은 오검출은 빼며, 확인은 사람이)",grouped(counts.value("carry",0)).c_str());theme::checkbox(carry,&propagateCarry_);}
         ImGui::Dummy({0,4});
         bool close=false;const bool running=propagationStatus_.value("status","")=="running";
         ImGui::BeginDisabled(running||busy());
@@ -801,7 +802,7 @@ void Application::tick(){
                 if(occlusionStatus_.value("status","")!="complete")message_="가림 판정이 실패했습니다: "+occlusionStatus_.value("error","");
                 else if(occlusionStatus_.value("dry_run",false)){message_="가림 시험 완료 · "+grouped(occlusionStatus_.value("frames",0))+"장의 공 "+grouped(occlusionStatus_.value("balls",0))+"개가 가려진 것으로 판정 (저장 안 함)";loadMissingSamples(occlusionStatus_.value("samples",Json::array()));}
                 else{message_="공 "+grouped(occlusionStatus_.value("applied_balls",0))+"개를 일부 가림으로 표시했습니다 ("+grouped(occlusionStatus_.value("applied_frames",0))+"장).";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}}
-            if(propagating&&propagationStatus_.value("status","")!="running"){message_=propagationStatus_.value("status","")=="complete"?"반복 프레임 "+grouped(propagationStatus_.value("frames",0))+"장에 라벨을 전파했습니다 (공 "+grouped(propagationStatus_.value("balls",0))+"개).":"라벨 전파가 실패했습니다: "+propagationStatus_.value("error","");if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
+            if(propagating&&propagationStatus_.value("status","")!="running"){message_=propagationStatus_.value("status","")=="complete"?"반복 프레임 "+grouped(propagationStatus_.value("frames",0))+"장에 라벨을 전파하고 초안 "+grouped(propagationStatus_.value("carried",0))+"장을 채웠습니다 (공 "+grouped(propagationStatus_.value("balls",0))+"개).":"라벨 전파가 실패했습니다: "+propagationStatus_.value("error","");if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
             autoStatus_=result.data["auto"];exportStatus_=result.data["export"];colorStatus_=result.data["color"];circleStatus_=result.data["circle"];missingStatus_=result.data["missing"];updateCatalog(result.data["catalog"]);
             if(filling&&missingStatus_.value("status","")!="running"){
                 const bool trial=missingStatus_.value("dry_run",false);

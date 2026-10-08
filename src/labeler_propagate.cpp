@@ -15,7 +15,26 @@ bool truthy(const Json& value) { return value.is_boolean() ? value.get<bool>() :
 bool humanWork(const Json& frame) { return truthy(frame.value("human_touched", Json(false))) || truthy(frame.value("reviewed", Json(false))); }
 const Json& shownBox(const Json& box) { return box.contains("detection_bbox") ? box["detection_bbox"] : box["bbox"]; }
 std::string sourceHash(const Json& boxes) { return sha256Hex(boxes.dump()); }
-struct Target { std::string key, representative, hash; Json frame, confirmed; };
+struct Target { std::string key, representative, hash; Json frame, confirmed; bool carry = false; };
+// A draft agrees with the confirmed frame when the counts match and every confirmed ball has a draft within the matching rule.
+bool consistent(const Json& confirmed, const Json& drafts) {
+    if (confirmed.size() != drafts.size()) return false;
+    std::vector<bool> used(drafts.size(), false);
+    for (const auto& r : confirmed) {
+        const Json& rb = shownBox(r);
+        const double rx = rb[0].get<double>() + rb[2].get<double>() / 2, ry = rb[1].get<double>() + rb[3].get<double>() / 2;
+        bool found = false;
+        for (size_t i = 0; i < drafts.size() && !found; ++i) {
+            if (used[i]) continue;
+            const Json& db = shownBox(drafts[i]);
+            const double dx = db[0].get<double>() + db[2].get<double>() / 2, dy = db[1].get<double>() + db[3].get<double>() / 2;
+            const bool sized = std::abs(rb[2].get<double>() - db[2].get<double>()) <= std::max(4.0, .12 * rb[2].get<double>()) && std::abs(rb[3].get<double>() - db[3].get<double>()) <= std::max(4.0, .12 * rb[3].get<double>());
+            if (std::hypot(rx - dx, ry - dy) <= 8 && sized) { used[i] = true; found = true; }
+        }
+        if (!found) return false;
+    }
+    return true;
+}
 // The confirmed balls carried onto the repeated frame: its own draft ball where one matches (within 8 px and 12 % in
 // size, the repeated-scene filter's own rule), the confirmed ball copied where none does; both measured on this image.
 Json transfer(const Json& confirmed, const Json& drafts, const cv::Mat& image, double margin, int& matched, int& copied) {
@@ -45,11 +64,40 @@ Json transfer(const Json& confirmed, const Json& drafts, const cv::Mat& image, d
     }
     return out;
 }
-// The repeated frames whose confirmed representative they do not yet carry (or all of them, on request).
-std::vector<Target> plan(const Project& project, bool force, int& representatives, int& duplicates, int& pending, int& done) {
-    std::vector<Target> targets; representatives = duplicates = pending = done = 0;
+// The repeated frames whose confirmed representative they do not yet carry (or all of them, on request), and with
+// carry the review targets after a confirmed frame whose draft holds fewer balls than it.
+std::vector<Target> plan(const Project& project, bool force, bool carry, int& representatives, int& duplicates, int& pending, int& done, int& carries) {
+    std::vector<Target> targets; representatives = duplicates = pending = done = carries = 0;
     const Json view = project.selection.view(project.state["frames"]);
     const Json& decisions = view["frames"]; const Json& frames = project.state["frames"];
+    if (carry) {
+        // Per camera stream, in frame order: a confirmed (or propagated) frame becomes the source for the untouched targets
+        // that follow it within 1.5 s (30 frames without timestamps) and hold fewer balls than it, until the next source.
+        for (const auto& recording : project.catalog.recordings) for (const auto& stream : recording.cameras) {
+            std::string sourceKey; const Json* source = nullptr; int64_t sourceNs = 0; int sourceIndex = -1;
+            for (int index = 0; index < int(stream.frames.size()); ++index) {
+                const std::string key = recording.id + "/" + stream.id + "/" + std::to_string(index);
+                const auto found = frames.find(key);
+                if (found == frames.end()) continue;
+                const Json& frame = *found;
+                const FrameInfo& info = stream.frames[size_t(index)];
+                if (truthy(frame.value("reviewed", Json(false))) || truthy(frame.value("propagated", Json(false)))) {
+                    if (frame.value("review_status", "") == "hold") { source = nullptr; continue; }
+                    sourceKey = key; source = &frame; sourceNs = info.hasHostNs ? info.hostNs : 0; sourceIndex = index; continue;
+                }
+                if (!source || humanWork(frame) || source->value("boxes", Json::array()).empty()) continue;
+                const bool near = info.hasHostNs && sourceNs ? info.hostNs - sourceNs <= 1500000000LL : index - sourceIndex <= 30;
+                if (!near) { source = nullptr; continue; }
+                if (decisions.contains(key) && !decisions[key].value("selected", true)) continue;   // a repeat: the propagation proper handles it
+                if (consistent((*source)["boxes"], frame["boxes"])) continue;   // the draft already agrees with the confirmed frame
+                const std::string hash = sourceHash((*source)["boxes"]);
+                const Json carried = frame.contains("automatic") && frame["automatic"].is_object() ? frame["automatic"].value("carried", Json()) : Json();
+                if (carried.is_object() && carried.value("from", "") == sourceKey && carried.value("source_hash", "") == hash && !force) continue;
+                ++carries;
+                targets.push_back({key, sourceKey, hash, frame, (*source)["boxes"], true});
+            }
+        }
+    }
     std::set<std::string> confirmedRepresentatives;
     for (const auto& [key, decision] : decisions.items()) {
         if (decision.value("selected", true)) continue;
@@ -74,18 +122,18 @@ std::vector<Target> plan(const Project& project, bool force, int& representative
 Json propagationStatus(const Project& project) { std::lock_guard guard(project.lock); return project.propagationJob; }
 Json propagationCounts(const Project& project) {
     std::lock_guard guard(project.lock);
-    int representatives, duplicates, pending, done;
-    plan(project, false, representatives, duplicates, pending, done);
-    return {{"representatives", representatives}, {"duplicates", duplicates}, {"pending", pending}, {"done", done}};
+    int representatives, duplicates, pending, done, carries;
+    plan(project, false, true, representatives, duplicates, pending, done, carries);
+    return {{"representatives", representatives}, {"duplicates", duplicates}, {"pending", pending}, {"done", done}, {"carry", carries}};
 }
-Json startPropagation(Project& project, bool force) {
+Json startPropagation(Project& project, bool force, bool carry) {
     std::lock_guard guard(project.lock);
     if (project.propagationJob.value("status", "") == "running") throw std::runtime_error("이미 라벨을 전파하는 중입니다.");
-    int representatives, duplicates, pending, done;
-    std::vector<Target> targets = plan(project, force, representatives, duplicates, pending, done);
+    int representatives, duplicates, pending, done, carries;
+    std::vector<Target> targets = plan(project, force, carry, representatives, duplicates, pending, done, carries);
     const double margin = project.state.value("circle_margin", defaultCircleMargin);
     project.propagationJob = {{"status", "running"}, {"run_id", localStamp() + "-" + randomHex(4)}, {"total", targets.size()}, {"done", 0},
-                              {"frames", 0}, {"balls", 0}, {"matched", 0}, {"copied", 0}, {"skipped", 0}, {"force", force}, {"started_at", utcIso()}};
+                              {"frames", 0}, {"balls", 0}, {"matched", 0}, {"copied", 0}, {"skipped", 0}, {"carried", 0}, {"force", force}, {"carry", carry}, {"started_at", utcIso()}};
     if (project.propagationWorker.joinable()) project.propagationWorker.join();
     project.propagationWorker = std::jthread([&project, targets = std::move(targets), margin](std::stop_token stop) {
         try {
@@ -102,7 +150,7 @@ Json startPropagation(Project& project, bool force) {
                         int matched = 0, copied = 0;
                         Json boxes = transfer(target.confirmed, target.frame["boxes"], image, margin, matched, copied);
                         matchedAll += matched; copiedAll += copied;
-                        { std::lock_guard guard(resultsLock); results[target.key] = {{"boxes", boxes}, {"was", target.frame["boxes"]}, {"from", target.representative}, {"hash", target.hash}, {"width", image.cols}, {"height", image.rows}}; }
+                        { std::lock_guard guard(resultsLock); results[target.key] = {{"boxes", boxes}, {"was", target.frame["boxes"]}, {"from", target.representative}, {"hash", target.hash}, {"width", image.cols}, {"height", image.rows}, {"carry", target.carry}}; }
                         { std::lock_guard guard(project.lock); project.propagationJob["done"] = ++finished; }
                     }
                 } catch (const std::exception& error) { std::lock_guard guard(failureLock); if (failure.empty()) failure = error.what(); }
@@ -112,20 +160,26 @@ Json startPropagation(Project& project, bool force) {
             std::lock_guard guard(project.lock);
             if (stop.stop_requested()) { project.propagationJob["status"] = "stopped"; return; }
             const std::string runId = project.propagationJob.value("run_id", "");
-            int applied = 0, balls = 0, skipped = 0;
+            int applied = 0, balls = 0, skipped = 0, carried = 0;
             project.mutateAutomatic([&](Json& state) {
                 for (const auto& [key, result] : results) {
                     if (!state["frames"].contains(key)) continue;
                     Json& frame = state["frames"][key];
                     if (humanWork(frame) || frame["boxes"] != result["was"]) { ++skipped; continue; }   // a person got there, or the draft moved on
                     frame["boxes"] = validateBoxes(result["boxes"], result["width"], result["height"]);
+                    if (result.value("carry", false)) {   // a draft for a review target: still a person's to confirm
+                        if (!frame["automatic"].is_object()) frame["automatic"] = Json::object();
+                        frame["automatic"]["carried"] = {{"from", result["from"]}, {"source_hash", result["hash"]}, {"run_id", runId}, {"at", utcIso()}};
+                        frame["automatic"]["needs_attention"] = false;
+                        ++carried; balls += int(frame["boxes"].size()); continue;
+                    }
                     frame["reviewed"] = false; frame["review_status"] = "propagated"; frame["propagated"] = true;
                     frame["propagation"] = {{"from", result["from"]}, {"source_hash", result["hash"]}, {"run_id", runId}, {"at", utcIso()}};
                     ++applied; balls += int(frame["boxes"].size());
                 }
-                if (applied > 0 || !state.contains("propagation")) state["propagation"] = {{"at", utcIso()}, {"frames", applied}, {"balls", balls}, {"run_id", runId}};
+                if (applied > 0 || carried > 0 || !state.contains("propagation")) state["propagation"] = {{"at", utcIso()}, {"frames", applied}, {"carried", carried}, {"balls", balls}, {"run_id", runId}};
             });
-            project.propagationJob["frames"] = applied; project.propagationJob["balls"] = balls; project.propagationJob["skipped"] = skipped;
+            project.propagationJob["frames"] = applied; project.propagationJob["carried"] = carried; project.propagationJob["balls"] = balls; project.propagationJob["skipped"] = skipped;
             project.propagationJob["matched"] = matchedAll.load(); project.propagationJob["copied"] = copiedAll.load();
             project.propagationJob["status"] = "complete"; project.propagationJob["finished_at"] = utcIso();
         } catch (const std::exception& error) {

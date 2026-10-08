@@ -29,7 +29,7 @@ Json Engine::nativeAction(const std::string& action, const Json& payload) {
     if (action == "drop-missing-trial") return dropMissingTrial(project_, payload.value("name", ""));
     if (action == "missing-trial-samples") return missingTrialSamples(project_, payload.value("name", ""), payload.value("limit", 8));
     if (action == "apply-missing-trial") return applyMissingTrial(project_, payload.value("name", ""));
-    if (action == "propagate-reviewed") return startPropagation(project_, payload.value("force", false));
+    if (action == "propagate-reviewed") return startPropagation(project_, payload.value("force", false), payload.value("carry", true));
     if (action == "propagation-counts") return propagationCounts(project_);
     if (action == "mark-occluded") return startOcclusionMark(project_, occlusionOptions(payload));
     if (action == "stop-occluded") return stopOcclusionMark(project_);
