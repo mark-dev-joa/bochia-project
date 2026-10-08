@@ -30,13 +30,13 @@ struct CircleFit {
     bool ok = false;
     double low = 0, high = 0; // the Canny thresholds used
 };
-CircleFit refineCircle(const cv::Mat& image, const cv::Mat& mask, int band = 3, double low = 20, double high = 60);
+CircleFit refineCircle(const cv::Mat& image, const cv::Mat& mask, int band = 3, double low = 20, double high = 60, const cv::Mat& exclude = cv::Mat());   // exclude: pixels whose edges are ignored (a neighbouring ball)
 // Applies the refinement to a masked box: the mask becomes the circle's disc (so bbox follows it), detection_bbox the
 // circle's box clipped to the image, and circle records [x, y, r] in continuous image coordinates. false, and the
 // box untouched, when the fit is not trusted.
 // margin: pixels added to the measured radius, so the stored circle can sit on the rim's outer side (default 0.5).
 inline constexpr double defaultCircleMargin = .5;
-bool refineBallBox(Json& box, const cv::Mat& image, double margin = defaultCircleMargin);
+bool refineBallBox(Json& box, const cv::Mat& image, double margin = defaultCircleMargin, const cv::Mat& exclude = cv::Mat());
 cv::Mat discMask(double x, double y, double r, int width, int height);   // the pixels whose centres lie inside the circle
 void inscribeCircle(Json& box, int width, int height);   // the circle inscribed in an edited box, and the mask as that disc
 // masked, not occluded, not drawn or corrected by hand, and (unless remeasure) not refined yet

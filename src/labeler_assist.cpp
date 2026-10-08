@@ -114,12 +114,13 @@ void geometricFit(const std::vector<FitPoint>& points, double& cx, double& cy, d
     }
 }
 }
-CircleFit refineCircle(const cv::Mat& image, const cv::Mat& mask, int band, double low, double high) {
+CircleFit refineCircle(const cv::Mat& image, const cv::Mat& mask, int band, double low, double high, const cv::Mat& exclude) {
     CircleFit fit; fit.low = low; fit.high = high;
     const int area = cv::countNonZero(mask);
     if (area < 12) return fit;
     const cv::Rect bounds = cv::boundingRect(mask);
-    const double r0 = std::sqrt(area / CV_PI);
+    // The radius guess: a partly hidden ball's visible part is much smaller than the ball, its extent less so (2026-10-09).
+    const double r0 = std::max(std::sqrt(area / CV_PI), .45 * std::max(bounds.width, bounds.height));
     const cv::Moments moments = cv::moments(mask, true);
     const double mx = moments.m10 / moments.m00, my = moments.m01 / moments.m00;
     const int margin = std::max(6, int(std::ceil(r0 * .5)) + band);
@@ -132,6 +133,7 @@ CircleFit refineCircle(const cv::Mat& image, const cv::Mat& mask, int band, doub
     const cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, {2 * band + 1, 2 * band + 1});
     cv::Mat local = mask(crop), outer, inner, ring;
     cv::dilate(local, outer, kernel); cv::erode(local, inner, kernel); cv::subtract(outer, inner, ring);
+    if (!exclude.empty()) ring.setTo(0, exclude(crop));   // a neighbouring ball's rim must not pull the circle
     std::vector<FitPoint> points;
     for (int y = 0; y < edges.rows; ++y) for (int x = 0; x < edges.cols; ++x) if (edges.at<uchar>(y, x) && ring.at<uchar>(y, x)) points.push_back({crop.x + x + .5, crop.y + y + .5});
     fit.points = int(points.size());
@@ -193,7 +195,7 @@ CircleFit refineCircle(const cv::Mat& image, const cv::Mat& mask, int band, doub
     }
     fit.x = cx; fit.y = cy; fit.r = r; fit.inliers = inliers; fit.residual = inliers ? residual / inliers : 0;
     fit.coverage = double(std::count(sector.begin(), sector.end(), true)) / 36;
-    fit.ok = inliers >= 12 && fit.coverage >= .5 && std::abs(r - r0) <= .35 * r0 && std::hypot(cx - mx, cy - my) <= .5 * r0;
+    fit.ok = inliers >= 12 && fit.coverage >= .5 && std::abs(r - r0) <= .35 * r0 && std::hypot(cx - mx, cy - my) <= .6 * r0;   // a half-hidden ball's centroid sits .42 r off
     return fit;
 }
 bool refinable(const Json& box, bool remeasure) {
@@ -212,9 +214,9 @@ cv::Mat discMask(double x, double y, double r, int width, int height) {
     for (int py = y0; py <= y1; ++py) for (int px = x0; px <= x1; ++px) if (std::hypot(px + .5 - x, py + .5 - y) <= r) disc.at<uchar>(py, px) = 1;
     return disc;
 }
-bool refineBallBox(Json& box, const cv::Mat& image, double margin) {
+bool refineBallBox(Json& box, const cv::Mat& image, double margin, const cv::Mat& exclude) {
     if (!box.contains("segmentation")) return false;
-    CircleFit fit = refineCircle(image, decodeMaskChecked(box["segmentation"], image.cols, image.rows));
+    CircleFit fit = refineCircle(image, decodeMaskChecked(box["segmentation"], image.cols, image.rows), 3, 20, 60, exclude);
     if (!fit.ok) return false;
     fit.r = std::max(1.0, fit.r + margin);   // the rim margin: the gradient's peak lies a little inside the ball's outer edge
     auto round4 = [](double value) { return std::nearbyint(value * 10000) / 10000; };

@@ -533,17 +533,27 @@ Json assistance(const Project& project, BallAssist& assist, const std::string& m
         try { box = assist.segment(image, project.catalog.signature + "/" + frame["key"].get<std::string>(), points, payload.value("radius", Json(14)), payload.value("box", Json())); }
         catch (const std::runtime_error&) { throw; }
         catch (const std::exception& error) { throw std::runtime_error(std::string("분할 실행에 실패했습니다: ") + std::string(error.what()).substr(0, 240)); }
+        // The neighbours' discs: their rims are ignored by the circle fit, which then recovers the ball's full circle from the
+        // visible arc; the mask with them cut out is the fallback when the fit fails, and the outline when the fit is off.
+        cv::Mat exclude; Json visible;
         if (!others.empty()) {
+            exclude = cv::Mat::zeros(height, width, CV_8UC1);
             cv::Mat mask = decodeMaskChecked(box["segmentation"], width, height);
             const int before = cv::countNonZero(mask);
-            for (const auto& d : others) cv::circle(mask, cv::Point(int(std::lround(d.x)), int(std::lround(d.y))), int(std::ceil(d.r + 1)), cv::Scalar(0), -1);
+            for (const auto& d : others) {
+                const cv::Point centre(int(std::lround(d.x)), int(std::lround(d.y)));
+                cv::circle(exclude, centre, int(std::ceil(d.r + 4)), cv::Scalar(255), -1);
+                cv::circle(mask, centre, int(std::ceil(d.r + 1)), cv::Scalar(0), -1);
+            }
             const int after = cv::countNonZero(mask);
             if (after < std::max(8, before / 10)) throw std::runtime_error("클릭한 공이 옆 공에 거의 다 가려 있습니다. 폴리곤으로 보이는 부분을 그리세요.");
-            if (after != before) box = maskAnnotation(mask, box, "efficientsam");
+            if (after != before) visible = maskAnnotation(mask, box, "efficientsam");
         }
-        const Json raw = {{"bbox", box["bbox"]}, {"segmentation", box["segmentation"]}, {"area", box.value("area", Json())}};
-        refineBallBox(box, image, circleMargin(project));   // the box from the image's own edge, with the project's rim margin
-        if (box.contains("circle")) box["raw"] = raw;        // kept beside the fit, so the app can apply the outline as the model gave it
+        const Json& outline = visible.is_null() ? box : visible;
+        const Json raw = {{"bbox", outline["bbox"]}, {"segmentation", outline["segmentation"]}, {"area", outline.value("area", Json())}};
+        const bool fitted = refineBallBox(box, image, circleMargin(project), exclude);   // the box from the image's own edge, with the project's rim margin
+        if (!fitted && !visible.is_null()) box = visible;   // no circle: the visible part, without the neighbour
+        if (fitted) box["raw"] = raw;                        // kept beside the fit, so the app can apply the outline as the model gave it
         return {{"key", frame["key"]}, {"proposals", Json::array({coloured(box, image)})}};
     }
     if (method == "circles") {

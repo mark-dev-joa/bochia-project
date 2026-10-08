@@ -203,6 +203,19 @@ void assistTests() {
     const cv::Mat measured = decodeMaskChecked(refinedBox2["segmentation"], 320, 240);
     check(std::abs(refinedBox2["bbox"][0].get<double>() - 140.5) <= .5 && std::abs(refinedBox2["bbox"][2].get<double>() - 40) <= 1 && cv::countNonZero(measured != discMask) <= 16 && refinedBox2["area"] == cv::countNonZero(measured), "the mask must become the measured disc: " + refinedBox2["bbox"].dump());
     check(refineBallBox(refinedBox, floor, 0), "the exact disc was not refined");
+    {   // A ball half hidden by another on the floor: the neighbour's rim is ignored and the full circle comes back from the visible arc.
+        cv::Mat pair(240, 320, CV_8UC3, cv::Scalar(40, 45, 50));
+        cv::circle(pair, {160, 120}, 20, cv::Scalar(230, 230, 230), -1, cv::LINE_AA);
+        cv::circle(pair, {188, 120}, 20, cv::Scalar(200, 60, 60), -1, cv::LINE_AA);
+        cv::Mat back(240, 320, CV_8UC1, cv::Scalar(0)), front(240, 320, CV_8UC1, cv::Scalar(0));
+        cv::circle(back, {160, 120}, 20, cv::Scalar(1), -1); cv::circle(front, {188, 120}, 21, cv::Scalar(1), -1);
+        back.setTo(0, front);   // the visible part only
+        cv::Mat exclude(240, 320, CV_8UC1, cv::Scalar(0)); cv::circle(exclude, {188, 120}, 24, cv::Scalar(255), -1);
+        const cv::Rect visible = cv::boundingRect(back);
+        Json hidden = {{"bbox", {visible.x, visible.y, visible.width, visible.height}}, {"segmentation", encodeMask(back)}, {"occluded", false}, {"source", "efficientsam"}};
+        check(refineBallBox(hidden, pair, 0, exclude) && std::abs(hidden["circle"][0].get<double>() - 160) < 1 && std::abs(hidden["circle"][1].get<double>() - 120) < 1 && std::abs(hidden["circle"][2].get<double>() - 20) < 1,
+              "the half-hidden ball's full circle was not recovered: " + hidden.value("circle", Json()).dump());
+    }
     Json margined = refinedBox; margined.erase("circle"); margined.erase("detection_bbox");
     check(refineBallBox(margined, floor, .5) && std::abs(margined["circle"][2].get<double>() - refinedBox["circle"][2].get<double>() - .5) < 1e-6 && std::abs(margined["detection_bbox"][2].get<double>() - refinedBox["detection_bbox"][2].get<double>() - 1) < 1e-6, "the margin must widen the circle and its box");
     Json corrected = margined; corrected.erase("circle");
