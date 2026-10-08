@@ -449,7 +449,16 @@ void Application::cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact) {
         const int ball = order[i];
         const auto r = detectionBox(boxes[ball]);
         const bool active = here && ball == selected_;
-        paintImage(frame, a, b, cropRegion(r, frame.image.cols, frame.image.rows), {.fill = false, .boxes = boxes_, .circles = circles_, .outlines = outlines_, .selected = active ? ball : -1});
+        const auto region = cropRegion(r, frame.image.cols, frame.image.rows);
+        paintImage(frame, a, b, region, {.fill = false, .boxes = boxes_, .circles = circles_, .outlines = outlines_, .selected = active ? ball : -1});
+        {   // Outside the ball's box the crop is dimmed, so the ball stands out from its neighbours (2026-10-08 user request).
+            const double scale = cell / region.width;
+            const float x0 = std::clamp(float(a.x + (r.x - region.x) * scale), a.x, b.x), y0 = std::clamp(float(a.y + (r.y - region.y) * scale), a.y, b.y);
+            const float x1 = std::clamp(float(a.x + (r.x + r.width - region.x) * scale), a.x, b.x), y1 = std::clamp(float(a.y + (r.y + r.height - region.y) * scale), a.y, b.y);
+            const ImU32 dim = theme::rgb(0x0d0f12, 118);
+            draw->AddRectFilled(a, {b.x, y0}, dim); draw->AddRectFilled({a.x, y1}, b, dim);
+            draw->AddRectFilled({a.x, y0}, {x0, y1}, dim); draw->AddRectFilled({x1, y0}, {b.x, y1}, dim);
+        }
         draw->AddRect(a, b, active ? theme::selected : hovered ? theme::text3 : theme::line, 4, 0, active ? 2.f : 1.f);
         if (cell > 70) {   // drawn after the image, which would otherwise cover it
             draw->AddRectFilled({b.x - 26, a.y + 4}, {b.x - 4, a.y + 26}, theme::rgb(0x0d0f12, removing ? 235 : 150), 5);
