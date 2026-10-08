@@ -209,11 +209,11 @@ void assistTests() {
     check(!refinable(corrected, true), "a hand-corrected box must not be measured even on request");
     const Json kept = validateBoxes(Json::array({refinedBox}), 320, 240)[0];
     check(kept["circle"] == refinedBox["circle"] && kept.contains("detection_bbox"), "validation must keep the circle");
-    Json occludedBox = refinedBox; occludedBox["occluded"] = true; occludedBox.erase("circle");
+    Json occludedBox = refinedBox; occludedBox["occluded"] = true; occludedBox.erase("circle"); occludedBox.erase("detection_bbox");   // not yet measured
     Json drawn = refinedBox; drawn["source"] = "manual_polygon"; drawn.erase("circle");
     Json nudged = refinedBox; nudged.erase("circle");   // a detection_bbox without a circle is a correction a person made
     Json inscribed = refinedBox; inscribed["circle_source"] = "box";   // the circle inscribed in an edited box is one too
-    check(!refinable(occludedBox) && !refinable(drawn) && !refinable(nudged) && !refinable(inscribed, true), "occluded, hand-drawn and hand-corrected balls must not be refined");
+    check(refinable(occludedBox) && !refinable(drawn) && !refinable(nudged) && !refinable(inscribed, true), "hand-drawn and hand-corrected balls must not be refined; a partly hidden one is left to the fit");
     check(validateBoxes(Json::array({inscribed}), 320, 240)[0].value("circle_source", "") == "box", "validation must keep the inscribed circle's origin");
     Json edited2 = refinedBox; edited2["detection_bbox"] = {100, 100, 40, 40}; inscribeCircle(edited2, 320, 240);
     const cv::Mat inscribedDisc = decodeMaskChecked(edited2["segmentation"], 320, 240);
@@ -505,26 +505,26 @@ void nativeTests() {
         project5.state["frames"][key5] = {{"recording", fifth.ids[0]}, {"camera", "camera-0"}, {"index", 0}, {"width", 120}, {"height", 100}, {"boxes", {draft, drawn, hidden}}, {"reviewed", false}, {"human_touched", false}};
         const std::string key6 = fifth.ids[0] + "/camera-0/1";   // the same ball on an image a person confirmed
         project5.state["frames"][key6] = {{"recording", fifth.ids[0]}, {"camera", "camera-0"}, {"index", 1}, {"width", 120}, {"height", 100}, {"boxes", {draft}}, {"reviewed", true}, {"review_status", "reviewed"}, {"human_touched", true}};
-        check(nativeCatalog(project5)["circleable"] == 1 && nativeCatalog(project5)["circleable_all"] == 2 && circleRefineStatus(project5)["status"] == "idle", "circleable counts wrong");
+        check(nativeCatalog(project5)["circleable"] == 2 && nativeCatalog(project5)["circleable_all"] == 3 && circleRefineStatus(project5)["status"] == "idle", "circleable counts wrong");   // the partly hidden ball counts too
         const Json started = nativeAction(project5, "refine-circles", Json::object());
         check(started["status"] == "running" && started["total"] == 1, "circle refinement did not start: " + started.dump());
         for (int i = 0; i < 500 && circleRefineStatus(project5)["status"] == "running"; ++i) Sleep(10);
         const Json status5 = circleRefineStatus(project5);
-        check(status5["status"] == "complete" && status5["balls"] == 1 && status5["skipped"] == 0, "circle refinement did not complete: " + status5.dump());
+        check(status5["status"] == "complete" && status5["balls"] == 2 && status5["skipped"] == 0, "circle refinement did not complete: " + status5.dump());
         const Json& boxes5 = project5.state["frames"][key5]["boxes"];
         check(boxes5[0].contains("circle") && std::abs(boxes5[0]["circle"][2].get<double>() - 20.5) < .3 && std::abs(boxes5[0]["detection_bbox"][0].get<double>() - 40) < .3 && std::abs(boxes5[0]["bbox"][0].get<double>() - 40) <= .5 && std::abs(boxes5[0]["bbox"][2].get<double>() - 41) <= 1 && boxes5[0]["segmentation"] != draft["segmentation"] && boxes5[0]["source"] == "auto_sam", "the drafted ball must get the measured disc and box with the default half-pixel margin: " + boxes5[0].dump().substr(0, 160));
-        check(!boxes5[1].contains("circle") && !boxes5[2].contains("circle"), "hand-drawn and occluded balls were refined");
-        check(project5.state["revision"] == 0 && project5.state["auto_revision"] == 1 && project5.state["circle_refine"]["balls"] == 1 && nativeCatalog(project5)["circleable"] == 0 && nativeCatalog(project5)["circleable_all"] == 1, "circle refinement record wrong");
+        check(!boxes5[1].contains("circle") && boxes5[2].contains("circle"), "the hand-drawn ball was refined, or the partly hidden one was not");
+        check(project5.state["revision"] == 0 && project5.state["auto_revision"] == 1 && project5.state["circle_refine"]["balls"] == 2 && nativeCatalog(project5)["circleable"] == 0 && nativeCatalog(project5)["circleable_all"] == 1, "circle refinement record wrong");
         check(!project5.state["frames"][key6]["boxes"][0].contains("circle"), "a confirmed image must be left alone by default");
         nativeAction(project5, "refine-circles", {{"include_reviewed", true}});
         for (int i = 0; i < 500 && circleRefineStatus(project5)["status"] == "running"; ++i) Sleep(10);
-        check(circleRefineStatus(project5)["balls"] == 1 && project5.state["frames"][key6]["boxes"][0].contains("circle") && project5.state["frames"][key6]["reviewed"] == true && project5.state["circle_refine"]["balls"] == 2 && nativeCatalog(project5)["circleable_all"] == 0, "the confirmed image must be refined on request and stay confirmed");
+        check(circleRefineStatus(project5)["balls"] == 1 && project5.state["frames"][key6]["boxes"][0].contains("circle") && project5.state["frames"][key6]["reviewed"] == true && project5.state["circle_refine"]["balls"] == 3 && nativeCatalog(project5)["circleable_all"] == 0, "the confirmed image must be refined on request and stay confirmed");
         // The rim margin is an option of the pass, stored with the project; measuring again applies a new one to every ball.
-        check(nativeCatalog(project5)["circle_margin"] == .5 && nativeCatalog(project5)["circleable_remeasure"] == 2, "margin and remeasure counts wrong");
+        check(nativeCatalog(project5)["circle_margin"] == .5 && nativeCatalog(project5)["circleable_remeasure"] == 3, "margin and remeasure counts wrong");
         check(fails([&] { nativeAction(project5, "refine-circles", {{"margin", 9}}); }, "둘레 여유"), "an absurd margin was accepted");
         nativeAction(project5, "refine-circles", {{"include_reviewed", true}, {"remeasure", true}, {"margin", 1.0}});
         for (int i = 0; i < 500 && circleRefineStatus(project5)["status"] == "running"; ++i) Sleep(10);
-        check(circleRefineStatus(project5)["balls"] == 2 && std::abs(project5.state["frames"][key5]["boxes"][0]["circle"][2].get<double>() - 21) < .3 && project5.state["circle_margin"] == 1.0 && project5.state["circle_refine"]["margin"] == 1.0 && nativeCatalog(project5)["circle_margin"] == 1.0, "measuring again must apply the new margin: " + project5.state["frames"][key5]["boxes"][0]["circle"].dump());
+        check(circleRefineStatus(project5)["balls"] == 3 && std::abs(project5.state["frames"][key5]["boxes"][0]["circle"][2].get<double>() - 21) < .3 && project5.state["circle_margin"] == 1.0 && project5.state["circle_refine"]["margin"] == 1.0 && nativeCatalog(project5)["circle_margin"] == 1.0, "measuring again must apply the new margin: " + project5.state["frames"][key5]["boxes"][0]["circle"].dump());
         // A frame shown on screen is measured on the spot, and a confirmation stores what was shown.
         const std::string key7 = fifth.ids[0] + "/camera-0/2";
         project5.state["frames"][key7] = {{"recording", fifth.ids[0]}, {"camera", "camera-0"}, {"index", 2}, {"width", 120}, {"height", 100}, {"boxes", {draft, drawn}}, {"reviewed", false}, {"human_touched", false}};

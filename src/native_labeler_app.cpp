@@ -324,7 +324,7 @@ void Application::confirmCircles(){
         ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted("공 둘레를 영상에서 다시 재기");ImGui::PopFont();
         const int count=catalog_.value(remeasure_?"circleable_remeasure":includeReviewed_?"circleable_all":"circleable",0);
         ImGui::Text("공 %s개의 가장자리를 Canny로 찾아 원을 맞추고, 그 원으로 마스크와 검출 박스를 정합니다.",grouped(count).c_str());
-        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"확인 상태는 그대로이고 공을 지우거나 더하지 않습니다. 가려진 공, 손으로 그린 윤곽, 직접 보정한 박스, 원이 맞지 않는 공은 건너뜁니다. 그동안 계속 작업할 수 있습니다.");ImGui::PopFont();
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"확인 상태는 그대로이고 공을 지우거나 더하지 않습니다. 손으로 그린 윤곽, 직접 보정한 박스, 원이 맞지 않는 공(많이 가려진 공 포함)은 건너뜁니다. 그동안 계속 작업할 수 있습니다.");ImGui::PopFont();
         ImGui::Dummy({0,2});
         theme::checkbox("확인한 이미지의 공도 포함",&includeReviewed_);
         theme::checkbox("이미 잰 공도 다시 재기 (둘레 여유를 바꾼 뒤)",&remeasure_);

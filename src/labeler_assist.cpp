@@ -201,7 +201,8 @@ bool refinable(const Json& box, bool remeasure) {
     // A box corrected by hand (detection_bbox without a measured circle, or a circle inscribed in an edited box) is a
     // decision a person made; it stays.
     const bool handCorrected = (box.contains("detection_bbox") && !box.contains("circle")) || box.value("circle_source", "") == "box";
-    return box.contains("segmentation") && !box.value("occluded", false) && (remeasure || !box.contains("circle")) && !handCorrected
+    // A partly hidden ball is measured too: the fit itself decides, since it needs half the rim (2026-10-08 user decision).
+    return box.contains("segmentation") && (remeasure || !box.contains("circle")) && !handCorrected
         && source != "manual" && source != "manual_brush" && source != "manual_polygon";
 }
 cv::Mat discMask(double x, double y, double r, int width, int height) {
