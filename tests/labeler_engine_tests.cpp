@@ -1,7 +1,9 @@
 // Checks of the C++ labeler engine, one group per module. Each group mirrors the Python test of the same
 // name, so a behaviour the two engines must share has the same check on both sides.
 #include "labeler_catalog.hpp"
+#include "labeler_assist.hpp"
 #include "labeler_util.hpp"
+#include <opencv2/imgproc.hpp>
 #include <zstd.h>
 #include <filesystem>
 #include <fstream>
@@ -123,6 +125,45 @@ void catalogTests() {
     check(fails([&] { Catalog(empty.path / "missing"); }, "촬영 폴더가 없습니다"), "a missing folder must fail");
     std::cout << "PASS: catalog ids, signature, mono and bayer decoding, nearest frame and errors\n";
 }
+
+void assistTests() {
+    // test_mask_persistence_export_and_bbox_agree: the RLE checks
+    cv::Mat mask(6, 8, CV_8UC1, cv::Scalar(0));
+    mask(cv::Rect(2, 1, 3, 4)).setTo(1); mask.at<uchar>(2, 3) = 0;   // a hole must survive RLE, unlike a filled polygon
+    const Json rle = encodeMask(mask);
+    check(cv::countNonZero(decodeMaskChecked(rle, 8, 6) != mask) == 0, "RLE round trip lost the hole");
+    for (const Json& bad : {Json{{"size", {8, 6}}, {"counts", rle["counts"]}}, Json{{"size", {6, 8}}, {"counts", {47}}}, Json{{"size", {6, 8}}, {"counts", {48}}}, Json{{"size", {6, 8}}, {"counts", {true, 47}}}})
+        check(fails([&] { decodeMaskChecked(bad, 8, 6); }, "분할 마스크"), "invalid RLE accepted: " + bad.dump());
+    cv::Mat filled(6, 8, CV_8UC1, cv::Scalar(1));
+    check(encodeMask(filled)["counts"] == Json::array({0, 48}) && cv::countNonZero(decodeMaskChecked(encodeMask(filled), 8, 6) != filled) == 0, "a full mask must start with a zero run");
+    check(maskContours(mask).size() == 2 && maskContours(mask)[0].size() >= 4, "contours of the block and its hole wrong");   // the one-pixel hole has its own contour, as in Python
+    check(std::abs(overlap({0, 0, 2, 2}, {1, 1, 2, 2}) - 1.0 / 7) < 1e-9 && overlap({0, 0, 2, 2}, {5, 5, 1, 1}) == 0, "overlap wrong");
+    // test_manual_polygon_mask_and_rejected_coordinates
+    const Json proposal = polygonProposal(Json::parse("[[2,1],[4,1],[4,4],[2,4]]"), 8, 6);
+    check(proposal["bbox"] == Json::array({2, 1, 3, 4}) && proposal["source"] == "manual_polygon" && proposal["occluded"] == false, "polygon proposal wrong");
+    check(cv::countNonZero(decodeMaskChecked(proposal["segmentation"], 8, 6)) == 12 && !proposal["contours"].empty(), "polygon mask wrong");
+    for (const char* points : {"[[0,0],[1,1]]", "[[0,0],[1,1],[2,2]]", "[[-1,0],[4,1],[4,4]]"})
+        check(fails([&] { polygonProposal(Json::parse(points), 8, 6); }), std::string("polygon accepted: ") + points);
+    // test_invalid_coordinates_and_missing_split_rejected: the coordinate part
+    for (const Json& bbox : {Json{-1, 0, 2, 2}, Json{7, 0, 3, 2}, Json{0, 0, 0, 2}, Json{std::nan(""), 0, 2, 2}, Json{true, 0, 2, 2}})
+        check(fails([&] { validateBoxes(Json::array({{{"bbox", bbox}}}), 8, 6); }, "박스"), "invalid box accepted: " + bbox.dump());
+    check(fails([&] { validateBoxes(Json::array({{{"bbox", {2, 1, 3, 4}}, {"occluded", 1}}}), 8, 6); }, "가림") && fails([&] { validateBoxes(Json::array({{{"bbox", {2, 1, 3, 4}}, {"color", "green"}}}), 8, 6); }, "색상"), "box attribute checks wrong");
+    Json boxes = validateBoxes(Json::parse(R"([{"bbox":[2.123456,1,3,4],"occluded":true,"color":"red","source":"efficientsam","detection_bbox":[1,0,5,5],"extra":1},{"bbox":[0,0,2,2],"color":"unknown","source":"web"}])"), 8, 6);
+    check(boxes.size() == 2 && boxes[0]["bbox"][0] == 2.1235 && boxes[0]["occluded"] == true && boxes[0]["color"] == "red" && boxes[0]["source"] == "efficientsam" && boxes[0]["detection_bbox"] == Json::array({1.0, 0.0, 5.0, 5.0}) && !boxes[0].contains("extra"), "validated box wrong: " + boxes[0].dump());
+    check(!boxes[1].contains("color") && !boxes[1].contains("source") && boxes[1]["bbox"][2].is_number_float(), "unknown colour and foreign source must be dropped");
+    Json masked = Json::array({{{"bbox", {2, 1, 3, 4}}, {"segmentation", rle}}});
+    check(validateBoxes(masked, 8, 6)[0]["segmentation"] == rle, "a matching mask must be kept");
+    masked[0]["bbox"] = {1, 1, 3, 4};
+    check(fails([&] { validateBoxes(masked, 8, 6); }, "분할 윤곽과 박스 좌표가 다릅니다"), "a box that left its mask was accepted");
+    check(fails([&] { validateBoxes(Json(std::vector<Json>(501, Json{{"bbox", {0, 0, 1, 1}}})), 8, 6); }, "목록"), "501 boxes accepted");
+    // test_ball_color_from_the_colour_camera
+    cv::Mat disc(20, 20, CV_8UC1, cv::Scalar(0)); cv::circle(disc, {10, 10}, 8, cv::Scalar(1), -1);
+    auto patchOf = [&](cv::Vec3b bgr) { cv::Mat image(20, 20, CV_8UC3, cv::Scalar(30, 40, 50)); image.setTo(cv::Scalar(bgr[0], bgr[1], bgr[2]), disc); return image; };
+    check(ballColor(patchOf({8, 12, 32}), disc) == "red" && ballColor(patchOf({42, 58, 68}), disc) == "white" && ballColor(patchOf({10, 11, 10}), disc) == "black" && ballColor(patchOf({60, 22, 10}), disc) == "blue", "ball colours wrong");
+    check(ballColor(cv::Mat(20, 20, CV_8UC1, cv::Scalar(0)), disc) == "unknown", "a mono image must have no colour");
+    check(boundedNumber(3, 0, 10, "x") == 3 && fails([&] { boundedNumber(Json(true), 0, 10, "값"); }, "값: 0~10 사이") && fails([&] { boundedNumber(11, 0, 10, "값"); }), "bounded number wrong");
+    std::cout << "PASS: RLE checks, contours, overlap, polygon proposal, box validation and ball colour\n";
+}
 }
 
 int main(int argc, char** argv) try {
@@ -145,5 +186,6 @@ int main(int argc, char** argv) try {
     }
     utilTests();
     catalogTests();
+    assistTests();
     return 0;
 } catch (const std::exception& error) { std::cerr << "FAIL: " << error.what() << "\n"; return 1; }
