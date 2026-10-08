@@ -16,7 +16,7 @@ inline constexpr float scale = 1.3f, base = 13.5f, sub = 13, caption = 12, tiny 
 constexpr float px(float size) { return size * scale; }
 extern ImFont* mono;
 extern ImFont* bold;
-enum class Icon { Cursor, Spark, Brush, Polygon, Box, Undo, Fit, Target, Trash, Plus, Left, Right, Down, Clock, Folder, Refresh, Info };
+enum class Icon { Cursor, Spark, Brush, Polygon, Box, Undo, Fit, Target, Trash, Plus, Left, Right, Up, Down, Clock, Folder, Refresh, Info };
 void loadFonts();
 void apply();
 ImU32 stateColor(MemberState state);

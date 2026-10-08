@@ -823,20 +823,28 @@ void Application::nudgePad(FrameView& frame, Json& box) {
     const int offsets[4] = {int(std::lround(ty - corrected.y)), int(std::lround(corrected.y + corrected.height - ty - th)), int(std::lround(tx - corrected.x)), int(std::lround(corrected.x + corrected.width - tx - tw))};
     const float centerWidth = std::clamp(width - 2 * 82 - 36, 64.f, 104.f), centerHeight = 78;
     const ImVec2 center{origin.x + width / 2, origin.y + 12 + 30 + 6 + centerHeight / 2};
-    auto stepper = [&](int edge, ImVec2 at) {   // [-] value [+], 82 x 26, centered on `at`
+    // Each stepper is [arrow] value [arrow], 82 x 26, centered on `at`. An arrow moves that edge in the direction it
+    // points, so the outer arrow of every stepper grows the box and the inner one shrinks it.
+    static const char* const edgeNames[4] = {"위", "아래", "왼쪽", "오른쪽"};
+    auto stepper = [&](int edge, ImVec2 at) {
         const ImVec2 p{at.x - 41, at.y - 13};
+        const bool vertical = edge < 2, firstGrows = edge == 0 || edge == 2;   // top and left steppers point outward on their first arrow
         draw->AddRectFilled(p, {p.x + 82, p.y + 26}, theme::bg1, 6); draw->AddRect(p, {p.x + 82, p.y + 26}, theme::line2, 6);
         draw->AddLine({p.x + 26, p.y}, {p.x + 26, p.y + 26}, theme::line2); draw->AddLine({p.x + 56, p.y}, {p.x + 56, p.y + 26}, theme::line2);
         ImGui::PushID(edge);
-        ImGui::SetCursorScreenPos(p);
-        if (ImGui::InvisibleButton("##in", {26, 26})) later_ = [this, edge] { nudge(edge, false); };
-        if (ImGui::IsItemHovered()) draw->AddRectFilled(p, {p.x + 26, p.y + 26}, theme::bg4, 6, ImDrawFlags_RoundCornersLeft);
-        ImGui::SetCursorScreenPos({p.x + 56, p.y});
-        if (ImGui::InvisibleButton("##out", {26, 26})) later_ = [this, edge] { nudge(edge, true); };
-        if (ImGui::IsItemHovered()) draw->AddRectFilled({p.x + 56, p.y}, {p.x + 82, p.y + 26}, theme::bg4, 6, ImDrawFlags_RoundCornersRight);
+        for (int side = 0; side < 2; ++side) {
+            const bool grow = (side == 0) == firstGrows;
+            const float x = side == 0 ? p.x : p.x + 56;
+            ImGui::SetCursorScreenPos({x, p.y});
+            if (ImGui::InvisibleButton(side == 0 ? "##first" : "##second", {26, 26})) later_ = [this, edge, grow] { nudge(edge, grow); };
+            if (ImGui::IsItemHovered()) {
+                draw->AddRectFilled({x, p.y}, {x + 26, p.y + 26}, theme::bg4, 6, side == 0 ? ImDrawFlags_RoundCornersLeft : ImDrawFlags_RoundCornersRight);
+                ImGui::SetTooltip("%s 경계를 %s으로 1픽셀", edgeNames[edge], grow ? "바깥" : "안");
+            }
+            const theme::Icon arrow = vertical ? (side == 0 ? theme::Icon::Up : theme::Icon::Down) : (side == 0 ? theme::Icon::Left : theme::Icon::Right);
+            theme::icon(draw, arrow, {x + 13, p.y + 13}, 11, theme::text2);
+        }
         ImGui::PopID();
-        draw->AddLine({p.x + 9, p.y + 13}, {p.x + 17, p.y + 13}, theme::text2, 1.5f);
-        draw->AddLine({p.x + 65, p.y + 13}, {p.x + 73, p.y + 13}, theme::text2, 1.5f); draw->AddLine({p.x + 69, p.y + 9}, {p.x + 69, p.y + 17}, theme::text2, 1.5f);
         char value[16]; std::snprintf(value, sizeof value, "%+d", offsets[edge]);
         const std::string shown = offsets[edge] ? value : "0";
         theme::write(draw, {p.x + 41 - theme::extent(shown, theme::caption, theme::mono).x / 2, p.y + 5}, offsets[edge] ? theme::selected : theme::text, shown, theme::caption, theme::mono);

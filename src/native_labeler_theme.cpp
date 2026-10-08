@@ -103,6 +103,7 @@ void icon(ImDrawList* draw, Icon kind, ImVec2 c, float size, ImU32 color) {
     case Icon::Left: path({at(.16f, -.36f), at(-.2f, 0), at(.16f, .36f)}, false); break;
     case Icon::Right: path({at(-.16f, -.36f), at(.2f, 0), at(-.16f, .36f)}, false); break;
     case Icon::Down: path({at(-.36f, -.16f), at(0, .2f), at(.36f, -.16f)}, false); break;
+    case Icon::Up: path({at(-.36f, .16f), at(0, -.2f), at(.36f, .16f)}, false); break;
     case Icon::Clock: draw->AddCircle(c, h, color, 0, w); path({at(0, -.26f), at(0, 0), at(.2f, .12f)}, false); break;
     case Icon::Folder: path({at(-.48f, -.3f), at(-.14f, -.3f), at(0, -.16f), at(.48f, -.16f), at(.48f, .36f), at(-.48f, .36f)}, true); break;
     case Icon::Refresh: draw->PathArcTo(c, size * .38f, -.5f, 4.4f); draw->PathStroke(color, 0, w); path({at(.46f, -.48f), at(.46f, -.14f), at(.12f, -.14f)}, false); break;
