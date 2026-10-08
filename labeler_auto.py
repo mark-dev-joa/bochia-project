@@ -21,7 +21,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from labeler_assist import BallAssist, decode_mask, encode_mask, overlap
+from labeler_assist import BallAssist, ball_color, decode_mask, encode_mask, overlap
 
 
 def seed_bbox(seed, width, height):
@@ -226,6 +226,10 @@ class AutoLabelJob:
                         if "segmentation" in box:
                             next_previous.append({"box": box, "seed": seed, "patch": patch, "anchor": anchor})
                     previous = next_previous
+                    if stream["kind"] == "컬러":   # the colour camera also says which ball it is
+                        for box in boxes:
+                            if "segmentation" in box:
+                                box["color"] = ball_color(image, decode_mask(box["segmentation"], width, height))
                     boxes = validate_boxes(boxes, width, height)
                     pending.append((key, {"recording": recording, "camera": camera, "index": index,
                         "width": width, "height": height, "boxes": boxes, "reviewed": False, "human_touched": False,

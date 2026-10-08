@@ -215,7 +215,7 @@ def validate_boxes(boxes: list, width: int, height: int) -> list[dict]:
             # Detection edge corrections are independent of the segmentation mask.
             item["detection_bbox"] = validate_boxes([{"bbox": box["detection_bbox"]}], width, height)[0]["bbox"]
         color = box.get("color", "unknown")
-        if color not in ("unknown", "red", "blue", "white"):
+        if color not in ("unknown", "red", "blue", "white", "black"):
             raise ValueError("공 색상 속성이 올바르지 않습니다.")
         if color != "unknown":
             item["color"] = color
@@ -555,6 +555,9 @@ class Handler(BaseHTTPRequestHandler):
                 from labeler_native import thumbnail
                 self.respond(200, thumbnail(project, query["recording"][0], query["camera"][0], int(query["index"][0]),
                                             int(query.get("width", [128])[0])), "image/jpeg")
+            elif parsed.path == "/api/native/color-fill":
+                from labeler_native import color_fill_status
+                self.json_response(color_fill_status(project))
             elif parsed.path == "/api/native/exports":
                 from labeler_native import export_history
                 self.json_response({"exports": export_history(project)})

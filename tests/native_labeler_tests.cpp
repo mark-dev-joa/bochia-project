@@ -96,7 +96,7 @@ int main(int argc,char** argv){try{
     Json boundary={{"bbox",{0,0,1,1}}};for(int edge=0;edge<4;++edge)check(!nudgeEdge(boundary,edge,false,13,9),"subpixel box accepted");check(!nudgeEdge(boundary,0,true,13,9),"top image edge overflow");check(!nudgeEdge(boundary,2,true,13,9),"left image edge overflow");
     mask.at<uchar>(1,4)=1;auto changed=maskAnnotation(mask,box,"manual_brush");check(!changed.contains("detection_bbox"),"mask edit retained stale correction");check(changed["area"]==25,"brush mask area wrong");
     if(argc>1){
-        Client client(std::stoi(argv[1]));auto catalog=client.get("/api/native/catalog");check(catalog["api_version"]==3,"native catalog incompatible");
+        Client client(std::stoi(argv[1]));auto catalog=client.get("/api/native/catalog");check(catalog["api_version"]==4,"native catalog incompatible");
         auto found=std::find_if(catalog["scenes"].begin(),catalog["scenes"].end(),[](const Json& scene){return scene.value("recording_number",0)==5&&scene.value("index",-1)==0;});check(found!=catalog["scenes"].end(),"test scene absent");
         auto member=(*found)["members"][0];auto query=Client::frameQuery(member,(*found)["recording"].get<std::string>());auto frame=client.get("/api/frame"+query);auto original=frame;
         check(!frame["boxes"].empty(),"test ball absent");check(!client.image(member,(*found)["recording"].get<std::string>()).empty(),"native image decode failed");

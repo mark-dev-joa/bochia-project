@@ -10,6 +10,10 @@
 namespace boccia::labeler {
 namespace {
 std::string padded(int value, int width) { auto text = std::to_string(value); return std::string(size_t(std::max(0, width - int(text.size()))), '0') + text; }
+// The ball colour the colour camera saw, as a swatch; 0 when unknown.
+ImU32 colorSwatch(const std::string& color) {
+    return color == "red" ? theme::rgb(0xe03b3b) : color == "blue" ? theme::rgb(0x3b6fe0) : color == "white" ? theme::rgb(0xf2f2f2) : color == "black" ? theme::rgb(0x1a1a1a) : 0;
+}
 const char* sourceTag(const Json& box) {
     const auto source = box.value("source", "manual");
     return source == "auto_sam" || source == "efficientsam" ? "SAM" : source == "auto_tracking" || source == "tracking" ? "추적" : source == "circle" || source == "auto_geometry" ? "원형" : "수동";
@@ -729,6 +733,7 @@ void Application::sidePanel() {
             const std::string name = "공 " + number;
             theme::write(list, {p.x + 34, p.y + 7}, theme::text, name, theme::sub);
             float tx = p.x + 42 + theme::extent(name, theme::sub).x;
+            if (const ImU32 swatch = colorSwatch(boxes[ball].value("color", "unknown"))) { list->AddCircleFilled({tx + 5, p.y + 15}, 5, swatch); list->AddCircle({tx + 5, p.y + 15}, 5, theme::line2); tx += 16; }
             const std::string dimensions = sizeText(detectionBox(boxes[ball]));
             theme::write(list, {tx, p.y + 8}, theme::text3, dimensions, theme::caption, theme::mono); tx += theme::extent(dimensions, theme::caption, theme::mono).x + 8;
             if (boxes[ball].contains("detection_bbox")) { theme::write(list, {tx, p.y + 9}, theme::accent, "보정", 11); tx += theme::extent("보정", 11).x + 6; }
@@ -766,12 +771,12 @@ void Application::sidePanel() {
         if (theme::toggle("##occluded", &occluded) && !pending() && !busy()) { checkpoint(); box["occluded"] = occluded; changed(); }
         y += 30;
         if (frame.member.value("kind", "") == "컬러") {
-            static const char* colors[] = {"미지정", "빨강", "파랑", "흰색"}; static const char* values[] = {"unknown", "red", "blue", "white"};
-            int color = 0; for (int i = 0; i < 4; ++i) if (box.value("color", "unknown") == values[i]) color = i;
+            static const char* colors[] = {"미지정", "빨강", "파랑", "흰색", "검정"}; static const char* values[] = {"unknown", "red", "blue", "white", "black"};
+            int color = 0; for (int i = 0; i < 5; ++i) if (box.value("color", "unknown") == values[i]) color = i;
             theme::write(list, {x, base.y + y + 5}, theme::text2, "색상 (선택 사항)", theme::caption);
             ImGui::PushFont(nullptr, theme::px(theme::caption)); ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {8, 4});
             ImGui::SetCursorScreenPos({x + width - 110, base.y + y}); ImGui::SetNextItemWidth(110);
-            if (ImGui::Combo("##color", &color, colors, 4) && !pending() && !busy()) { checkpoint(); box["color"] = values[color]; changed(); }
+            if (ImGui::Combo("##color", &color, colors, 5) && !pending() && !busy()) { checkpoint(); box["color"] = values[color]; changed(); }
             ImGui::PopStyleVar(); ImGui::PopFont();
             y += 32;
         }

@@ -242,6 +242,26 @@ void Application::preparePage() {
         if (growth.is_object()) box.text("넓힘 " + std::to_string(growth.value("pixels", 0)) + "px · 공 " + grouped(growth.value("balls", 0)) + "개 · " + growth.value("at", "").substr(0, 10));
         sy = box.close();
     }
+    {
+        SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "공 색상 (컬러 카메라)");
+        const auto fill = catalog_.value("color_fill", Json());
+        const bool coloring = colorStatus_.value("status", "") == "running";
+        const int remaining = catalog_.value("colorable", 0);
+        if (coloring) {
+            box.text("채우는 중 · " + grouped(colorStatus_.value("done", 0)) + " / " + grouped(colorStatus_.value("total", 0)) + "장", theme::text);
+            progressBar(draw, {box.left(), box.y}, box.inner(), colorStatus_.value("done", 0), colorStatus_.value("total", 0), theme::accent); box.y += 14;
+        } else {
+            box.text(remaining ? "색상 없는 공 " + grouped(remaining) + "개" : "모든 공에 색상이 있습니다", theme::text);
+            ImGui::PushFont(nullptr, theme::px(theme::caption));
+            ImGui::SetCursorScreenPos({box.left(), box.y});
+            if (ImGui::Button("색상 자동 채우기", {box.inner(), 30}) && remaining) colorAsk_ = true;
+            ImGui::PopFont();
+            box.y += 36;
+        }
+        if (colorStatus_.value("status", "") == "error") box.text(colorStatus_.value("error", ""), theme::warn);
+        if (fill.is_object()) box.text("채움 · 공 " + grouped(fill.value("balls", 0)) + "개 · " + fill.value("at", "").substr(0, 10));
+        sy = box.close();
+    }
     if (!recordings.empty()) {
         SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "카메라");
         for (const auto& camera : recordings[0]["cameras"]) {

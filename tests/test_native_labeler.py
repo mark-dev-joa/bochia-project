@@ -130,6 +130,45 @@ class NativeWorkflowTests(unittest.TestCase):
         native_action(self.project, "review", request({**dict.fromkeys(keys, 0), key: 1}))
         self.assertTrue(self.project.state["frames"][key]["reviewed"])
 
+    def test_ball_color_from_the_colour_camera(self):
+        from labeler_assist import ball_color
+        mask = np.zeros((20, 20), np.uint8)
+        cv2.circle(mask, (10, 10), 8, 1, -1)
+        def patch_of(bgr):
+            image = np.full((20, 20, 3), (30, 40, 50), np.uint8)   # the floor
+            image[mask > 0] = bgr
+            return image
+        # Values measured on the 2026-10-02 recordings: red, white jack under warm light, black; blue is the expected hue.
+        self.assertEqual(ball_color(patch_of((8, 12, 32)), mask), "red")
+        self.assertEqual(ball_color(patch_of((42, 58, 68)), mask), "white")
+        self.assertEqual(ball_color(patch_of((10, 11, 10)), mask), "black")
+        self.assertEqual(ball_color(patch_of((60, 22, 10)), mask), "blue")
+        self.assertEqual(ball_color(np.zeros((20, 20), np.uint8), mask), "unknown")
+
+    def test_colour_fill_runs_in_the_background_and_keeps_given_colours(self):
+        from unittest.mock import patch
+        self.catalog.camera(self.ids[0], "camera-0")["kind"] = "컬러"
+        mask = np.zeros((6, 8), np.uint8)
+        mask[1:5, 1:5] = 1
+        red = {"bbox": [1, 1, 4, 4], "segmentation": encode_mask(mask), "occluded": False, "source": "auto_sam"}
+        key = f"{self.ids[0]}/camera-0/0"
+        self.project.state["frames"][key] = {"recording": self.ids[0], "camera": "camera-0", "index": 0, "width": 8, "height": 6,
+                                             "boxes": [copy.deepcopy(red), {**copy.deepcopy(red), "color": "white"}], "reviewed": False, "human_touched": False}
+        image = np.full((6, 8, 3), (30, 40, 50), np.uint8)
+        image[mask > 0] = (8, 12, 32)
+        self.assertEqual(native_catalog(self.project)["colorable"], 1)
+        with patch.object(self.project.catalog, "read", return_value=image):
+            native_action(self.project, "fill-colors", {})
+            deadline = time.monotonic() + 5
+            from labeler_native import color_fill_status
+            while color_fill_status(self.project)["status"] == "running" and time.monotonic() < deadline:
+                time.sleep(.01)
+        self.assertEqual(color_fill_status(self.project)["status"], "complete", color_fill_status(self.project))
+        boxes = self.project.state["frames"][key]["boxes"]
+        self.assertEqual([box["color"] for box in boxes], ["red", "white"])
+        self.assertEqual(native_catalog(self.project)["colorable"], 0)
+        self.assertEqual(native_catalog(self.project)["color_fill"]["balls"], 1)
+
     def test_grow_masks_widens_draft_masks_and_leaves_human_work(self):
         mask = np.zeros((6, 8), np.uint8)
         mask[2:4, 3:5] = 1
@@ -258,7 +297,7 @@ class NativeWorkflowTests(unittest.TestCase):
         try:
             with urlopen(base + "/api/native/catalog") as response:
                 value = json.load(response)
-            self.assertEqual(value["api_version"], 3)
+            self.assertEqual(value["api_version"], 4)
             self.assertEqual(value["target_images"], 18)
             keys = [member["key"] for member in value["scenes"][0]["members"]]
             body = json.dumps({"keys": keys, "expected_revision": 0}).encode()

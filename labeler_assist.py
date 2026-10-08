@@ -22,6 +22,34 @@ def encode_mask(mask: np.ndarray) -> dict:
     return {"size": list(mask.shape), "counts": counts}
 
 
+BALL_COLORS = ("red", "blue", "white", "black")
+
+
+def ball_color(image: np.ndarray, mask: np.ndarray) -> str:
+    """Red, blue, white or black from the pixels inside the mask of a colour image; unknown for a mono image.
+
+    Thresholds come from the 2026-10-02 recordings, which are dim under warm light: a red ball has hue 5-6 and
+    saturation about 190, the white jack hue 18 (the warm cast) and saturation about 100 at value 65, a black ball
+    value about 11. Hue is OpenCV's 0-179.
+    """
+    if image.ndim != 3:
+        return "unknown"
+    inner = cv2.erode(mask.astype(np.uint8), np.ones((5, 5), np.uint8))   # the edge pixels mix with the floor
+    if inner.sum() < 20:
+        inner = mask.astype(np.uint8)
+    pixels = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)[inner > 0]
+    if len(pixels) < 10:
+        return "unknown"
+    saturated = pixels[pixels[:, 1] > 120]
+    if len(saturated) >= len(pixels) * .4:
+        hue = int(np.bincount(saturated[:, 0], minlength=180).argmax())
+        if hue < 12 or hue > 165:
+            return "red"
+        if 95 <= hue <= 135:
+            return "blue"
+    return "black" if float(np.median(pixels[:, 2])) < 22 else "white"
+
+
 def decode_mask(rle: dict, width: int, height: int) -> np.ndarray:
     if not isinstance(rle, dict) or rle.get("size") != [height, width]:
         raise ValueError("분할 마스크의 크기가 원본과 다릅니다.")

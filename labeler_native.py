@@ -8,12 +8,13 @@ import copy
 import hashlib
 import json
 import sys
+import threading
 from datetime import datetime, timezone
 
 import cv2
 import numpy as np
 
-from labeler_assist import decode_mask, encode_mask
+from labeler_assist import ball_color, decode_mask, encode_mask
 
 
 def scene_index(catalog):
@@ -145,6 +146,65 @@ def export_history(project):
     return entries
 
 
+def colorable(project):
+    """Balls of the colour camera with a mask and no colour yet."""
+    return sum("segmentation" in box and box.get("color", "unknown") == "unknown"
+               for frame in project.state["frames"].values() if project.catalog.camera(frame["recording"], frame["camera"])["kind"] == "컬러"
+               for box in frame["boxes"])
+
+
+def color_fill_status(project):
+    with project.lock:
+        return dict(project.__dict__.get("color_job", {"status": "idle"}))
+
+
+def start_color_fill(project):
+    """Fills the colour of every colour-camera ball that has none, reading each image once in the background.
+
+    The colours are decided outside the lock and written in one revision at the end; a ball that got a colour
+    meanwhile, or an image whose balls changed, is left alone.
+    """
+    with project.lock:
+        job = project.__dict__.setdefault("color_job", {"status": "idle"})
+        if job.get("status") == "running":
+            raise ValueError("이미 색상을 채우는 중입니다.")
+        targets = [(key, copy.deepcopy(frame)) for key, frame in project.state["frames"].items()
+                   if project.catalog.camera(frame["recording"], frame["camera"])["kind"] == "컬러"
+                   and any("segmentation" in box and box.get("color", "unknown") == "unknown" for box in frame["boxes"])]
+        job.clear()
+        job.update(status="running", done=0, total=len(targets), filled=0)
+
+    def run():
+        try:
+            results = {}
+            for number, (key, frame) in enumerate(targets, 1):
+                image = project.catalog.read(frame["recording"], frame["camera"], frame["index"])
+                results[key] = [ball_color(image, decode_mask(box["segmentation"], frame["width"], frame["height"]))
+                                if "segmentation" in box and box.get("color", "unknown") == "unknown" else None for box in frame["boxes"]]
+                with project.lock:
+                    job["done"] = number
+            with project.lock:
+                def apply(state):
+                    for key, colors in results.items():
+                        frame = state["frames"].get(key)
+                        if not frame or len(frame["boxes"]) != len(colors):
+                            continue
+                        for box, color in zip(frame["boxes"], colors):
+                            if color and color != "unknown" and box.get("color", "unknown") == "unknown":
+                                box["color"] = color
+                                job["filled"] += 1
+                    state["color_fill"] = {"balls": job["filled"], "at": datetime.now(timezone.utc).isoformat()}
+                    state.pop("native_split", None)
+                project.mutate(project.state["revision"], apply)
+                job["status"] = "complete"
+        except Exception as exc:
+            with project.lock:
+                job.update(status="error", error=str(exc))
+
+    threading.Thread(target=run, daemon=True).start()
+    return dict(job)
+
+
 def growable(project):
     """Images and masks that a mask-growing pass would touch: drafts nobody has worked on."""
     frames = balls = 0
@@ -172,13 +232,14 @@ def native_catalog(project):
                 if member["selected"]:
                     count += 1
                     reviewed += member["reviewed"]
-        # 3: adds growable and mask_growth with the grow-masks action. 2: stats, thumbnails, exports, fingerprint.
-        return {"api_version": 3, "source": str(project.catalog.source), "project_path": str(project.path),
+        # 4: colour fill (colorable, color_fill, fill-colors). 3: grow-masks. 2: stats, thumbnails, exports, fingerprint.
+        return {"api_version": 4, "source": str(project.catalog.source), "project_path": str(project.path),
                 "recordings": project.catalog.metadata(), "summary": summary, "scenes": scenes,
                 "target_images": count, "reviewed_target_images": reviewed,
                 # The batches outlive a confirmation: a label fix must not turn them back into single recordings.
                 "split_confirmed": split_valid(project), "groups": project.state.get("native_groups") or project.state.get("native_split", {}).get("groups", {}),
                 "stats": recording_stats(project), "growable": growable(project), "mask_growth": project.state.get("mask_growth"),
+                "colorable": colorable(project), "color_fill": project.state.get("color_fill"),
                 # The data version: set only while the confirmed split still matches the labels.
                 "fingerprint": project.state["native_split"]["fingerprint"] if split_valid(project) else None}
 
@@ -267,6 +328,8 @@ def native_action(project, action, payload):
                                          "fingerprint": fingerprint(project, state, groups)}
             summary = project.mutate(payload["expected_revision"], update)
             return {"summary": summary, "split_confirmed": True, "fingerprint": project.state["native_split"]["fingerprint"]}
+    if action == "fill-colors":
+        return start_color_fill(project)
     if action == "grow-masks":
         # The automatic draft stops short of the ball edge by about a pixel (measured 2026-10-08), the same way on
         # every ball; one pass moves every draft mask outward. Images a person has saved or confirmed are left alone.

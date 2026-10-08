@@ -69,7 +69,8 @@ private:
     using Thumbs = std::vector<std::pair<std::string, cv::Mat>>;
     Configuration config_;
     Client client_;
-    Json catalog_, groups_ = Json::object(), splits_ = Json::object(), autoStatus_ = Json::object(), exportStatus_ = Json::object(), exports_ = Json::array();
+    Json catalog_, groups_ = Json::object(), splits_ = Json::object(), autoStatus_ = Json::object(), exportStatus_ = Json::object(), exports_ = Json::array(),
+         colorStatus_ = Json::object();                          // the background colour fill
     std::vector<FrameView> frames_;
     std::future<JobResult> task_, ahead_;
     std::function<void(JobResult)> completion_;
@@ -95,7 +96,8 @@ private:
          listOpen_ = true, sideOpen_ = true, summaryOpen_ = true, // the collapsible panels
          backing_ = false,                                       // the next scene load comes from the back button
          shortcutsWanted_ = false,                               // open the shortcut list on the next frame
-         growAsk_ = false;                                       // the grow-masks dialog is open
+         growAsk_ = false,                                       // the grow-masks dialog is open
+         colorAsk_ = false;                                      // the fill-colours dialog is open
     float brightness_ = 1.65f, brushSize_ = 6, radius_ = 16;
     Json proposal_;
     cv::Mat brushMask_;
@@ -142,6 +144,8 @@ private:
     void confirmRemoval();                           // the dialog behind pendingRemove_
     void confirmGrowth();                            // the dialog behind growAsk_
     void growMasks(int pixels);
+    void confirmColors();                            // the dialog behind colorAsk_
+    void fillColors();
     void segment(cv::Point2d point, bool negative);
     void segmentBox(cv::Rect2d box);
     void polygonProposal();

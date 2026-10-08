@@ -89,11 +89,21 @@ void* Client::startServer(int port, const std::filesystem::path& source, const s
     if (redirected) { startup.lpAttributeList = attributes; startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES; startup.StartupInfo.hStdInput = input; startup.StartupInfo.hStdOutput = log; startup.StartupInfo.hStdError = log; }
     else startup.StartupInfo.cb = sizeof(STARTUPINFOW);
     SetEnvironmentVariableW(L"PYTHONIOENCODING", L"utf-8");   // the child inherits it, so the log can be read back as UTF-8
-    const BOOL started = CreateProcessW(nullptr, command.data(), nullptr, nullptr, redirected, CREATE_NO_WINDOW | (redirected ? EXTENDED_STARTUPINFO_PRESENT : 0), nullptr, workspace.c_str(), &startup.StartupInfo, &process);
+    // The engine lives and dies with this program: it joins a job object that ends its members when the last handle to
+    // the job closes, which happens when this process ends in any way. An engine another program started is not touched.
+    static const HANDLE job = [] {
+        const HANDLE created = CreateJobObjectW(nullptr, nullptr);
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{}; limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (created) SetInformationJobObject(created, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
+        return created;
+    }();
+    const BOOL started = CreateProcessW(nullptr, command.data(), nullptr, nullptr, redirected, CREATE_NO_WINDOW | CREATE_SUSPENDED | (redirected ? EXTENDED_STARTUPINFO_PRESENT : 0), nullptr, workspace.c_str(), &startup.StartupInfo, &process);
     if (listed) DeleteProcThreadAttributeList(attributes);
     if (log != INVALID_HANDLE_VALUE) CloseHandle(log);
     if (input != INVALID_HANDLE_VALUE) CloseHandle(input);
     if (!started) throw std::runtime_error("로컬 분할·저장 엔진을 실행하지 못했습니다.");
+    if (job) AssignProcessToJobObject(job, process.hProcess);   // before it runs, so the processes it starts are members too
+    ResumeThread(process.hThread);
     CloseHandle(process.hThread);
     return process.hProcess;
 }

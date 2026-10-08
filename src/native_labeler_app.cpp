@@ -84,7 +84,7 @@ void Application::connect() {
             throw std::runtime_error("이 포트는 다른 프로젝트를 사용 중입니다. 별도 --port와 --project를 지정하세요.");
         auto catalog=client.get("/api/native/catalog");
         // The engine keeps running after the app closes, so an older one may still own the port.
-        if(catalog.value("api_version",0)<3)throw std::runtime_error("실행 중인 라벨 엔진이 이전 버전입니다. 포트 "+std::to_string(config.port)+"의 엔진(python ball_labeler.py)을 종료한 뒤 앱을 다시 실행하세요.");
+        if(catalog.value("api_version",0)<4)throw std::runtime_error("실행 중인 라벨 엔진이 이전 버전입니다. 포트 "+std::to_string(config.port)+"의 엔진(python ball_labeler.py)을 종료한 뒤 앱을 다시 실행하세요.");
         return JobResult{{{"catalog",std::move(catalog)},{"auto",client.get("/api/auto-status")},{"assist",client.get("/api/assist-status")}}, {}};
     }, [this](JobResult result){ updateCatalog(result.data.at("catalog")); autoStatus_=result.data.at("auto"); message_="기존 촬영과 라벨 연결 완료"; restorePosition(); });
 }
@@ -265,6 +265,34 @@ void Application::growMasks(int pixels){
         if(!frames_.empty())loadScene(scene_,editor_,camera_,message_);
     });
 }
+// Fills the colour of every colour-camera ball that has none. The engine reads the images in the background.
+void Application::confirmColors(){
+    if(!colorAsk_)return;
+    if(!ImGui::IsPopupOpen("##fill-colors"))ImGui::OpenPopup("##fill-colors");
+    const auto viewport=ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({viewport->WorkPos.x+viewport->WorkSize.x/2,viewport->WorkPos.y+viewport->WorkSize.y/2},ImGuiCond_Appearing,{.5f,.5f});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{22,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,10});
+    if(ImGui::BeginPopupModal("##fill-colors",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
+        ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted("컬러 공 색상 채우기");ImGui::PopFont();
+        ImGui::Text("컬러 카메라의 공 %s개에 빨강·파랑·흰색·검정을 자동으로 넣습니다.",grouped(catalog_.value("colorable",0)).c_str());
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"이미 색상이 있는 공은 그대로 둡니다. 이미지를 모두 읽으므로 몇 분 걸리고, 그동안 계속 작업할 수 있습니다.");ImGui::PopFont();
+        ImGui::Dummy({0,4});
+        bool close=false;
+        ImGui::PushFont(theme::bold,theme::px(theme::base));
+        if(theme::primaryButton("채우기  Enter",{140,34})||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{fillColors();};close=true;}
+        ImGui::PopFont();ImGui::SameLine();
+        if(ImGui::Button("취소  Esc",{110,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
+        if(close){colorAsk_=false;ImGui::CloseCurrentPopup();}
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(2);
+}
+void Application::fillColors(){
+    if(!guard())return;
+    if(!frames_.empty()&&current().dirty){save([this]{fillColors();});return;}
+    const auto client=client_;
+    launch("색상 채우기 시작",[client]{return JobResult{client.post("/api/native/fill-colors",Json::object()),{}};},[this](JobResult result){colorStatus_=result.data;message_="색상을 채우는 중입니다. 끝나면 알려 드립니다.";});
+}
 // Asked from a crop or the ball list, where a click must not delete by itself.
 void Application::confirmRemoval(){
     if(pendingRemove_.camera<0)return;
@@ -366,12 +394,14 @@ void Application::tick(){
     }
     pumpThumbs();prefetch();
     if(ready()&&!busy()&&!pending()&&current().dirty&&Clock::now()-changed_>std::chrono::milliseconds(450)&&error_.empty())save();
-    const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running";
+    const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running"||colorStatus_.value("status","")=="running";
     if(activeJob&&ready()&&!busy()&&Clock::now()-poll_>std::chrono::seconds(3)&&error_.empty()&&!current().dirty&&!pending()){
         poll_=Clock::now();const auto client=client_;
-        launch("작업 상태 확인",[client]{return JobResult{{{"auto",client.get("/api/auto-status")},{"export",client.get("/api/export-status")},{"catalog",client.get("/api/native/catalog")}}, {}};},[this](JobResult result){
+        launch("작업 상태 확인",[client]{return JobResult{{{"auto",client.get("/api/auto-status")},{"export",client.get("/api/export-status")},{"color",client.get("/api/native/color-fill")},{"catalog",client.get("/api/native/catalog")}}, {}};},[this](JobResult result){
             const auto oldRevision=catalog_["summary"].value("revision",0),oldAuto=catalog_["summary"].value("auto_revision",0);const bool exporting=exportStatus_.value("status","")=="running";
-            autoStatus_=result.data["auto"];exportStatus_=result.data["export"];updateCatalog(result.data["catalog"]);
+            const bool coloring=colorStatus_.value("status","")=="running";
+            autoStatus_=result.data["auto"];exportStatus_=result.data["export"];colorStatus_=result.data["color"];updateCatalog(result.data["catalog"]);
+            if(coloring&&colorStatus_.value("status","")!="running"){message_=colorStatus_.value("status","")=="complete"?"공 "+grouped(colorStatus_.value("filled",0))+"개의 색상을 채웠습니다.":"색상 채우기가 실패했습니다.";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
             if(oldRevision!=catalog_["summary"].value("revision",0)||oldAuto!=catalog_["summary"].value("auto_revision",0)){if(page_==Page::Review)loadScene(scene_,editor_,camera_);else stale_=true;}
             if(exporting&&exportStatus_.value("status","")!="running"){message_=exportStatus_.contains("error")?"내보내기가 실패했습니다. 내보내기 화면에서 원인을 확인하세요.":"내보내기를 마쳤습니다.";refreshStage();}
         });
@@ -500,12 +530,12 @@ bool Application::stageCheckStep(int step) {
 // The stage pages show per-recording counts that only the full catalog carries.
 void Application::refreshStage(){
     if(busy())return;const auto client=client_;
-    launch("현황 새로 읽기",[client]{return JobResult{{{"catalog",client.get("/api/native/catalog")},{"exports",client.get("/api/native/exports")},{"export",client.get("/api/export-status")},{"auto",client.get("/api/auto-status")}},{}};},
+    launch("현황 새로 읽기",[client]{return JobResult{{{"catalog",client.get("/api/native/catalog")},{"exports",client.get("/api/native/exports")},{"export",client.get("/api/export-status")},{"auto",client.get("/api/auto-status")},{"color",client.get("/api/native/color-fill")}},{}};},
         [this](JobResult result){
             const auto revision=catalog_["summary"].value("revision",0),automatic=catalog_["summary"].value("auto_revision",0);
             updateCatalog(result.data["catalog"]);
             if(revision!=catalog_["summary"].value("revision",0)||automatic!=catalog_["summary"].value("auto_revision",0))stale_=true;
-            exports_=result.data["exports"].value("exports",Json::array());exportStatus_=result.data["export"];autoStatus_=result.data["auto"];
+            exports_=result.data["exports"].value("exports",Json::array());exportStatus_=result.data["export"];autoStatus_=result.data["auto"];colorStatus_=result.data["color"];
             // Nothing assigned yet: show the plan the engine would make, so the split page never opens empty.
             const bool unassigned=std::all_of(splits_.begin(),splits_.end(),[](const Json& split){return split.get<std::string>()=="unassigned";});
             if(page_==Page::Split&&unassigned&&!splits_.empty())proposeSplit();
@@ -513,7 +543,7 @@ void Application::refreshStage(){
 }
 void Application::keys() {
     auto& io=ImGui::GetIO();
-    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||pendingRemove_.camera>=0||growAsk_)return;   // an open dialog owns the keys
+    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||pendingRemove_.camera>=0||growAsk_||colorAsk_)return;   // an open dialog owns the keys
     auto pressed=[](ImGuiKey key){return ImGui::IsKeyPressed(key,false);};
     if(pressed(ImGuiKey_Escape)){
         if(pending())cancel();
@@ -675,6 +705,7 @@ void Application::draw(){
     statusBar();
     confirmRemoval();
     confirmGrowth();
+    confirmColors();
     ImGui::PopStyleVar();
     ImGui::End();
     if(later_){auto action=std::move(later_);later_=nullptr;action();}
