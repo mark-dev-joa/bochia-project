@@ -161,6 +161,7 @@ private:
     void undo();
     void removeSelected();
     void removeBall(int slot, int ball);
+    void setOccluded(int slot, int ball, bool value);   // from the checkbox on a crop; that camera becomes current first
     void confirmGrowth();                            // the dialog behind growAsk_
     void growMasks(int pixels);
     void confirmColors();                            // the dialog behind colorAsk_

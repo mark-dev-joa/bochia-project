@@ -249,6 +249,15 @@ void Application::removeBall(int slot,int ball){
     checkpoint();objects.erase(objects.begin()+ball);selected_=-1;current().scale=0;current().repaint=true;changed();
     message_="공을 지웠습니다 · Ctrl+Z로 되돌릴 수 있습니다";   // no dialog: deletion is immediate (2026-10-08 user request)
 }
+// Marks a ball of any camera of the scene as partly hidden, or not, from the checkbox on its crop (2026-10-08 user
+// request: one click instead of selecting the ball and pressing O). Edits belong to the current camera, as for a deletion.
+void Application::setOccluded(int slot,int ball,bool value){
+    if(frames_.empty()||slot<0||slot>=int(frames_.size())||pending()||busy())return;
+    if(slot!=camera_&&current().dirty){save([this,slot,ball,value]{setOccluded(slot,ball,value);});return;}
+    camera_=slot;auto& objects=current().annotation["boxes"];if(ball<0||ball>=int(objects.size()))return;
+    if(objects[ball].value("occluded",false)==value)return;
+    checkpoint();objects[ball]["occluded"]=value;changed(false);message_=value?"일부 가림으로 표시했습니다":"일부 가림 표시를 지웠습니다";
+}
 // Grows every draft mask outward. The dialog says how many images and balls that touches; a person's work is left alone.
 void Application::confirmGrowth(){
     if(!growAsk_)return;

@@ -425,12 +425,17 @@ void Application::cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact) {
         ImGui::SetCursorScreenPos(a); ImGui::PushID(i);
         ImGui::SetNextItemAllowOverlap();   // the delete button sits in the corner of the crop
         const bool clicked = ImGui::InvisibleButton("##crop", {cell, cell + caption}), hovered = ImGui::IsItemHovered();
-        bool removing = false;
+        bool removing = false, marking = false;
         if (i < int(order.size()) && cell > 70) {
             ImGui::SetCursorScreenPos({b.x - 26, a.y + 4});
             const bool asked = ImGui::InvisibleButton("##remove", {22, 22});
             removing = ImGui::IsItemHovered();
             if (asked) later_ = [this, slot, ball = order[i]] { removeBall(slot, ball); };   // at once, no dialog
+            // Opposite the trash: the "partly hidden" checkbox, one click (2026-10-08 user request).
+            ImGui::SetCursorScreenPos({a.x + 4, a.y + 4});
+            const bool toggled = ImGui::InvisibleButton("##occluded", {22, 22});
+            marking = ImGui::IsItemHovered();
+            if (toggled) later_ = [this, slot, ball = order[i], value = !boxes[order[i]].value("occluded", false)] { setOccluded(slot, ball, value); };
         }
         ImGui::PopID();
         if (i >= int(order.size())) {
@@ -450,14 +455,23 @@ void Application::cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact) {
             draw->AddRectFilled({b.x - 26, a.y + 4}, {b.x - 4, a.y + 26}, theme::rgb(0x0d0f12, removing ? 235 : 150), 5);
             theme::icon(draw, theme::Icon::Trash, {b.x - 15, a.y + 15}, 12, removing ? theme::warn : hovered ? theme::text : theme::text2);
             if (removing) ImGui::SetTooltip("이 공 삭제");
+            const bool hidden = boxes[ball].value("occluded", false);
+            draw->AddRectFilled({a.x + 4, a.y + 4}, {a.x + 26, a.y + 26}, theme::rgb(0x0d0f12, marking ? 235 : 150), 5);
+            if (hidden) {
+                draw->AddRectFilled({a.x + 8, a.y + 8}, {a.x + 22, a.y + 22}, theme::hold, 3);
+                const ImVec2 tick[] = {{a.x + 10.5f, a.y + 15}, {a.x + 13.5f, a.y + 18.5f}, {a.x + 19.5f, a.y + 11.5f}};
+                draw->AddPolyline(tick, 3, theme::ink, 0, 2.f);
+            } else draw->AddRect({a.x + 8, a.y + 8}, {a.x + 22, a.y + 22}, marking ? theme::text : theme::text2, 3, 0, 1.5f);
+            if (marking) ImGui::SetTooltip(hidden ? "일부 가림 표시 지우기" : "일부 가림으로 표시 (선택한 공은 O)");
         }
-        // The colour camera's crop names the ball's colour in its corner, the same chip as the badge on the image.
+        // The colour camera's crop names the ball's colour next to the checkbox, the same chip as the badge on the image.
         if (const ImU32 swatch = frame.member.value("kind", "") == "컬러" ? colorSwatch(boxes[ball].value("color", "unknown")) : 0) {
-            const std::string name = cell > 70 ? colorName(boxes[ball].value("color", "unknown")) : "";
+            const float left = cell > 70 ? a.x + 30 : a.x + 4;
+            const std::string name = cell > 130 ? colorName(boxes[ball].value("color", "unknown")) : "";
             const float w = 20 + (name.empty() ? 0.f : theme::extent(name, 11).x + 5);
-            draw->AddRectFilled({a.x + 4, a.y + 4}, {a.x + 4 + w, a.y + 22}, theme::rgb(0x0d0f12, 210), 5);
-            colorDot(draw, {a.x + 14, a.y + 13}, swatch, 4);
-            if (!name.empty()) theme::write(draw, {a.x + 23, a.y + 6}, theme::text, name, 11);
+            draw->AddRectFilled({left, a.y + 4}, {left + w, a.y + 22}, theme::rgb(0x0d0f12, 210), 5);
+            colorDot(draw, {left + 10, a.y + 13}, swatch, 4);
+            if (!name.empty()) theme::write(draw, {left + 19, a.y + 6}, theme::text, name, 11);
         }
         const std::string number = std::to_string(i + 1);
         const float font = compact ? 11.f : theme::caption;
