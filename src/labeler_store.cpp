@@ -149,7 +149,6 @@ Json Project::mutateAutomatic(const std::function<void(Json&)>& callback) {
 }
 Json Project::frame(const std::string& recording, const std::string& camera, int index) const {
     const auto& info = catalog.frameInfo(recording, camera, index);
-    const auto& stream = catalog.camera(recording, camera);
     int width = info.width, height = info.height;
     cv::Mat image;
     if (info.isImage()) { image = catalog.read(recording, camera, index); width = image.cols; height = image.rows; }
@@ -161,19 +160,8 @@ Json Project::frame(const std::string& recording, const std::string& camera, int
         decisions = selection.view(state["frames"])["frames"];
         revision = state["revision"];
     }
-    // The colour camera says which ball it is: a masked ball without a colour gets one from its pixels whenever the
-    // frame is shown, and keeps it once the frame is saved or confirmed.
-    if (stream.kind == "컬러") for (auto& box : annotation["boxes"]) if (box.contains("segmentation") && box.value("color", "unknown") == "unknown") {
-        if (image.empty()) image = catalog.read(recording, camera, index);
-        const auto colour = ballColor(image, decodeMaskChecked(box["segmentation"], width, height));
-        if (colour != "unknown") box["color"] = colour;
-    }
-    // A ball not yet measured from the image is measured now (2026-10-08 user request: the box on screen is the circle's
-    // box), so what the screen shows is what a save or a confirmation stores. Hand-drawn or hand-corrected balls stay.
-    for (auto& box : annotation["boxes"]) if (refinable(box)) {
-        if (image.empty()) image = catalog.read(recording, camera, index);
-        refineBallBox(box, image);
-    }
+    // The frame as stored. The automatic passes (colours, circles) change labels only from the preparation page, so the
+    // review screen never reworks data on its own (2026-10-08: preparation and review are separate stages).
     for (auto& box : annotation["boxes"]) if (box.contains("segmentation")) box["contours"] = maskContours(decodeMaskChecked(box["segmentation"], width, height));
     Json result = {{"key", key}, {"recording", recording}, {"camera", camera}, {"index", index}, {"width", width}, {"height", height},
                    {"host_ns", info.hasHostNs ? std::to_string(info.hostNs) : std::to_string(index)}, {"revision", revision}};

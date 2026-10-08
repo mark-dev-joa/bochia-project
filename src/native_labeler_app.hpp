@@ -67,7 +67,7 @@ private:
         int cameras = 0;
         std::string thumb;
     };
-    struct Paint { bool fill = true, boxes = false, circles = false; int selected = -1, skip = -1; };
+    struct Paint { bool fill = true, boxes = false, circles = false, outlines = true; int selected = -1, skip = -1; };
     using Thumbs = std::vector<std::pair<std::string, cv::Mat>>;
     Configuration config_;
     std::shared_ptr<Engine> engine_;                             // the labels, the recordings and the models, in this process
@@ -91,7 +91,9 @@ private:
         aheadHits_ = 0;                                          // scenes shown from a fetch made ahead; the self-test reads it
     Page page_ = Page::Review;
     Tool tool_ = Tool::Select;
-    bool editor_ = false, masks_ = true, boxes_ = true, circles_ = true, representatives_ = true, crops_ = true, dragging_ = false,
+    bool editor_ = false, masks_ = true, boxes_ = true, circles_ = true, outlines_ = true, representatives_ = true, crops_ = true, dragging_ = false,
+         includeReviewed_ = true,                                // the refine dialog: confirmed images too
+         remeasure_ = false,                                     // the refine dialog: measure balls that have a circle again
          scrollToCurrent_ = false, rowsDirty_ = true, panning_ = false,
          stale_ = false,                                         // labels changed on the engine while another page was open
          aheadDirty_ = true,                                     // the scene to fetch ahead may have changed
@@ -102,7 +104,7 @@ private:
          growAsk_ = false,                                       // the grow-masks dialog is open
          colorAsk_ = false,                                      // the fill-colours dialog is open
          circleAsk_ = false;                                     // the refine-circles dialog is open
-    float brightness_ = 1.65f, brushSize_ = 6, radius_ = 16;
+    float brightness_ = 1.65f, brushSize_ = 6, radius_ = 16, circleMargin_ = .5f;
     int view_ = 0;                                               // how the frames are shown: original, contrast, gray, edges, gradient, edge overlay
     static constexpr int viewCount = 6;
     static const char* const viewNames[viewCount];
@@ -136,7 +138,8 @@ private:
     bool guard();
     void checkpoint();
     void changed(bool repaint = true);          // a box nudge leaves the mask overlay as it is
-    void save(std::function<void()> next = {});
+    void save(std::function<void()> next = {}, int slot = -1);   // slot -1: the current camera
+    int dirtySlot() const;                                        // a camera of the scene with unsaved edits, or -1
     void review(Scope scope, bool hold, int member = -1);
     void nextUnreviewed();
     void back();
@@ -155,7 +158,7 @@ private:
     void confirmColors();                            // the dialog behind colorAsk_
     void fillColors();
     void confirmCircles();                           // the dialog behind circleAsk_
-    void refineCircles(bool includeReviewed);
+    void refineCircles();
     void segment(cv::Point2d point, bool negative);
     void segmentBox(cv::Rect2d box);
     void polygonProposal();

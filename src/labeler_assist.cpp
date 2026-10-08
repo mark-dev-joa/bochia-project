@@ -196,10 +196,11 @@ CircleFit refineCircle(const cv::Mat& image, const cv::Mat& mask, int band, doub
     fit.ok = inliers >= 12 && fit.coverage >= .5 && std::abs(r - r0) <= .35 * r0 && std::hypot(cx - mx, cy - my) <= .5 * r0;
     return fit;
 }
-bool refinable(const Json& box) {
+bool refinable(const Json& box, bool remeasure) {
     const auto source = box.value("source", "manual");
     // A box corrected by hand (detection_bbox without a measured circle) is a decision a person made; it stays.
-    return box.contains("segmentation") && !box.value("occluded", false) && !box.contains("circle") && !box.contains("detection_bbox")
+    const bool handCorrected = box.contains("detection_bbox") && !box.contains("circle");
+    return box.contains("segmentation") && !box.value("occluded", false) && (remeasure || !box.contains("circle")) && !handCorrected
         && source != "manual" && source != "manual_brush" && source != "manual_polygon";
 }
 cv::Mat discMask(double x, double y, double r, int width, int height) {
@@ -209,10 +210,11 @@ cv::Mat discMask(double x, double y, double r, int width, int height) {
     for (int py = y0; py <= y1; ++py) for (int px = x0; px <= x1; ++px) if (std::hypot(px + .5 - x, py + .5 - y) <= r) disc.at<uchar>(py, px) = 1;
     return disc;
 }
-bool refineBallBox(Json& box, const cv::Mat& image) {
+bool refineBallBox(Json& box, const cv::Mat& image, double margin) {
     if (!box.contains("segmentation")) return false;
-    const CircleFit fit = refineCircle(image, decodeMaskChecked(box["segmentation"], image.cols, image.rows));
+    CircleFit fit = refineCircle(image, decodeMaskChecked(box["segmentation"], image.cols, image.rows));
     if (!fit.ok) return false;
+    fit.r = std::max(1.0, fit.r + margin);   // the rim margin: the gradient's peak lies a little inside the ball's outer edge
     auto round4 = [](double value) { return std::nearbyint(value * 10000) / 10000; };
     const double left = std::max(0.0, fit.x - fit.r), top = std::max(0.0, fit.y - fit.r);
     const double right = std::min(double(image.cols), fit.x + fit.r), bottom = std::min(double(image.rows), fit.y + fit.r);

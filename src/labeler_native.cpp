@@ -234,28 +234,32 @@ Json startColorFill(Project& project) {
     });
     return project.colorJob;
 }
-int circleable(const Project& project, bool includeReviewed) {
+int circleable(const Project& project, bool includeReviewed, bool remeasure) {
     int count = 0;
     for (const auto& [key, frame] : project.state["frames"].items()) {
         if (!includeReviewed && humanWork(frame)) continue;
-        for (const auto& box : frame["boxes"]) if (refinable(box)) ++count;
+        for (const auto& box : frame["boxes"]) if (refinable(box, remeasure)) ++count;
     }
     return count;
 }
 Json circleRefineStatus(const Project& project) { std::lock_guard guard(project.lock); return project.circleJob; }
-Json startCircleRefine(Project& project, bool includeReviewed) {
+double circleMargin(const Project& project) { std::lock_guard guard(project.lock); return project.state.value("circle_margin", defaultCircleMargin); }
+Json startCircleRefine(Project& project, bool includeReviewed, bool remeasure, double margin) {
     std::lock_guard guard(project.lock);
     if (project.circleJob.value("status", "") == "running") throw std::runtime_error("이미 둘레를 다듬는 중입니다.");
+    if (margin < -9) margin = circleMargin(project);
+    if (!std::isfinite(margin) || margin < -2 || margin > 3) throw std::runtime_error("둘레 여유는 -2에서 3픽셀 사이여야 합니다.");
+    margin = std::nearbyint(margin * 100) / 100;
     std::vector<std::pair<std::string, Json>> targets;
     for (const auto& [key, frame] : project.state["frames"].items()) {
-        if (!includeReviewed && humanWork(frame)) continue;   // by default a person's confirmed images stay as they were seen
+        if (!includeReviewed && humanWork(frame)) continue;   // a person's confirmed images only on request
         bool wanted = false;
-        for (const auto& box : frame["boxes"]) if (refinable(box)) wanted = true;
+        for (const auto& box : frame["boxes"]) if (refinable(box, remeasure)) wanted = true;
         if (wanted) targets.emplace_back(key, frame);
     }
-    project.circleJob = {{"status", "running"}, {"done", 0}, {"total", targets.size()}, {"balls", 0}, {"skipped", 0}};
+    project.circleJob = {{"status", "running"}, {"done", 0}, {"total", targets.size()}, {"balls", 0}, {"skipped", 0}, {"margin", margin}, {"remeasure", remeasure}};
     if (project.circleWorker.joinable()) project.circleWorker.join();
-    project.circleWorker = std::jthread([&project, targets = std::move(targets)](std::stop_token stop) {
+    project.circleWorker = std::jthread([&project, targets = std::move(targets), remeasure, margin](std::stop_token stop) {
         try {
             // Each ball's circle comes from its image outside the lock; the boxes are written at the end on the automatic
             // revision, and a ball whose mask changed meanwhile is left alone.
@@ -272,7 +276,7 @@ Json startCircleRefine(Project& project, bool includeReviewed) {
                         Json refined = Json::array();
                         for (const auto& box : frame["boxes"]) {
                             Json copy = box;
-                            refined.push_back(refinable(box) && refineBallBox(copy, image) ? Json{{"was", box["segmentation"]}, {"box", copy}} : Json());
+                            refined.push_back(refinable(box, remeasure) && refineBallBox(copy, image, margin) ? Json{{"was", box["segmentation"]}, {"box", copy}} : Json());
                         }
                         { std::lock_guard guard(resultsLock); results[key] = std::move(refined); }
                         { std::lock_guard guard(project.lock); project.circleJob["done"] = ++done; }
@@ -289,12 +293,13 @@ Json startCircleRefine(Project& project, bool includeReviewed) {
                     if (!state["frames"].contains(key) || state["frames"][key]["boxes"].size() != refined.size()) continue;
                     Json& boxes = state["frames"][key]["boxes"];
                     for (size_t i = 0; i < refined.size(); ++i) {
-                        if (refined[i].is_null()) { if (refinable(boxes[i])) ++skipped; continue; }
-                        if (!refinable(boxes[i]) || boxes[i]["segmentation"] != refined[i]["was"]) continue;
+                        if (refined[i].is_null()) { if (refinable(boxes[i], remeasure)) ++skipped; continue; }
+                        if (!refinable(boxes[i], remeasure) || boxes[i]["segmentation"] != refined[i]["was"]) continue;
                         boxes[i] = refined[i]["box"]; ++balls;
                     }
                 }
-                state["circle_refine"] = {{"balls", balls + (state.contains("circle_refine") && state["circle_refine"].is_object() ? state["circle_refine"].value("balls", 0) : 0)}, {"skipped", skipped}, {"at", utcIso()}};
+                state["circle_margin"] = margin;   // the margin the labels were measured with; proposals use it too
+                state["circle_refine"] = {{"balls", balls + (!remeasure && state.contains("circle_refine") && state["circle_refine"].is_object() ? state["circle_refine"].value("balls", 0) : 0)}, {"skipped", skipped}, {"margin", margin}, {"at", utcIso()}};
                 state.erase("native_split");
             });
             project.circleJob["balls"] = balls; project.circleJob["skipped"] = skipped; project.circleJob["status"] = "complete";
@@ -325,7 +330,8 @@ Json nativeCatalog(const Project& project) {
             {"target_images", count}, {"reviewed_target_images", reviewed}, {"split_confirmed", valid}, {"groups", groups},
             {"stats", recordingStats(project)}, {"growable", growable(project)}, {"mask_growth", project.state.value("mask_growth", Json())},
             {"colorable", colorable(project)}, {"color_fill", project.state.value("color_fill", Json())},
-            {"circleable", circleable(project)}, {"circleable_all", circleable(project, true)}, {"circle_refine", project.state.value("circle_refine", Json())},
+            {"circleable", circleable(project)}, {"circleable_all", circleable(project, true)}, {"circleable_remeasure", circleable(project, true, true)},
+            {"circle_margin", circleMargin(project)}, {"circle_refine", project.state.value("circle_refine", Json())},
             // The data version: set only while the confirmed split still matches the labels.
             {"fingerprint", valid ? project.state["native_split"]["fingerprint"] : Json()}};
 }
@@ -440,7 +446,7 @@ Json nativeAction(Project& project, const std::string& action, const Json& paylo
         return {{"summary", summary}, {"split_confirmed", true}, {"fingerprint", project.state["native_split"]["fingerprint"]}};
     }
     if (action == "fill-colors") return startColorFill(project);
-    if (action == "refine-circles") return startCircleRefine(project, payload.value("include_reviewed", false));
+    if (action == "refine-circles") return startCircleRefine(project, payload.value("include_reviewed", false), payload.value("remeasure", false), payload.value("margin", -10.0));
     if (action == "grow-masks") {
         // The automatic draft stops short of the ball edge by about a pixel (measured 2026-10-08), the same way on
         // every ball; one pass moves every draft mask outward. Images a person has saved or confirmed are left alone.
@@ -500,7 +506,7 @@ Json assistance(const Project& project, BallAssist& assist, const std::string& m
         try { box = assist.segment(image, project.catalog.signature + "/" + frame["key"].get<std::string>(), payload.at("points"), payload.value("radius", Json(14)), payload.value("box", Json())); }
         catch (const std::runtime_error&) { throw; }
         catch (const std::exception& error) { throw std::runtime_error(std::string("분할 실행에 실패했습니다: ") + std::string(error.what()).substr(0, 240)); }
-        refineBallBox(box, image);   // the box from the image's own edge, not from the mask's pixels
+        refineBallBox(box, image, circleMargin(project));   // the box from the image's own edge, with the project's rim margin
         return {{"key", frame["key"]}, {"proposals", Json::array({coloured(box, image)})}};
     }
     if (method == "circles") {

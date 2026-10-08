@@ -17,9 +17,11 @@ int colorable(const Project& project);       // colour-camera balls with a mask 
 Json growable(const Project& project);       // {"frames", "balls"} a mask-growing pass would touch
 Json colorFillStatus(const Project& project);
 Json startColorFill(Project& project);       // fills colours in the background; one revision at the end
-int circleable(const Project& project, bool includeReviewed = false);   // masked balls the Canny circle has not measured yet
+int circleable(const Project& project, bool includeReviewed = false, bool remeasure = false);   // masked balls the Canny circle can measure (again)
 Json circleRefineStatus(const Project& project);
-Json startCircleRefine(Project& project, bool includeReviewed = false);  // measures every such ball's circle in the background
+double circleMargin(const Project& project);                                                    // the project's rim margin
+// Measures every such ball's circle in the background; margin < -9 keeps the project's margin.
+Json startCircleRefine(Project& project, bool includeReviewed = false, bool remeasure = false, double margin = -10);
 Json nativeCatalog(const Project& project);
 std::pair<Json, Json> groupPlan(const Project& project, const Json& groups);   // splits per recording, target counts
 Json nativeAction(Project& project, const std::string& action, const Json& payload);

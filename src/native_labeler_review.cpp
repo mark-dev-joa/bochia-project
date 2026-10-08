@@ -244,7 +244,7 @@ void Application::paintMarks(FrameView& frame, const std::function<ImVec2(double
         if (i == paint.skip) continue;
         const bool active = i == paint.selected;
         const ImU32 color = active ? theme::selected : theme::mask;
-        if (i < int(frame.contours.size())) for (const auto& contour : frame.contours[i]) {
+        if (paint.outlines && i < int(frame.contours.size())) for (const auto& contour : frame.contours[i]) {
             if (contour.size() < 3) continue;
             std::vector<ImVec2> points; points.reserve(contour.size());
             for (const auto& p : contour) points.push_back(at(p.x + .5, p.y + .5));
@@ -263,7 +263,7 @@ void Application::paintMarks(FrameView& frame, const std::function<ImVec2(double
             const double x = tight[0].get<double>(), y = tight[1].get<double>();
             dashedRect(draw, at(x, y), at(x + tight[2].get<double>(), y + tight[3].get<double>()), theme::mask);
         }
-        if (paint.boxes || active || corrected || boxOnly) {
+        if (paint.boxes || active || boxOnly) {   // a measured or corrected box follows the toggle like any other
             draw->AddRect(at(r.x, r.y), at(r.x + r.width, r.y + r.height), IM_COL32(0, 0, 0, 150), 0, 0, 3);
             draw->AddRect(at(r.x, r.y), at(r.x + r.width, r.y + r.height), boxOnly && !active ? theme::mask : IM_COL32_WHITE, 0, 0, 1);
         }
@@ -279,7 +279,7 @@ void Application::paintImage(FrameView& frame, ImVec2 a, ImVec2 b, cv::Rect2d re
     const double scale = (b.x - a.x) / region.width;
     draw->PushClipRect(a, b, true);
     draw->AddImage(ImTextureRef(ImTextureID(frame.texture)), a, b, uv0, uv1);
-    if (paint.fill && masks_) draw->AddImage(ImTextureRef(ImTextureID(frame.overlay)), a, b, uv0, uv1);
+    if (paint.fill && masks_ && outlines_) draw->AddImage(ImTextureRef(ImTextureID(frame.overlay)), a, b, uv0, uv1);
     paintMarks(frame, [&](double x, double y) { return ImVec2{a.x + float((x - region.x) * scale), a.y + float((y - region.y) * scale)}; }, paint);
     draw->PopClipRect();
 }
@@ -338,6 +338,7 @@ void Application::sceneBar(ImVec2 pos, float width) {
     option("원", circles_);
     option("박스", boxes_);
     option("마스크 채움", masks_);
+    option("윤곽", outlines_);
     // How the frames are shown: the original, or an intermediate of the image processing (I cycles).
     right -= 122;
     ImGui::SetCursorScreenPos({right, pos.y + 8}); ImGui::SetNextItemWidth(108);
@@ -385,7 +386,7 @@ void Application::viewImage(int slot, ImVec2 a, ImVec2 b, bool compact) {
     ImGui::SetCursorScreenPos(a);
     const bool clicked = ImGui::InvisibleButton("##view", {b.x - a.x, b.y - a.y}), hovered = ImGui::IsItemHovered();
     const bool here = editor_ && slot == camera_;
-    paintImage(frame, a, b, {0, 0, double(frame.image.cols), double(frame.image.rows)}, {.fill = true, .boxes = boxes_, .circles = circles_, .selected = here ? selected_ : -1});
+    paintImage(frame, a, b, {0, 0, double(frame.image.cols), double(frame.image.rows)}, {.fill = true, .boxes = boxes_, .circles = circles_, .outlines = outlines_, .selected = here ? selected_ : -1});
     const float scale = (b.x - a.x) / frame.image.cols;
     if (!compact) ballBadges(draw, frame.annotation["boxes"], sorted(frame), [&](double x, double y) { return ImVec2{a.x + float(x) * scale, a.y + float(y) * scale}; }, frame.member.value("kind", "") == "컬러", false);
     const ImVec2 mouse = ImGui::GetIO().MousePos;
@@ -443,7 +444,7 @@ void Application::cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact) {
         const int ball = order[i];
         const auto r = detectionBox(boxes[ball]);
         const bool active = here && ball == selected_;
-        paintImage(frame, a, b, cropRegion(r, frame.image.cols, frame.image.rows), {.fill = false, .boxes = boxes_, .circles = circles_, .selected = active ? ball : -1});
+        paintImage(frame, a, b, cropRegion(r, frame.image.cols, frame.image.rows), {.fill = false, .boxes = boxes_, .circles = circles_, .outlines = outlines_, .selected = active ? ball : -1});
         draw->AddRect(a, b, active ? theme::selected : hovered ? theme::text3 : theme::line, 4, 0, active ? 2.f : 1.f);
         if (cell > 70) {   // drawn after the image, which would otherwise cover it
             draw->AddRectFilled({b.x - 26, a.y + 4}, {b.x - 4, a.y + 26}, theme::rgb(0x0d0f12, removing ? 235 : 150), 5);
@@ -525,7 +526,7 @@ void Application::canvas(FrameView& frame, ImVec2 pos, ImVec2 size) {
     draw->AddRectFilled(pos, end, IM_COL32(0, 0, 0, 255));
     draw->PushClipRect(pos, end, true);
     draw->AddImage(ImTextureRef(ImTextureID(frame.texture)), a, at(frame.image.cols, frame.image.rows));
-    if (masks_) draw->AddImage(ImTextureRef(ImTextureID(frame.overlay)), a, at(frame.image.cols, frame.image.rows));
+    if (masks_ && outlines_) draw->AddImage(ImTextureRef(ImTextureID(frame.overlay)), a, at(frame.image.cols, frame.image.rows));
     if (s >= 5) {   // original pixel grid, so a one-pixel box correction is visible
         const int x0 = std::max(0, int(std::floor((pos.x - a.x) / s))), x1 = std::min(frame.image.cols, int(std::ceil((end.x - a.x) / s)));
         const int y0 = std::max(0, int(std::floor((pos.y - a.y) / s))), y1 = std::min(frame.image.rows, int(std::ceil((end.y - a.y) / s)));
@@ -534,7 +535,7 @@ void Application::canvas(FrameView& frame, ImVec2 pos, ImVec2 size) {
         for (int y = y0; y <= y1; ++y) draw->AddLine(at(x0, y), at(x1, y), grid);
     }
     const bool proposing = !proposal_.is_null();
-    paintMarks(frame, at, {.fill = false, .boxes = boxes_, .circles = circles_, .selected = proposing ? -1 : selected_, .skip = proposing ? replacement_ : -1});
+    paintMarks(frame, at, {.fill = false, .boxes = boxes_, .circles = circles_, .outlines = outlines_, .selected = proposing ? -1 : selected_, .skip = proposing ? replacement_ : -1});
     ballBadges(draw, frame.annotation["boxes"], sorted(frame), at, frame.member.value("kind", "") == "컬러", true, proposing ? replacement_ : -1);
     if (proposing) {
         for (const auto& contour : proposalContours_) {

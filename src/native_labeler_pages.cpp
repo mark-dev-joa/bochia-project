@@ -129,7 +129,7 @@ void Application::preparePage() {
     auto draw = ImGui::GetWindowDrawList();
     const auto stage = stageFrame(summaryOpen_);
     const auto& stats = catalog_["stats"]; const auto& recordings = catalog_["recordings"]; const auto& summary = catalog_["summary"];
-    float y = heading(draw, stage.body, stage.bodyWidth, "데이터 준비");
+    float y = heading(draw, stage.body, stage.bodyWidth, "사전 작업");
     int images = 0, cameras = 0;
     for (const auto& recording : recordings) { cameras = std::max(cameras, int(recording["cameras"].size())); for (const auto& camera : recording["cameras"]) images += camera.value("count", 0); }
     if (targetScenes_ < 0) {   // counted once per catalog change, not per frame
@@ -272,7 +272,8 @@ void Application::preparePage() {
             box.text("재는 중 · " + grouped(circleStatus_.value("done", 0)) + " / " + grouped(circleStatus_.value("total", 0)) + "장", theme::text);
             progressBar(draw, {box.left(), box.y}, box.inner(), circleStatus_.value("done", 0), circleStatus_.value("total", 0), theme::accent); box.y += 14;
         } else {
-            box.text(remaining ? "아직 안 잰 공 " + grouped(remaining) + "개" : "모든 공의 둘레를 쟀습니다", theme::text);
+            char margin[32]; std::snprintf(margin, sizeof margin, " · 둘레 여유 %+.2f", catalog_.value("circle_margin", .5));
+            box.text((remaining ? "아직 안 잰 공 " + grouped(remaining) + "개" : std::string("모든 공의 둘레를 쟀습니다")) + margin, theme::text);
             ImGui::PushFont(nullptr, theme::px(theme::caption));
             ImGui::SetCursorScreenPos({box.left(), box.y});
             if (ImGui::Button("원으로 박스 다듬기", {box.inner(), 30}) && remaining) circleAsk_ = true;
@@ -280,7 +281,7 @@ void Application::preparePage() {
             box.y += 36;
         }
         if (circleStatus_.value("status", "") == "error") box.text(circleStatus_.value("error", ""), theme::warn);
-        if (refine.is_object()) box.text("다듬음 · 공 " + grouped(refine.value("balls", 0)) + "개 · 건너뜀 " + grouped(refine.value("skipped", 0)) + "개 · " + refine.value("at", "").substr(0, 10));
+        if (refine.is_object()) { char used[32]; std::snprintf(used, sizeof used, " · 여유 %+.2f · ", refine.value("margin", .5)); box.text("다듬음 · 공 " + grouped(refine.value("balls", 0)) + "개 · 건너뜀 " + grouped(refine.value("skipped", 0)) + "개" + used + refine.value("at", "").substr(0, 10)); }
         sy = box.close();
     }
     if (!recordings.empty()) {

@@ -23,7 +23,7 @@ std::filesystem::path Application::preferencesPath() const { return config_.proj
 void Application::rememberPosition() const {
     if(frames_.empty())return;
     const auto& scene=catalog_["scenes"][scene_];
-    Json state={{"recording",scene["recording"]},{"index",scene["index"]},{"camera",frames_[camera_].member["camera"]},{"editor",editor_},{"brightness",brightness_},{"representatives",representatives_},{"filter",filter_},{"masks",masks_},{"boxes",boxes_},{"circles",circles_},{"view",view_},{"panels",{listOpen_,sideOpen_,summaryOpen_}}};
+    Json state={{"recording",scene["recording"]},{"index",scene["index"]},{"camera",frames_[camera_].member["camera"]},{"editor",editor_},{"brightness",brightness_},{"representatives",representatives_},{"filter",filter_},{"masks",masks_},{"boxes",boxes_},{"circles",circles_},{"outlines",outlines_},{"view",view_},{"panels",{listOpen_,sideOpen_,summaryOpen_}}};
     auto path=preferencesPath();std::filesystem::create_directories(path.parent_path());
     auto temporary=path;temporary+=L"."+std::to_wstring(Clock::now().time_since_epoch().count())+L".tmp";std::ofstream stream(temporary,std::ios::binary);stream<<state.dump(2);stream.close();
     if(!stream)throw std::runtime_error("작업 위치 저장 실패");
@@ -33,7 +33,7 @@ void Application::restorePosition() {
     int index=0,camera=0;bool editor=false;
     if(config_.rememberUi){try {
         std::ifstream input(preferencesPath(),std::ios::binary);auto state=Json::parse(input);
-        brightness_=std::clamp(state.value("brightness",1.65f),.5f,3.f);representatives_=state.value("representatives",true);filter_=std::clamp(state.value("filter",0),0,3);masks_=state.value("masks",true);boxes_=state.value("boxes",true);circles_=state.value("circles",true);view_=std::clamp(state.value("view",0),0,viewCount-1);
+        brightness_=std::clamp(state.value("brightness",1.65f),.5f,3.f);representatives_=state.value("representatives",true);filter_=std::clamp(state.value("filter",0),0,3);masks_=state.value("masks",true);boxes_=state.value("boxes",true);circles_=state.value("circles",true);view_=std::clamp(state.value("view",0),0,viewCount-1);outlines_=state.value("outlines",true);
         if(state.contains("panels")&&state["panels"].is_array()&&state["panels"].size()==3){listOpen_=state["panels"][0];sideOpen_=state["panels"][1];summaryOpen_=state["panels"][2];}
         for(int i=0;i<int(catalog_["scenes"].size());++i){auto& scene=catalog_["scenes"][i];if(scene["recording"]==state.at("recording")&&scene["index"]==state.at("index")){
             index=i;editor=state.value("editor",false);for(int c=0;c<int(scene["members"].size());++c)if(scene["members"][c]["camera"]==state.at("camera"))camera=c;break;
@@ -69,6 +69,7 @@ void Application::connect() {
         return result;
     }, [this](JobResult result){
         engine_=std::move(result.engine); updateCatalog(result.data.at("catalog")); autoStatus_=result.data.at("auto"); message_="기존 촬영과 라벨 연결 완료";
+        circleMargin_=float(catalog_.value("circle_margin",.5));
         // The colour camera's balls get their colours by themselves: drafts and older labels without one are filled in the background.
         const int colorable=catalog_.value("colorable",0);
         if(colorable>0){try{colorStatus_=engine_->nativeAction("fill-colors",Json::object());message_="컬러 공 "+grouped(colorable)+"개의 색상을 채우는 중";}catch(const std::exception& error){message_=error.what();}}
@@ -115,7 +116,7 @@ JobResult fetchScene(const std::shared_ptr<Engine>& engine,const Json& scene) {
 void Application::loadScene(int index,bool editor,int camera,std::string note) {
     if(index<0||index>=int(catalog_["scenes"].size())||busy())return;
     // Never replace a frame that still has unsaved edits: save it first and come back.
-    if(!frames_.empty()&&current().dirty){if(pending())message_="미확정 윤곽을 반영하거나 취소하세요.";else save([this,index,editor,camera,note]{loadScene(index,editor,camera,note);});return;}
+    if(!frames_.empty()&&dirtySlot()>=0){if(pending())message_="미확정 윤곽을 반영하거나 취소하세요.";else save([this,index,editor,camera,note]{loadScene(index,editor,camera,note);},dirtySlot());return;}
     const auto token=++generation_;
     auto show=[this,index,editor,camera,token,note](JobResult result){
         if(token!=generation_)return;
@@ -190,10 +191,15 @@ void Application::nudge(int edge,bool expand) {
 }
 void Application::checkpoint(){auto& f=current();f.history.push_back(f.annotation);if(f.history.size()>40)f.history.erase(f.history.begin());}
 void Application::changed(bool repaint){auto& f=current();f.dirty=true;if(repaint)f.repaint=true;f.annotation["reviewed"]=false;f.annotation["review_status"]="editing";f.member["reviewed"]=false;f.member["status"]="editing";catalog_["split_confirmed"]=false;rowsDirty_=true;changed_=Clock::now();message_="수정됨 · 자동 저장 대기";}
-void Application::save(std::function<void()> next) {
+int Application::dirtySlot() const {
+    if(!frames_.empty()&&camera_>=0&&camera_<int(frames_.size())&&frames_[size_t(camera_)].dirty)return camera_;
+    for(int slot=0;slot<int(frames_.size());++slot)if(frames_[size_t(slot)].dirty)return slot;
+    return -1;
+}
+void Application::save(std::function<void()> next,int slot) {
     if(frames_.empty()||pending()||busy())return;
-    const int slot=camera_; const auto key=current().annotation.at("key").get<std::string>();
-    const auto payload=annotationPayload(current().annotation,catalog_["summary"].at("revision").get<int>()); const auto engine=engine_;
+    if(slot<0)slot=camera_; const auto& frame=frames_.at(size_t(slot)); const auto key=frame.annotation.at("key").get<std::string>();
+    const auto payload=annotationPayload(frame.annotation,catalog_["summary"].at("revision").get<int>()); const auto engine=engine_;
     launch("라벨 저장",[engine,payload]{return JobResult{engine->saveAnnotation(payload),{}};},[this,slot,key,next](JobResult result){updateSummary(result.data.at("summary"));if(slot<int(frames_.size())&&frames_[slot].annotation.value("key","")==key)frames_[slot].dirty=false;message_="자동 저장 완료";if(next)next();});
 }
 void Application::cancel(){++generation_;proposal_=nullptr;brushMask_.release();polygon_.clear();points_=Json::array();replacement_=-1;dragging_=false;if(!frames_.empty())current().repaint=true;}
@@ -245,7 +251,7 @@ void Application::confirmGrowth(){
 }
 void Application::growMasks(int pixels){
     if(!guard())return;
-    if(!frames_.empty()&&current().dirty){save([this,pixels]{growMasks(pixels);});return;}
+    if(!frames_.empty()&&dirtySlot()>=0){save([this,pixels]{growMasks(pixels);},dirtySlot());return;}
     const auto engine=engine_;const Json payload={{"pixels",pixels},{"expected_revision",catalog_["summary"]["revision"]}};
     launch("윤곽 넓히는 중",[engine,payload]{return JobResult{engine->nativeAction("grow-masks",payload),{}};},[this](JobResult result){
         updateSummary(result.data.at("summary"));catalog_["mask_growth"]=result.data.value("mask_growth",Json::object());catalog_["growable"]=result.data.value("growable",Json::object());
@@ -284,12 +290,18 @@ void Application::confirmCircles(){
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{22,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,10});
     if(ImGui::BeginPopupModal("##refine-circles",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
         ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted("공 둘레를 영상에서 다시 재기");ImGui::PopFont();
-        ImGui::Text("공 %s개의 가장자리를 Canny로 찾아 원을 맞추고, 그 원으로 마스크와 검출 박스를 정합니다.",grouped(catalog_.value("circleable_all",0)).c_str());
-        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"확인한 이미지의 공도 포함하며 확인 상태는 그대로입니다. 공을 지우거나 더하지 않습니다. 가려진 공, 손으로 그린 윤곽, 직접 보정한 박스, 원이 맞지 않는 공은 건너뜁니다. 그동안 계속 작업할 수 있습니다.");ImGui::PopFont();
+        const int count=catalog_.value(remeasure_?"circleable_remeasure":includeReviewed_?"circleable_all":"circleable",0);
+        ImGui::Text("공 %s개의 가장자리를 Canny로 찾아 원을 맞추고, 그 원으로 마스크와 검출 박스를 정합니다.",grouped(count).c_str());
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"확인 상태는 그대로이고 공을 지우거나 더하지 않습니다. 가려진 공, 손으로 그린 윤곽, 직접 보정한 박스, 원이 맞지 않는 공은 건너뜁니다. 그동안 계속 작업할 수 있습니다.");ImGui::PopFont();
+        ImGui::Dummy({0,2});
+        theme::checkbox("확인한 이미지의 공도 포함",&includeReviewed_);
+        theme::checkbox("이미 잰 공도 다시 재기 (둘레 여유를 바꾼 뒤)",&remeasure_);
+        ImGui::TextUnformatted("둘레 여유");ImGui::SameLine();ImGui::SetNextItemWidth(96);ImGui::DragFloat("##margin",&circleMargin_,.05f,-1.f,2.f,"%+.2f px");ImGui::SameLine();
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"잰 반지름에 더하는 픽셀. 0은 에지의 그래디언트 최대점, 양수는 그보다 바깥");ImGui::PopFont();
         ImGui::Dummy({0,4});
         bool close=false;
         ImGui::PushFont(theme::bold,theme::px(theme::base));
-        if(theme::primaryButton("다듬기  Enter",{140,34})||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{refineCircles(true);};close=true;}
+        if(theme::primaryButton("다듬기  Enter",{140,34})||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{refineCircles();};close=true;}
         ImGui::PopFont();ImGui::SameLine();
         if(ImGui::Button("취소  Esc",{110,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
         if(close){circleAsk_=false;ImGui::CloseCurrentPopup();}
@@ -297,15 +309,15 @@ void Application::confirmCircles(){
     }
     ImGui::PopStyleVar(2);
 }
-void Application::refineCircles(bool includeReviewed){
+void Application::refineCircles(){
     if(!guard())return;
-    if(!frames_.empty()&&current().dirty){save([this,includeReviewed]{refineCircles(includeReviewed);});return;}
-    const auto engine=engine_;const Json payload={{"include_reviewed",includeReviewed}};
+    if(!frames_.empty()&&dirtySlot()>=0){save([this]{refineCircles();},dirtySlot());return;}
+    const auto engine=engine_;const Json payload={{"include_reviewed",includeReviewed_},{"remeasure",remeasure_},{"margin",double(circleMargin_)}};
     launch("둘레 다듬기 시작",[engine,payload]{return JobResult{engine->nativeAction("refine-circles",payload),{}};},[this](JobResult result){circleStatus_=result.data;message_="공 둘레를 다시 재는 중입니다. 끝나면 알려 드립니다.";});
 }
 void Application::fillColors(){
     if(!guard())return;
-    if(!frames_.empty()&&current().dirty){save([this]{fillColors();});return;}
+    if(!frames_.empty()&&dirtySlot()>=0){save([this]{fillColors();},dirtySlot());return;}
     const auto engine=engine_;
     launch("색상 채우기 시작",[engine]{return JobResult{engine->nativeAction("fill-colors",Json::object()),{}};},[this](JobResult result){colorStatus_=result.data;message_="색상을 채우는 중입니다. 끝나면 알려 드립니다.";});
 }
@@ -364,7 +376,7 @@ void Application::polygonProposal(){
 }
 void Application::review(Scope scope,bool hold,int member) {
     if(!guard()||frames_.empty())return;
-    if(current().dirty){save([this,scope,hold,member]{review(scope,hold,member);});return;}
+    if(dirtySlot()>=0){save([this,scope,hold,member]{review(scope,hold,member);},dirtySlot());return;}
     Json keys=Json::array();
     if(scope==Scope::Camera)keys.push_back(frames_.at(member>=0?member:camera_).annotation.at("key"));
     else for(auto& frame:frames_)if(frame.member.value("selected",true)&&(!hold||!frame.member.value("reviewed",false)))keys.push_back(frame.annotation.at("key"));
@@ -409,7 +421,7 @@ void Application::tick(){
         }
     }
     pumpThumbs();prefetch();
-    if(ready()&&!busy()&&!pending()&&current().dirty&&Clock::now()-changed_>std::chrono::milliseconds(450)&&error_.empty())save();
+    if(ready()&&!busy()&&!pending()&&dirtySlot()>=0&&Clock::now()-changed_>std::chrono::milliseconds(450)&&error_.empty())save({},dirtySlot());
     const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running"||colorStatus_.value("status","")=="running"||circleStatus_.value("status","")=="running";
     if(activeJob&&ready()&&!busy()&&Clock::now()-poll_>std::chrono::seconds(3)&&error_.empty()&&!current().dirty&&!pending()){
         poll_=Clock::now();const auto engine=engine_;
@@ -462,7 +474,7 @@ void Application::repaint(FrameView& f){
         // The circle shown is the one measured from the image (Canny + RANSAC): the stored one for a refined ball, measured
         // on the spot for the others, and only when the image gives no trustworthy circle a fit to the mask's outline.
         if(boxes[i].contains("circle")){const auto& c=boxes[i]["circle"];f.circles[i]={c[0].get<double>()-.5,c[1].get<double>()-.5,c[2].get<double>()};}
-        else{const CircleFit fit=refineCircle(f.image,mask);f.circles[i]=fit.ok?Circle{fit.x-.5,fit.y-.5,fit.r}:fitCircle(edge);}
+        else{const CircleFit fit=refineCircle(f.image,mask);f.circles[i]=fit.ok?Circle{fit.x-.5,fit.y-.5,fit.r+circleMargin_}:fitCircle(edge);}
         if(active&&replacement_==i&&!proposal_.is_null())continue;
         overlay.setTo(active&&editor_&&i==selected_?cv::Scalar(255,216,74,13):cv::Scalar(46,230,208,51),mask);
     }
@@ -608,6 +620,7 @@ void Application::keys() {
     if(pressed(ImGuiKey_M)){masks_=!masks_;}
     if(pressed(ImGuiKey_X))boxes_=!boxes_;
     if(pressed(ImGuiKey_C))circles_=!circles_;
+    if(pressed(ImGuiKey_G))outlines_=!outlines_;
     if(pressed(ImGuiKey_I)){view_=(view_+1)%viewCount;for(auto& view:frames_)view.repaint=true;}
     if(!editor_||pending()||busy())return;
     if(pressed(ImGuiKey_V))tool_=Tool::Select;
@@ -632,7 +645,7 @@ void Application::topBar() {
     draw->AddLine({origin.x,origin.y+height-.5f},{origin.x+width,origin.y+height-.5f},theme::line);
     theme::write(draw,{origin.x+16,origin.y+13},theme::text,"Boccia Labeler",14,theme::bold);
     float x=origin.x+16+theme::extent("Boccia Labeler",14,theme::bold).x+28;
-    static const char* names[]={"데이터 준비","검수","분할","내보내기"};
+    static const char* names[]={"사전 작업","검수","분할","내보내기"};
     for(int i=0;i<4;++i){
         const float tab=theme::extent(names[i]).x+24;const bool on=int(page_)==i;
         ImGui::SetCursorScreenPos({x,origin.y});ImGui::PushID(i);
@@ -665,7 +678,7 @@ void Application::shortcutsPopup(ImVec2 below) {
     static const char* const rows[][2]={{"E","세 장 확인하고 다음 미검수 장면"},{"Shift+E","크게 보는 카메라 한 장만 확인"},{"Q","보류"},{"N","다음 미검수 장면"},
         {"A / D","이전 / 다음 장면"},{"Backspace","이전에 보던 장면으로"},{"1 / 2 / 3","그 카메라를 크게"},{"Tab / Shift+Tab","다음 / 이전 공"},
         {"방향키","선택한 공의 그 방향 경계를 1픽셀 바깥으로"},{"Shift+방향키","1픽셀 안으로"},{"V / S / B / P / R","선택 / AI 분할 / 브러시 / 폴리곤 / 박스"},
-        {"왼쪽 / 오른쪽 클릭","더하기 / 빼기"},{"[ / ]","브러시 굵기"},{"Enter / Esc","윤곽 반영 / 취소, 선택 해제, 세 장 보기"},{"M / X / C","마스크 채움 / 박스 / 원 표시"},{"I","보기: 원본 / 대비 / 흑백 / 에지 / 그래디언트 / 에지 겹침"},
+        {"왼쪽 / 오른쪽 클릭","더하기 / 빼기"},{"[ / ]","브러시 굵기"},{"Enter / Esc","윤곽 반영 / 취소, 선택 해제, 세 장 보기"},{"G / M / X / C","윤곽 / 마스크 채움 / 박스 / 원 표시"},{"I","보기: 원본 / 대비 / 흑백 / 에지 / 그래디언트 / 에지 겹침"},
         {"F / Z","화면 맞춤 / 선택한 공으로"},{"O / Delete","일부 가림 / 공 삭제"},{"Ctrl+Z / Ctrl+S","되돌리기 / 저장"},{"휠 / 가운데 끌기","확대 / 이동"}};
     ImGui::SetNextWindowPos({below.x,below.y+4},ImGuiCond_Always,{1,0});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{16,12});
