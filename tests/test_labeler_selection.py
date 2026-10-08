@@ -67,10 +67,26 @@ class SelectionTests(unittest.TestCase):
         self.assertFalse(compare_frames(reference, features(changed, [self.box]), pairs)[0])
         occluded = {**self.box, "occluded": True}
         self.assertIsNone(match_boxes([self.box], [occluded]))
-        moved = {**self.box, "bbox": [46, 40, 21, 21]}
+        # A draft box jitters by a few pixels on a ball that did not move; the pixels decide, not the box.
+        jittered = {**self.box, "bbox": [46, 40, 21, 21]}
+        self.assertEqual(len(match_boxes([self.box], [jittered])), 1)
+        moved = {**self.box, "bbox": [50, 40, 21, 21]}
         self.assertIsNone(match_boxes([self.box], [moved]))
         self.assertIsNone(match_boxes([self.box], []))
-        self.assertEqual(len(match_boxes([self.box, moved], [moved, self.box])), 2)
+        self.assertEqual(len(match_boxes([self.box, jittered], [jittered, self.box])), 2)
+
+    def test_box_jitter_on_a_still_ball_is_a_duplicate_but_a_moved_ball_is_not(self):
+        reference = features(self.image, [self.box])
+        jittered = {**self.box, "bbox": [46, 40, 21, 21]}
+        duplicate, reason, _ = compare_frames(reference, features(self.image, [jittered]), match_boxes([self.box], [jittered]))
+        self.assertTrue(duplicate, reason)
+        moved_image = np.full_like(self.image, 80)
+        cv2.circle(moved_image, (56, 50), 10, (20, 20, 200), -1)
+        moved_mask = np.zeros((100, 120), np.uint8)
+        cv2.circle(moved_mask, (56, 50), 10, 1, -1)
+        moved = {**jittered, "segmentation": encode_mask(moved_mask)}
+        duplicate, reason, _ = compare_frames(reference, features(moved_image, [moved]), match_boxes([self.box], [moved]))
+        self.assertFalse(duplicate, reason)
 
     def test_mask_shape_change_is_kept_even_with_identical_pixels(self):
         changed = copy.deepcopy(self.box)

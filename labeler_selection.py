@@ -18,7 +18,8 @@ from labeler_assist import decode_mask
 
 
 RULES = {
-    "center_pixels": 4.0, "size_pixels": 4.0, "size_fraction": .12,
+    # 8px of box movement is within the jitter of the automatic draft; the pixels decide whether the ball moved.
+    "center_pixels": 8.0, "size_pixels": 4.0, "size_fraction": .12,
     "mask_iou": .85, "ball_mae": 5.0, "ball_correlation": .97,
     "scene_width": 720, "scene_mae": 2.5, "scene_changed_fraction": .0015,
     "scene_change_level": 12, "scene_component_pixels": 18, "scene_tile_mae": 4.0,
@@ -104,22 +105,18 @@ def features(image, boxes, rules=RULES):
     height, width = image.shape[:2]
     scale = min(1.0, rules["scene_width"] / width)
     scene = cv2.resize(image, (round(width * scale), round(height * scale)), interpolation=cv2.INTER_AREA)
-    patches, masks = [], []
-    for box in boxes:
-        x, y, w, h = box["bbox"]
-        # Aligned ball + context crops retain texture/occlusion differences,
-        # while position is independently bounded against the retained anchor.
-        side = max(16, math.ceil(max(w, h) * 2))
-        patch = cv2.getRectSubPix(image, (side, side), (float(x + w / 2), float(y + h / 2)))
-        patches.append(cv2.resize(cv2.GaussianBlur(patch, (3, 3), 0), (48, 48), interpolation=cv2.INTER_AREA).astype(np.float32))
-        if "segmentation" in box:
-            mask = decode_mask(box["segmentation"], width, height)
-            left, top = math.floor(x), math.floor(y)
-            crop = mask[top:math.ceil(y + h), left:math.ceil(x + w)]
-            masks.append(cv2.resize(crop, (32, 32), interpolation=cv2.INTER_NEAREST).astype(bool))
-        else:
-            masks.append(None)
-    return {"scene": scene, "patches": patches, "masks": masks}
+    # Balls are compared at the retained frame's position and masks in image coordinates, so a draft box that
+    # only jittered on a still ball reads as the same ball.
+    masks = [decode_mask(box["segmentation"], width, height).astype(bool) if "segmentation" in box else None for box in boxes]
+    return {"scene": scene, "image": image, "boxes": boxes, "masks": masks}
+
+
+def ball_patch(image, box):
+    """Ball with context around the box center, blurred and resized so texture and occlusion differences remain."""
+    x, y, w, h = box["bbox"]
+    side = max(16, math.ceil(max(w, h) * 2))
+    patch = cv2.getRectSubPix(image, (side, side), (float(x + w / 2), float(y + h / 2)))
+    return cv2.resize(cv2.GaussianBlur(patch, (3, 3), 0), (48, 48), interpolation=cv2.INTER_AREA).astype(np.float32)
 
 
 def compare_frames(a, b, pairs, rules=RULES):
@@ -139,7 +136,7 @@ def compare_frames(a, b, pairs, rules=RULES):
         return False, "scene_change", metrics
     max_mae, min_correlation, min_iou = 0.0, 1.0, 1.0
     for i, j, _ in pairs:
-        old, new = a["patches"][i], b["patches"][j]
+        old, new = ball_patch(a["image"], a["boxes"][i]), ball_patch(b["image"], a["boxes"][i])   # the same spot in both frames
         mae = float(np.abs(old - new).mean())
         centered_a, centered_b = old - old.mean(), new - new.mean()
         denominator = float(np.linalg.norm(centered_a) * np.linalg.norm(centered_b))
@@ -211,7 +208,7 @@ def build_selection(catalog, snapshot, progress=lambda count, total, camera: Non
             counts.append({"recording": recording, "name": rec["name"], "camera": camera,
                            "total": len(stream["frames"]), "selected": kept, "excluded": len(stream["frames"]) - kept})
             progress(done, total, rec["name"] + "/" + camera)
-    return {"version": 1, "algorithm": "within-camera-geometry-mask-appearance-v1",
+    return {"version": 1, "algorithm": "within-camera-geometry-mask-appearance-v2",
             "created_at": datetime.now(timezone.utc).isoformat(), "source_signature": catalog.signature,
             "project_revision": snapshot.get("revision", 0), "rules": rules,
             "total": total, "selected": sum(c["selected"] for c in counts),
