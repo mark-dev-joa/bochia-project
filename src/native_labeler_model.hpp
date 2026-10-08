@@ -10,6 +10,7 @@ inline std::filesystem::path fromUtf8(const std::string& value) { return std::fi
 inline std::string utf8(const std::filesystem::path& value) { const auto text = value.u8string(); return {text.begin(), text.end()}; }
 cv::Mat decodeMask(const Json& rle, int width, int height);
 Json encodeMask(const cv::Mat& mask);
+void setOccludedFlag(Json& box, bool value);   // marks the ball partly hidden; a circle merely inscribed in its box goes with it
 Json maskAnnotation(const cv::Mat& mask, const Json& previous, const std::string& source);
 cv::Rect2d detectionBox(const Json& box);
 bool nudgeEdge(Json& box, int edge, bool expand, int width, int height);

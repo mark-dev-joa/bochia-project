@@ -862,7 +862,7 @@ void Application::sidePanel() {
         theme::keycapAt(list, {x + width - 60, base.y + y + 3}, "O");
         bool occluded = box.value("occluded", false);
         ImGui::SetCursorScreenPos({x + width - 30, base.y + y + 4});
-        if (theme::toggle("##occluded", &occluded) && !pending() && !busy()) { checkpoint(); box["occluded"] = occluded; changed(); }
+        if (theme::toggle("##occluded", &occluded) && !pending() && !busy()) { checkpoint(); setOccludedFlag(box, occluded); changed(); }
         y += 30;
         if (frame.member.value("kind", "") == "컬러") {
             static const char* colors[] = {"미지정", "빨강", "파랑", "흰색", "검정"}; static const char* values[] = {"unknown", "red", "blue", "white", "black"};

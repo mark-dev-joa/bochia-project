@@ -257,7 +257,7 @@ void Application::setOccluded(int slot,int ball,bool value){
     if(slot!=camera_&&current().dirty){save([this,slot,ball,value]{setOccluded(slot,ball,value);});return;}
     camera_=slot;auto& objects=current().annotation["boxes"];if(ball<0||ball>=int(objects.size()))return;
     if(objects[ball].value("occluded",false)==value)return;
-    checkpoint();objects[ball]["occluded"]=value;changed(false);message_=value?"일부 가림으로 표시했습니다":"일부 가림 표시를 지웠습니다";
+    checkpoint();setOccludedFlag(objects[ball],value);changed(false);message_=value?"일부 가림으로 표시했습니다":"일부 가림 표시를 지웠습니다";
 }
 // Grows every draft mask outward. The dialog says how many images and balls that touches; a person's work is left alone.
 void Application::confirmGrowth(){
@@ -926,7 +926,7 @@ void Application::keys() {
     if(pressed(ImGuiKey_RightBracket))brushSize_=std::min(30.f,brushSize_+1);
     auto& objects=current().annotation["boxes"];
     if(selected_<0||selected_>=int(objects.size()))return;
-    if(pressed(ImGuiKey_O)){checkpoint();objects[selected_]["occluded"]=!objects[selected_].value("occluded",false);changed();}
+    if(pressed(ImGuiKey_O)){checkpoint();setOccludedFlag(objects[selected_],!objects[selected_].value("occluded",false));changed();}
     if(pressed(ImGuiKey_Delete))removeSelected();
 }
 // Name, page tabs, progress, save state and the shortcut list. Plain tabs with an underline, like any desktop tool.

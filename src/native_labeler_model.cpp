@@ -53,6 +53,12 @@ bool nudgeEdge(Json& box, int edge, bool expand, int width, int height) {
     auto round4 = [](double value) { return std::nearbyint(value * 10000) / 10000; };
     box["detection_bbox"] = {round4(left), round4(top), round4(right - left), round4(bottom - top)}; return true;
 }
+// A partly hidden ball's box is its visible part, so a circle inscribed in it (from a box edit or the box tool) means
+// nothing and goes; a circle measured on the image's own edge stays (2026-10-08 user request).
+void setOccludedFlag(Json& box, bool value) {
+    box["occluded"] = value;
+    if (value && box.value("circle_source", "") == "box") { box.erase("circle"); box.erase("circle_source"); }
+}
 Json annotationPayload(const Json& frame, int revision) {
     return {{"recording", frame.at("recording")}, {"camera", frame.at("camera")}, {"index", frame.at("index")},
             {"boxes", frame.at("boxes")}, {"reviewed", frame.value("reviewed", false)},
