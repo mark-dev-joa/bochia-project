@@ -338,7 +338,8 @@ void Application::confirmRemoval(){
         ImGui::Dummy({0,4});
         bool close=false;const auto target=pendingRemove_;
         ImGui::PushStyleColor(ImGuiCol_Button,theme::rgb(0xc8453f));ImGui::PushStyleColor(ImGuiCol_ButtonHovered,theme::rgb(0xd9534f));ImGui::PushStyleColor(ImGuiCol_ButtonActive,theme::rgb(0xb33a35));ImGui::PushStyleColor(ImGuiCol_Text,theme::rgb(0xffffff));
-        if(ImGui::Button("삭제  Enter",{124,34})||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this,target]{removeBall(target.camera,target.index);};close=true;}
+        // Space accepts (2026-10-08 user request); Enter still works.
+        if(ImGui::Button("삭제  Space",{124,34})||ImGui::IsKeyPressed(ImGuiKey_Space,false)||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this,target]{removeBall(target.camera,target.index);};close=true;}
         ImGui::PopStyleColor(4);ImGui::SameLine();
         if(ImGui::Button("취소  Esc",{110,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
         if(close){pendingRemove_={};ImGui::CloseCurrentPopup();}
@@ -679,7 +680,7 @@ void Application::shortcutsPopup(ImVec2 below) {
         {"A / D","이전 / 다음 장면"},{"Backspace","이전에 보던 장면으로"},{"1 / 2 / 3","그 카메라를 크게"},{"Tab / Shift+Tab","다음 / 이전 공"},
         {"방향키","선택한 공의 그 방향 경계를 1픽셀 바깥으로"},{"Shift+방향키","1픽셀 안으로"},{"V / S / B / P / R","선택 / AI 분할 / 브러시 / 폴리곤 / 박스"},
         {"왼쪽 / 오른쪽 클릭","더하기 / 빼기"},{"[ / ]","브러시 굵기"},{"Enter / Esc","윤곽 반영 / 취소, 선택 해제, 세 장 보기"},{"G / M / X / C","윤곽 / 마스크 채움 / 박스 / 원 표시"},{"I","보기: 원본 / 대비 / 흑백 / 에지 / 그래디언트 / 에지 겹침"},
-        {"F / Z","화면 맞춤 / 선택한 공으로"},{"O / Delete","일부 가림 / 공 삭제"},{"Ctrl+Z / Ctrl+S","되돌리기 / 저장"},{"휠 / 가운데 끌기","확대 / 이동"}};
+        {"F / Z","화면 맞춤 / 선택한 공으로"},{"O / Delete","일부 가림 / 공 삭제 (확인창에서 Space로 수락)"},{"Ctrl+Z / Ctrl+S","되돌리기 / 저장"},{"휠 / 가운데 끌기","확대 / 이동"}};
     ImGui::SetNextWindowPos({below.x,below.y+4},ImGuiCond_Always,{1,0});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{16,12});
     if(ImGui::BeginPopup("##shortcuts")){
