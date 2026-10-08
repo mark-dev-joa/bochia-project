@@ -749,6 +749,13 @@ void Application::back(){
 // a correction in the middle this goes on to the next frame, not past the last confirmed one (2026-10-08 user request).
 // Past the end, the next unreviewed scene anywhere.
 int Application::advanceIndex() const {
+    // With a list tab other than 전체 chosen, the flow follows that list: on the 미검수 tab the next unreviewed scene, on
+    // 보류 the next held one, on 확인됨 the next confirmed one (2026-10-09 user request). The rows are in scene order.
+    if(filter_!=0&&!rows_.empty()){
+        for(const auto& row:rows_)if(!row.header&&row.scene>scene_)return row.scene;
+        for(const auto& row:rows_)if(!row.header&&row.scene>=0&&row.scene!=scene_)return row.scene;   // past the end: around to the first
+        return -1;
+    }
     const int count=int(catalog_["scenes"].size());
     for(int index=scene_+1;index<count;++index)for(const auto& member:catalog_["scenes"][index]["members"])if(member.value("selected",true))return index;
     return nextUnreviewedIndex();
