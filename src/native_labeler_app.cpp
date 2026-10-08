@@ -222,10 +222,38 @@ void Application::apply() {
         cancel();changed();message_="윤곽 반영 · 박스는 마스크에서 다시 계산했습니다.";
     } catch(const std::exception& error){error_=error.what();}
 }
-void Application::removeSelected(){
-    if(frames_.empty()||!editor_||pending()||busy())return;
-    auto& objects=current().annotation["boxes"];if(selected_<0||selected_>=int(objects.size()))return;
-    checkpoint();objects.erase(objects.begin()+selected_);selected_=-1;current().scale=0;changed();
+void Application::removeSelected(){if(editor_)removeBall(camera_,selected_);}
+// Deletes a ball of any camera of the scene. Edits belong to the current camera, so that camera becomes current first.
+void Application::removeBall(int slot,int ball){
+    if(frames_.empty()||slot<0||slot>=int(frames_.size())||pending()||busy())return;
+    if(slot!=camera_&&current().dirty){save([this,slot,ball]{removeBall(slot,ball);});return;}
+    camera_=slot;auto& objects=current().annotation["boxes"];if(ball<0||ball>=int(objects.size()))return;
+    checkpoint();objects.erase(objects.begin()+ball);selected_=-1;current().scale=0;current().repaint=true;changed();
+}
+// Asked from a crop or the ball list, where a click must not delete by itself.
+void Application::confirmRemoval(){
+    if(pendingRemove_.camera<0)return;
+    if(pendingRemove_.camera>=int(frames_.size())||pendingRemove_.index<0||pendingRemove_.index>=int(frames_[pendingRemove_.camera].annotation["boxes"].size())){pendingRemove_={};return;}
+    if(!ImGui::IsPopupOpen("##remove-ball"))ImGui::OpenPopup("##remove-ball");
+    const auto viewport=ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({viewport->WorkPos.x+viewport->WorkSize.x/2,viewport->WorkPos.y+viewport->WorkSize.y/2},ImGuiCond_Appearing,{.5f,.5f});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{22,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,10});
+    if(ImGui::BeginPopupModal("##remove-ball",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
+        const auto& frame=frames_[pendingRemove_.camera];const auto order=sorted(frame);
+        const int rank=int(std::find(order.begin(),order.end(),pendingRemove_.index)-order.begin())+1;
+        ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::Text("%s · 공 %d",cameraLabel(frame.member).c_str(),rank);ImGui::PopFont();
+        ImGui::TextUnformatted("이 공을 삭제할까요?");
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"윤곽과 박스를 지웁니다. Ctrl+Z로 되돌릴 수 있습니다.");ImGui::PopFont();
+        ImGui::Dummy({0,4});
+        bool close=false;const auto target=pendingRemove_;
+        ImGui::PushStyleColor(ImGuiCol_Button,theme::rgb(0xc8453f));ImGui::PushStyleColor(ImGuiCol_ButtonHovered,theme::rgb(0xd9534f));ImGui::PushStyleColor(ImGuiCol_ButtonActive,theme::rgb(0xb33a35));ImGui::PushStyleColor(ImGuiCol_Text,theme::rgb(0xffffff));
+        if(ImGui::Button("삭제  Enter",{124,34})||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this,target]{removeBall(target.camera,target.index);};close=true;}
+        ImGui::PopStyleColor(4);ImGui::SameLine();
+        if(ImGui::Button("취소  Esc",{110,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
+        if(close){pendingRemove_={};ImGui::CloseCurrentPopup();}
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(2);
 }
 void Application::undo(){if(busy())return;if(pending()){cancel();return;}auto& f=current();if(f.history.empty())return;f.annotation=f.history.back();f.history.pop_back();selected_=f.annotation["boxes"].empty()?-1:std::min(selected_,int(f.annotation["boxes"].size())-1);changed();}
 void Application::segment(cv::Point2d point,bool negative) {
@@ -347,6 +375,7 @@ void Application::fit(FrameView& f,ImVec2 size,bool toBall){
     const View view=toBall&&selected_>=0&&selected_<int(boxes.size())?ballView(detectionBox(boxes[selected_]),f.image.cols,f.image.rows,size.x,size.y):fitView(f.image.cols,f.image.rows,size.x,size.y);
     f.scale=view.scale;f.offsetX=view.x;f.offsetY=view.y;
 }
+void Application::askRemoveForCapture(int camera,int rank){if(camera<0||camera>=int(frames_.size()))return;const auto order=sorted(frames_[camera]);if(rank>=0&&rank<int(order.size()))pendingRemove_={camera,order[rank]};}
 void Application::selectForCapture(int camera,int rank){if(frames_.empty()||camera<0||camera>=int(frames_.size()))return;const auto order=sorted(frames_[camera]);if(rank>=0&&rank<int(order.size()))select(camera,order[rank]);}
 // One step per call while the app is idle. Returns false when every step has passed; throws on a failed expectation.
 bool Application::selfCheckStep(int step) {
@@ -372,24 +401,28 @@ bool Application::selfCheckStep(int step) {
         const Json boxes=current().annotation["boxes"];
         removeSelected();expect(current().annotation["boxes"].size()+1==boxes.size()&&selected_<0,"delete did not remove the selected ball");
         undo();expect(current().annotation["boxes"]==boxes,"undo did not bring the deleted ball back");return true;}
-    case 6:{select(0,first());const auto r=detectionBox(current().annotation["boxes"][selected_]);
+    case 6:{const Json other=frames_.at(1).annotation["boxes"];const int target=sorted(frames_.at(1)).front();
+        // A crop of another camera can delete its ball; the edit then belongs to that camera and can be undone.
+        removeBall(1,target);expect(camera_==1&&current().annotation["boxes"].size()+1==other.size(),"deleting from another camera did not remove its ball");
+        undo();expect(current().annotation["boxes"]==other,"undo did not bring back the ball of the other camera");return true;}
+    case 7:{select(0,first());const auto r=detectionBox(current().annotation["boxes"][selected_]);
         // An outline traced around the ball starts outside its box; it must still change that ball.
         tool_=Tool::Polygon;polygon_={{r.x-3,r.y-3},{r.x+r.width+3,r.y-3},{r.x+r.width+3,r.y+r.height+3},{r.x-3,r.y+r.height+3}};apply();return true;}
-    case 7:{expect(!proposal_.is_null()&&replacement_==first(),"an outline traced around a ball must change that ball");cancel();
+    case 8:{expect(!proposal_.is_null()&&replacement_==first(),"an outline traced around a ball must change that ball");cancel();
         // An outline of something beside the ball may start inside the ball's box; it must add a ball, not overwrite this one.
         const auto r=detectionBox(current().annotation["boxes"][first()]);
         polygon_={{r.x+1,r.y+1},{r.x-60,r.y+1},{r.x-60,r.y-40},{r.x+1,r.y-40}};apply();return true;}
-    case 8:expect(!proposal_.is_null()&&replacement_<0,"an outline that only starts inside a ball's box must add a ball");cancel();tool_=Tool::Select;return true;
-    case 9:{select(0,first());was={camera_,selected_};cycle(1);expect(moved(),"cycling did not move to another ball");
+    case 9:expect(!proposal_.is_null()&&replacement_<0,"an outline that only starts inside a ball's box must add a ball");cancel();tool_=Tool::Select;return true;
+    case 10:{select(0,first());was={camera_,selected_};cycle(1);expect(moved(),"cycling did not move to another ball");
         // A click gives the review pane the keyboard, as it has in real use, before the real Tab key is pressed twice.
         const float width=ImGui::GetMainViewport()->WorkSize.x;io.AddMousePosEvent((width<1500?232.f:300.f)+150,70);io.AddMouseButtonEvent(0,true);return true;}
-    case 10:io.AddMouseButtonEvent(0,false);return true;
-    case 11:was={camera_,selected_};io.AddKeyEvent(ImGuiKey_Tab,true);return true;
-    case 12:io.AddKeyEvent(ImGuiKey_Tab,false);expect(moved(),"the Tab key did not move to the next ball");return true;
-    case 13:was={camera_,selected_};io.AddKeyEvent(ImGuiKey_Tab,true);return true;
-    case 14:io.AddKeyEvent(ImGuiKey_Tab,false);expect(moved()&&!io.WantTextInput,"Tab put the keyboard into a widget, which turns the shortcuts off");return true;
-    case 15:review(Scope::Scene,false);return true;
-    case 16:{for(const auto& member:catalog_["scenes"][checkedScene]["members"])expect(!member.value("selected",true)||member.value("reviewed",false),"scene confirm left an image unconfirmed");
+    case 11:io.AddMouseButtonEvent(0,false);return true;
+    case 12:was={camera_,selected_};io.AddKeyEvent(ImGuiKey_Tab,true);return true;
+    case 13:io.AddKeyEvent(ImGuiKey_Tab,false);expect(moved(),"the Tab key did not move to the next ball");return true;
+    case 14:was={camera_,selected_};io.AddKeyEvent(ImGuiKey_Tab,true);return true;
+    case 15:io.AddKeyEvent(ImGuiKey_Tab,false);expect(moved()&&!io.WantTextInput,"Tab put the keyboard into a widget, which turns the shortcuts off");return true;
+    case 16:review(Scope::Scene,false);return true;
+    case 17:{for(const auto& member:catalog_["scenes"][checkedScene]["members"])expect(!member.value("selected",true)||member.value("reviewed",false),"scene confirm left an image unconfirmed");
         expect(scene_!=checkedScene&&!editor_,"confirm did not advance to the next unreviewed scene");
         expect(aheadHits_>0,"the next unreviewed scene was not fetched ahead");return false;}
     }
@@ -438,7 +471,7 @@ void Application::refreshStage(){
 }
 void Application::keys() {
     auto& io=ImGui::GetIO();
-    if(page_!=Page::Review||io.WantTextInput||frames_.empty())return;
+    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||pendingRemove_.camera>=0)return;   // the delete dialog owns the keys while open
     auto pressed=[](ImGuiKey key){return ImGui::IsKeyPressed(key,false);};
     if(pressed(ImGuiKey_Escape)){
         if(pending())cancel();
@@ -563,6 +596,7 @@ void Application::draw(){
         ImGui::EndChild();ImGui::PopStyleColor();ImGui::PopStyleVar(2);
     }
     statusBar();
+    confirmRemoval();
     ImGui::PopStyleVar();
     ImGui::End();
     if(later_){auto action=std::move(later_);later_=nullptr;action();}

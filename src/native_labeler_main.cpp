@@ -51,6 +51,7 @@ int main() {
                 if(stage==0){application.selectSceneForCapture(recording,frame);stage=1;}
                 else if(stage==1){
                     if(mode==L"editor"||mode==L"focus"){if(selectCamera>=0)application.selectForCapture(selectCamera,selectRank);else application.showEditor(0);}
+                    else if(mode==L"remove"){if(selectCamera>=0)application.askRemoveForCapture(selectCamera,selectRank);}
                     else if(mode==L"prepare")application.showPage(0);else if(mode==L"split")application.showPage(2);else if(mode==L"export")application.showPage(3);
                     stage=2;}
                 else if(stage==2&&selfTest&&application.idle()){if(!application.selfCheckStep(checkStep++)){std::cout<<"PASS: select, zoom, save before leaving a scene, one-pixel edge correction, delete and undo, outline target, Tab key, scene confirm and the next scene fetched ahead\n";selfTest=false;}}

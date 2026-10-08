@@ -389,7 +389,20 @@ void Application::cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact) {
         const ImVec2 a{pos.x + pad + (i % 2) * (cell + gap), pos.y + pad + (i / 2) * (cell + caption + gap)}, b{a.x + cell, a.y + cell};
         if (b.y + caption > pos.y + size.y + 1) break;
         ImGui::SetCursorScreenPos(a); ImGui::PushID(i);
+        ImGui::SetNextItemAllowOverlap();   // the delete button sits in the corner of the crop
         const bool clicked = ImGui::InvisibleButton("##crop", {cell, cell + caption}), hovered = ImGui::IsItemHovered();
+        bool removing = false;
+        if (i < int(order.size()) && cell > 70) {
+            ImGui::SetCursorScreenPos({b.x - 26, a.y + 4});
+            const bool asked = ImGui::InvisibleButton("##remove", {22, 22});
+            removing = ImGui::IsItemHovered();
+            if (asked) pendingRemove_ = {slot, order[i]};
+            if (hovered || removing) {
+                draw->AddRectFilled({b.x - 26, a.y + 4}, {b.x - 4, a.y + 26}, theme::rgb(0x0d0f12, removing ? 230 : 170), 5);
+                theme::icon(draw, theme::Icon::Trash, {b.x - 15, a.y + 15}, 12, removing ? theme::warn : theme::text);
+                if (removing) ImGui::SetTooltip("이 공 삭제");
+            }
+        }
         ImGui::PopID();
         if (i >= int(order.size())) {
             dashedRect(draw, a, b, hovered ? theme::text3 : theme::line2);
@@ -418,7 +431,7 @@ void Application::cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact) {
             draw->AddRect({b.x - w, b.y + 3}, {b.x, b.y + 19}, theme::line, 4);
             theme::write(draw, {b.x - w + 5, b.y + 4}, theme::text3, tag, 11);
         }
-        if (clicked) later_ = [this, slot, ball] { select(slot, ball); };
+        if (clicked && !removing) later_ = [this, slot, ball] { select(slot, ball); };
     }
 }
 void Application::overviewTile(int slot, ImVec2 pos, ImVec2 size) {
@@ -704,7 +717,7 @@ void Application::sidePanel() {
             bool removing = false;
             if (active) {
                 ImGui::SetCursorScreenPos({q.x - 30, p.y + 4});
-                if (ImGui::InvisibleButton("##delete", {24, 22})) later_ = [this] { removeSelected(); };
+                if (ImGui::InvisibleButton("##delete", {24, 22})) pendingRemove_ = {slot, ball};
                 removing = ImGui::IsItemHovered();
                 if (removing) ImGui::SetTooltip("이 공 삭제 (Delete)");
                 theme::icon(list, theme::Icon::Trash, {q.x - 18, p.y + 15}, 12, removing ? theme::warn : theme::text2);

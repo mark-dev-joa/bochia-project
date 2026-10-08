@@ -43,6 +43,7 @@ public:
     void showPage(int page);
     void selectSceneForCapture(int recordingNumber, int index);
     void selectForCapture(int camera, int rank);     // rank = left-to-right position of the ball in that camera
+    void askRemoveForCapture(int camera, int rank);  // opens the delete dialog for that ball
     bool selfCheckStep(int step);                    // scripted logic checks for the hidden smoke run
     bool stageCheckStep(int step);                   // the same for split and export; needs a fully confirmed project
     const std::string& error() const { return error_; }
@@ -128,6 +129,8 @@ private:
     void apply();
     void undo();
     void removeSelected();
+    void removeBall(int slot, int ball);
+    void confirmRemoval();                           // the dialog behind pendingRemove_
     void segment(cv::Point2d point, bool negative);
     void segmentBox(cv::Rect2d box);
     void polygonProposal();
