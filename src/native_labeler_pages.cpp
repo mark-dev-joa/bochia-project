@@ -320,6 +320,24 @@ void Application::preparePage() {
         if (record.is_object()) box.text("전파함 · " + grouped(record.value("frames", 0)) + "장 · 공 " + grouped(record.value("balls", 0)) + "개 · " + record.value("at", "").substr(0, 10));
         sy = box.close();
     }
+    {
+        // Balls partly hidden by a hand or a person, flagged by themselves (2026-10-08 user request).
+        SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "가려진 공 자동 표시");
+        const auto record = catalog_.value("occlusion_mark", Json());
+        const bool marking = occlusionStatus_.value("status", "") == "running";
+        if (marking) {
+            box.text((occlusionStatus_.value("dry_run", false) ? "시험 실행 중 · " : "표시하는 중 · ") + grouped(occlusionStatus_.value("done", 0)) + " / " + grouped(occlusionStatus_.value("total", 0)) + "장", theme::text);
+            progressBar(draw, {box.left(), box.y}, box.inner(), occlusionStatus_.value("done", 0), occlusionStatus_.value("total", 0), theme::accent); box.y += 14;
+        } else box.text("손·사람·가장자리에 가려진 공을 테두리 지지율과 마스크 모양으로 찾아 일부 가림으로 표시합니다.", theme::text);
+        ImGui::PushFont(nullptr, theme::px(theme::caption));
+        ImGui::SetCursorScreenPos({box.left(), box.y});
+        if (ImGui::Button("기준 · 시험 실행 · 적용…", {box.inner(), 30})) occludeAsk_ = true;
+        ImGui::PopFont();
+        box.y += 36;
+        if (occlusionStatus_.value("status", "") == "error") box.text(occlusionStatus_.value("error", ""), theme::warn);
+        if (record.is_object()) box.text("표시함 · 공 " + grouped(record.value("balls", 0)) + "개 · " + grouped(record.value("frames", 0)) + "장 · " + record.value("at", "").substr(0, 10));
+        sy = box.close();
+    }
     if (!recordings.empty()) {
         SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "카메라");
         for (const auto& camera : recordings[0]["cameras"]) {

@@ -335,6 +335,7 @@ Json nativeCatalog(const Project& project) {
             {"circle_margin", circleMargin(project)}, {"circle_refine", project.state.value("circle_refine", Json())},
             {"missing_fill", project.state.value("missing_fill", Json())},
             {"propagation", project.state.value("propagation", Json())}, {"propagation_counts", propagationCounts(project)},
+            {"occlusion_mark", project.state.value("occlusion_mark", Json())},
             // The data version: set only while the confirmed split still matches the labels.
             {"fingerprint", valid ? project.state["native_split"]["fingerprint"] : Json()}};
 }

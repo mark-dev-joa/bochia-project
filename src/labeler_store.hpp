@@ -42,6 +42,7 @@ public:
     Json missingJob = {{"status", "idle"}};   // the pass that adds the detector's balls the draft lacks
     Json missingTrials;                       // its named trials; null until the sidecar next to the label file is read
     Json propagationJob = {{"status", "idle"}};   // confirmed labels carried to repeated frames
+    Json occlusionJob = {{"status", "idle"}};     // balls marked partly hidden by themselves
     std::map<std::string, cv::Mat> thumbnails;   // "recording/camera/index@width"
     mutable SelectionFile selection;    // its sidecar cache refreshes on read
     Json summary() const;
@@ -56,6 +57,7 @@ public:
     std::jthread colorWorker;
     std::jthread missingWorker;
     std::jthread propagationWorker;
+    std::jthread occlusionWorker;
     std::jthread circleWorker;
 };
 std::vector<std::pair<std::string, Json>> selectedReviewed(const Json& snapshot);

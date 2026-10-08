@@ -397,7 +397,7 @@ void Application::loadMissingSamples(Json samples){
             shift("bbox");shift("detection_bbox");shift("circle");box.erase("segmentation");box.erase("contours");
             FrameView view;view.image=image(cv::Rect(x0,y0,x1-x0,y1-y0)).clone();
             view.annotation={{"key",key},{"boxes",Json::array({box})},{"index",index}};
-            view.member={{"index",index},{"kind",box.contains("color")?"컬러":"모노"},{"count",sample.value("count",1)},{"camera",camera}};
+            view.member={{"index",index},{"kind",box.contains("color")?"컬러":"모노"},{"count",sample.value("count",1)},{"camera",camera},{"note",sample.value("note","")}};
             result.frames.push_back(std::move(view));
         }
         return result;},
@@ -447,6 +447,25 @@ bool Application::missingScriptStep(int step){
     }
     return false;
 }
+// The sample crops of a trial: four to a row, each with its camera, frame and either the trial's note or the measured circle.
+void Application::sampleGrid(const char* heading){
+    ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"%s",heading);ImGui::PopFont();
+    auto draw=ImGui::GetWindowDrawList();const float side=132,gap=8;const ImVec2 start=ImGui::GetCursorScreenPos();
+    const int columns=4;const int rows=(int(missingSamples_.size())+columns-1)/columns;
+    ImGui::Dummy({columns*(side+gap)-gap,rows*(side+gap+18)-gap});
+    for(size_t i=0;i<missingSamples_.size();++i){
+        auto& sample=missingSamples_[i];if(sample.repaint)repaint(sample);
+        const ImVec2 p0{start.x+float(i%columns)*(side+gap),start.y+float(i/columns)*(side+gap+18)},p1{p0.x+side,p0.y+side};
+        paintImage(sample,p0,p1,{0,0,double(sample.image.cols),double(sample.image.rows)},{.fill=false,.boxes=true,.circles=true,.outlines=false,.selected=-1,.skip=-1});
+        draw->AddRect(p0,p1,theme::line,4);
+        const auto& box=sample.annotation["boxes"][0];char caption[112];
+        const std::string camera=sample.member.value("camera",""),note=sample.member.value("note","");
+        const char* cam=camera.empty()?"?":camera.substr(camera.size()-1).c_str();
+        if(!note.empty())std::snprintf(caption,sizeof caption,"%s·%04d %s",cam,sample.member.value("index",0),note.c_str());
+        else std::snprintf(caption,sizeof caption,"%s·%04d r%.1f %s",cam,sample.member.value("index",0),box.contains("circle")?box["circle"][2].get<double>():0.0,box.value("source","")=="auto_sam"?"SAM":"기하");
+        theme::write(draw,{p0.x,p1.y+3},theme::text2,caption,11,theme::mono);
+    }
+}
 void Application::confirmMissing(){
     if(!missingAsk_)return;
     if(!ImGui::IsPopupOpen("##fill-missing"))ImGui::OpenPopup("##fill-missing");
@@ -478,22 +497,7 @@ void Application::confirmMissing(){
             ImGui::TextUnformatted(line);
         } else if(status=="error")ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::warn),"%s",missingStatus_.value("error","").c_str());
         else ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"먼저 후보를 세거나 시험 실행으로 몇 장을 확인하세요.");
-        if(!missingSamples_.empty()&&status=="complete"){
-            ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"시험에서 더해질 공 (각 프레임의 첫 공)");ImGui::PopFont();
-            auto draw=ImGui::GetWindowDrawList();const float side=132,gap=8;const ImVec2 start=ImGui::GetCursorScreenPos();
-            const int columns=4;const int rows=(int(missingSamples_.size())+columns-1)/columns;
-            ImGui::Dummy({columns*(side+gap)-gap,rows*(side+gap+18)-gap});
-            for(size_t i=0;i<missingSamples_.size();++i){
-                auto& sample=missingSamples_[i];if(sample.repaint)repaint(sample);
-                const ImVec2 p0{start.x+float(i%columns)*(side+gap),start.y+float(i/columns)*(side+gap+18)},p1{p0.x+side,p0.y+side};
-                paintImage(sample,p0,p1,{0,0,double(sample.image.cols),double(sample.image.rows)},{.fill=false,.boxes=true,.circles=true,.outlines=false,.selected=-1,.skip=-1});
-                draw->AddRect(p0,p1,theme::line,4);
-                const auto& box=sample.annotation["boxes"][0];char caption[96];
-                const std::string camera=sample.member.value("camera","");
-                std::snprintf(caption,sizeof caption,"%s·%04d r%.1f %s",camera.empty()?"?":camera.substr(camera.size()-1).c_str(),sample.member.value("index",0),box.contains("circle")?box["circle"][2].get<double>():0.0,box.value("source","")=="auto_sam"?"SAM":"기하");
-                theme::write(draw,{p0.x,p1.y+3},theme::text2,caption,11,theme::mono);
-            }
-        }
+        if(!missingSamples_.empty()&&status=="complete")sampleGrid("시험에서 더해질 공 (각 프레임의 첫 공)");
         // Saving the trial under a name, the saved trials, and the assembly of two of them (2026-10-08 user request).
         if(status=="complete"&&missingStatus_.value("dry_run",false)&&!missingStatus_.value("count_only",false)&&missingStatus_.contains("results")){
             ImGui::BeginDisabled(busy());
@@ -576,6 +580,67 @@ void Application::confirmPropagation(){
         ImGui::PopFont();ImGui::EndDisabled();ImGui::SameLine();
         if(ImGui::Button("취소  Esc",{110,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
         if(close){propagateAsk_=false;ImGui::CloseCurrentPopup();}
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(2);
+}
+// Balls partly hidden by a hand, a person or the frame edge, marked by themselves (2026-10-08 user request). The rim
+// share, the mask's circularity and the box's aspect decide; a rim hidden by a neighbouring ball on the floor is exempt.
+void Application::startOcclusion(bool dryRun,bool countOnly,int limit){
+    if(busy())return;const auto engine=engine_;
+    const Json payload={{"coverage",double(occlCoverage_)},{"circularity",double(occlCircularity_)},{"aspect",double(occlAspect_)},{"include_reviewed",occlReviewed_},
+                        {"dry_run",dryRun},{"count_only",countOnly},{"limit_frames",limit>=0?limit:dryRun?occlTrial_:0},{"sample_limit",8}};
+    launch(countOnly?"가림 후보 세기":dryRun?"가림 시험 실행":"가림 표시",[engine,payload]{return JobResult{engine->nativeAction("mark-occluded",payload),{}};},
+           [this,countOnly](JobResult result){occlusionStatus_=result.data;message_=countOnly?"아직 표시 없는 공 "+grouped(occlusionStatus_.value("balls_total",0))+"개 · "+grouped(occlusionStatus_.value("frames_total",0))+"장":"가림 판정을 시작했습니다. 그동안 계속 작업할 수 있습니다.";});
+}
+void Application::confirmOcclusion(){
+    if(!occludeAsk_)return;
+    if(!ImGui::IsPopupOpen("##mark-occluded"))ImGui::OpenPopup("##mark-occluded");
+    const auto viewport=ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({viewport->WorkPos.x+viewport->WorkSize.x/2,viewport->WorkPos.y+viewport->WorkSize.y/2},ImGuiCond_Appearing,{.5f,.5f});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{22,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,10});
+    if(ImGui::BeginPopupModal("##mark-occluded",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
+        const std::string status=occlusionStatus_.value("status","idle");const bool running=status=="running";
+        ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted("가려진 공 자동 표시");ImGui::PopFont();
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+720);
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"손·사람·화면 가장자리에 가려진 공을 찾아 일부 가림으로 표시합니다. 근거는 Canny 원 맞춤의 테두리 지지율, 마스크 원형도, 박스 가로세로 비율입니다. 빠진 테두리 쪽에 다른 공이 닿아 있으면 바닥에서 공끼리 겹친 것이라 표시하지 않습니다(공 전체 규칙). 표시가 켜진 공과 사람이 확인한 이미지는 건드리지 않습니다.");
+        ImGui::PopTextWrapPos();ImGui::PopFont();
+        ImGui::Dummy({0,2});
+        ImGui::BeginDisabled(running);
+        ImGui::TextUnformatted("테두리 지지율");ImGui::SameLine();ImGui::SetNextItemWidth(90);ImGui::DragFloat("##ocov",&occlCoverage_,.01f,.3f,1.f,"%.2f");ImGui::SameLine();
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"이보다 적은 구간에서만 에지가 잡히면 가림");ImGui::PopFont();
+        ImGui::TextUnformatted("마스크 원형도");ImGui::SameLine();ImGui::SetNextItemWidth(90);ImGui::DragFloat("##ocirc",&occlCircularity_,.01f,.3f,1.f,"%.2f");ImGui::SameLine();
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"마스크 넓이 ÷ 박스에 맞는 원 넓이");ImGui::PopFont();
+        ImGui::TextUnformatted("박스 비율");ImGui::SameLine();ImGui::SetNextItemWidth(90);ImGui::DragFloat("##oasp",&occlAspect_,.01f,.3f,1.f,"%.2f");ImGui::SameLine();
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"짧은 변 ÷ 긴 변");ImGui::PopFont();
+        theme::checkbox("확인한 이미지의 공도 판정 (표시를 켜기만 함)",&occlReviewed_);
+        ImGui::TextUnformatted("시험 장수");ImGui::SameLine();ImGui::SetNextItemWidth(96);ImGui::DragInt("##otrial",&occlTrial_,1,5,500,"%d장");
+        ImGui::EndDisabled();
+        ImGui::Dummy({0,2});
+        if(running){char line[96];std::snprintf(line,sizeof line,"%s · %s / %s장",occlusionStatus_.value("dry_run",false)?"시험 실행 중":"표시하는 중",grouped(occlusionStatus_.value("done",0)).c_str(),grouped(occlusionStatus_.value("total",0)).c_str());ImGui::TextUnformatted(line);}
+        else if(status=="complete"){
+            char line[220];
+            if(occlusionStatus_.value("count_only",false))std::snprintf(line,sizeof line,"아직 표시 없는 공 %s개 · %s장",grouped(occlusionStatus_.value("balls_total",0)).c_str(),grouped(occlusionStatus_.value("frames_total",0)).c_str());
+            else if(occlusionStatus_.value("dry_run",false))std::snprintf(line,sizeof line,"시험 %s장 · 가림으로 판정 %s개 (%s장) · 옆 공에 가려 제외 %s개",grouped(occlusionStatus_.value("total",0)).c_str(),grouped(occlusionStatus_.value("balls",0)).c_str(),grouped(occlusionStatus_.value("frames",0)).c_str(),grouped(occlusionStatus_.value("neighbours",0)).c_str());
+            else std::snprintf(line,sizeof line,"적용 완료 · 공 %s개를 일부 가림으로 표시 (%s장) · 옆 공에 가려 제외 %s개 · 건너뜀 %s장",grouped(occlusionStatus_.value("applied_balls",0)).c_str(),grouped(occlusionStatus_.value("applied_frames",0)).c_str(),grouped(occlusionStatus_.value("neighbours",0)).c_str(),grouped(occlusionStatus_.value("skipped",0)).c_str());
+            ImGui::TextUnformatted(line);
+        } else if(status=="error")ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::warn),"%s",occlusionStatus_.value("error","").c_str());
+        else ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"먼저 후보를 세거나 시험 실행으로 몇 장을 확인하세요.");
+        if(!missingSamples_.empty()&&status=="complete"&&occlusionStatus_.value("dry_run",false)&&!occlusionStatus_.value("count_only",false))sampleGrid("가림으로 판정된 공 (각 프레임의 첫 공, 근거)");
+        ImGui::Dummy({0,4});
+        bool close=false;
+        ImGui::BeginDisabled(running||busy());
+        if(ImGui::Button("후보 세기",{110,34}))later_=[this]{startOcclusion(false,true);};
+        ImGui::SameLine();
+        {char label[48];std::snprintf(label,sizeof label,"시험 실행 %d장",occlTrial_);if(ImGui::Button(label,{150,34}))later_=[this]{startOcclusion(true,false);};}
+        ImGui::SameLine();
+        ImGui::PushFont(theme::bold,theme::px(theme::base));
+        if(theme::primaryButton("전체 적용",{130,34}))later_=[this]{startOcclusion(false,false);};
+        ImGui::PopFont();
+        ImGui::EndDisabled();ImGui::SameLine();
+        if(running){if(ImGui::Button("중단",{90,34}))later_=[this]{const auto engine=engine_;launch("가림 판정 중단",[engine]{return JobResult{engine->nativeAction("stop-occluded",Json::object()),{}};},[this](JobResult result){occlusionStatus_=result.data;});};ImGui::SameLine();}
+        if(ImGui::Button("닫기  Esc",{100,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
+        if(close){occludeAsk_=false;ImGui::CloseCurrentPopup();}
         ImGui::EndPopup();
     }
     ImGui::PopStyleVar(2);
@@ -694,13 +759,18 @@ void Application::tick(){
     if(queued_){if(!error_.empty())queued_=nullptr;else if(!busy()){auto action=std::move(queued_);queued_=nullptr;action();}}
     pumpThumbs();prefetch();
     if(ready()&&!busy()&&!pending()&&dirtySlot()>=0&&Clock::now()-changed_>std::chrono::milliseconds(450)&&error_.empty())save({},dirtySlot());
-    const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running"||colorStatus_.value("status","")=="running"||circleStatus_.value("status","")=="running"||missingStatus_.value("status","")=="running"||propagationStatus_.value("status","")=="running";
+    const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running"||colorStatus_.value("status","")=="running"||circleStatus_.value("status","")=="running"||missingStatus_.value("status","")=="running"||propagationStatus_.value("status","")=="running"||occlusionStatus_.value("status","")=="running";
     if(activeJob&&ready()&&!busy()&&Clock::now()-poll_>std::chrono::seconds(3)&&error_.empty()&&!current().dirty&&!pending()){
         poll_=Clock::now();const auto engine=engine_;
-        launch("작업 상태 확인",[engine]{return JobResult{{{"auto",engine->autoStatus()},{"export",engine->exportStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"missing",engine->missingFillStatus()},{"propagation",engine->propagationStatus()},{"catalog",engine->nativeCatalog()}}, {}};},[this](JobResult result){
+        launch("작업 상태 확인",[engine]{return JobResult{{{"auto",engine->autoStatus()},{"export",engine->exportStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"missing",engine->missingFillStatus()},{"propagation",engine->propagationStatus()},{"occlusion",engine->occlusionStatus()},{"catalog",engine->nativeCatalog()}}, {}};},[this](JobResult result){
             const auto oldRevision=catalog_["summary"].value("revision",0),oldAuto=catalog_["summary"].value("auto_revision",0);const bool exporting=exportStatus_.value("status","")=="running";
             const bool coloring=colorStatus_.value("status","")=="running",refining=circleStatus_.value("status","")=="running",filling=missingStatus_.value("status","")=="running",propagating=propagationStatus_.value("status","")=="running";
             propagationStatus_=result.data["propagation"];
+            const bool marking=occlusionStatus_.value("status","")=="running";occlusionStatus_=result.data["occlusion"];
+            if(marking&&occlusionStatus_.value("status","")!="running"){
+                if(occlusionStatus_.value("status","")!="complete")message_="가림 판정이 실패했습니다: "+occlusionStatus_.value("error","");
+                else if(occlusionStatus_.value("dry_run",false)){message_="가림 시험 완료 · "+grouped(occlusionStatus_.value("frames",0))+"장의 공 "+grouped(occlusionStatus_.value("balls",0))+"개가 가려진 것으로 판정 (저장 안 함)";loadMissingSamples(occlusionStatus_.value("samples",Json::array()));}
+                else{message_="공 "+grouped(occlusionStatus_.value("applied_balls",0))+"개를 일부 가림으로 표시했습니다 ("+grouped(occlusionStatus_.value("applied_frames",0))+"장).";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}}
             if(propagating&&propagationStatus_.value("status","")!="running"){message_=propagationStatus_.value("status","")=="complete"?"반복 프레임 "+grouped(propagationStatus_.value("frames",0))+"장에 라벨을 전파했습니다 (공 "+grouped(propagationStatus_.value("balls",0))+"개).":"라벨 전파가 실패했습니다: "+propagationStatus_.value("error","");if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
             autoStatus_=result.data["auto"];exportStatus_=result.data["export"];colorStatus_=result.data["color"];circleStatus_=result.data["circle"];missingStatus_=result.data["missing"];updateCatalog(result.data["catalog"]);
             if(filling&&missingStatus_.value("status","")!="running"){
@@ -877,10 +947,10 @@ bool Application::stageCheckStep(int step) {
 // The stage pages show per-recording counts that only the full catalog carries.
 void Application::refreshStage(){
     if(busy())return;const auto engine=engine_;
-    launch("현황 새로 읽기",[engine]{return JobResult{{{"catalog",engine->nativeCatalog()},{"exports",engine->exports()},{"export",engine->exportStatus()},{"auto",engine->autoStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"missing",engine->missingFillStatus()},{"propagation",engine->propagationStatus()}},{}};},
+    launch("현황 새로 읽기",[engine]{return JobResult{{{"catalog",engine->nativeCatalog()},{"exports",engine->exports()},{"export",engine->exportStatus()},{"auto",engine->autoStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"missing",engine->missingFillStatus()},{"propagation",engine->propagationStatus()},{"occlusion",engine->occlusionStatus()}},{}};},
         [this](JobResult result){
             const auto revision=catalog_["summary"].value("revision",0),automatic=catalog_["summary"].value("auto_revision",0);
-            missingStatus_=result.data["missing"];propagationStatus_=result.data["propagation"];
+            missingStatus_=result.data["missing"];propagationStatus_=result.data["propagation"];occlusionStatus_=result.data["occlusion"];
             updateCatalog(result.data["catalog"]);
             if(revision!=catalog_["summary"].value("revision",0)||automatic!=catalog_["summary"].value("auto_revision",0))stale_=true;
             exports_=result.data["exports"].value("exports",Json::array());exportStatus_=result.data["export"];autoStatus_=result.data["auto"];colorStatus_=result.data["color"];circleStatus_=result.data["circle"];
@@ -891,7 +961,7 @@ void Application::refreshStage(){
 }
 void Application::keys() {
     auto& io=ImGui::GetIO();
-    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||growAsk_||colorAsk_||circleAsk_||nextAsk_||missingAsk_||propagateAsk_)return;   // an open dialog owns the keys
+    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||growAsk_||colorAsk_||circleAsk_||nextAsk_||missingAsk_||propagateAsk_||occludeAsk_)return;   // an open dialog owns the keys
     auto pressed=[](ImGuiKey key){return ImGui::IsKeyPressed(key,false);};
     if(pressed(ImGuiKey_Escape)){
         if(pending())cancel();
@@ -1064,6 +1134,7 @@ void Application::draw(){
     confirmNext();
     confirmMissing();
     confirmPropagation();
+    confirmOcclusion();
     ImGui::PopStyleVar();
     ImGui::End();
     if(later_){auto action=std::move(later_);later_=nullptr;action();}

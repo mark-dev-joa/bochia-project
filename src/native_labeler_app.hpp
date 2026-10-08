@@ -39,7 +39,7 @@ public:
     void draw();
     bool ready() const { return catalog_.is_object() && !frames_.empty(); }
     bool busy() const { return task_.valid(); }
-    bool settled() const { return !busy() && !thumbTask_.valid() && thumbWanted_.empty() && colorStatus_.value("status", "") != "running" && circleStatus_.value("status", "") != "running" && missingStatus_.value("status", "") != "running" && propagationStatus_.value("status", "") != "running"; }
+    bool settled() const { return !busy() && !thumbTask_.valid() && thumbWanted_.empty() && colorStatus_.value("status", "") != "running" && circleStatus_.value("status", "") != "running" && missingStatus_.value("status", "") != "running" && propagationStatus_.value("status", "") != "running" && occlusionStatus_.value("status", "") != "running"; }
     bool idle() const;                               // settled and nothing waiting to be saved; an open proposal does not count
     void showEditor(int camera = 0);
     void showPage(int page);
@@ -54,6 +54,8 @@ public:
     void missingTrialForCapture(int frames) { missingTrial_ = frames; missingAsk_ = true; startMissing(true, false); }   // a trial of the missing-ball pass, to picture its dialog
     void missingApplyForCapture(int frames) { missingAsk_ = true; startMissing(false, false, frames); }           // applies the pass to a few frames, for the check of the apply path
     void propagateForCapture() { startPropagation(); }   // runs the propagation, for the check of its path
+    void occlusionTrialForCapture(int frames) { occlTrial_ = frames; occludeAsk_ = true; startOcclusion(true, false); }
+    void occlusionApplyForCapture(int frames) { occludeAsk_ = true; startOcclusion(false, false, frames); }
     bool selfCheckStep(int step);                    // scripted logic checks for the hidden smoke run
     bool stageCheckStep(int step);                   // the same for split and export; needs a fully confirmed project
     bool missingScriptStep(int step);                // trials of the missing-ball pass, their assembly and the apply of one
@@ -81,7 +83,10 @@ private:
          colorStatus_ = Json::object(),                          // the background colour fill
          circleStatus_ = Json::object(),                         // the background circle refinement
          missingStatus_ = Json::object(),                        // the pass that adds the detector's balls the draft lacks
-         propagationStatus_ = Json::object();                    // confirmed labels carried to repeated frames
+         propagationStatus_ = Json::object(),                    // confirmed labels carried to repeated frames
+         occlusionStatus_ = Json::object();                      // balls marked partly hidden by themselves
+    float occlCoverage_ = .72f, occlCircularity_ = .8f, occlAspect_ = .85f;   // the dialog's thresholds
+    bool occlReviewed_ = false; int occlTrial_ = 30;
     bool propagateForce_ = false;                                // the dialog's "also the frames already up to date"
     std::vector<FrameView> missingSamples_;                      // crops of a trial's new balls, shown in the dialog
     int missingCameras_ = 0, missingTrial_ = 30;                 // 0 colour only, 1 all cameras; frames per trial
@@ -123,7 +128,8 @@ private:
          circleAsk_ = false,                                     // the refine-circles dialog is open
          nextAsk_ = false,                                       // the scene is confirmed; the prompt asks whether to move on
          missingAsk_ = false,                                    // the missing-ball dialog is open
-         propagateAsk_ = false;                                  // the propagation dialog is open
+         propagateAsk_ = false,                                  // the propagation dialog is open
+         occludeAsk_ = false;                                    // the occlusion-marking dialog is open
     float brightness_ = 1.65f, brushSize_ = 6, radius_ = 16, circleMargin_ = .5f;
     int view_ = 0;                                               // how the frames are shown: original, contrast, gray, edges, gradient, edge overlay
     static constexpr int viewCount = 6;
@@ -185,6 +191,9 @@ private:
     void confirmNext();                              // the prompt behind nextAsk_: Space moves on, Esc stays
     void confirmMissing();                           // the dialog behind missingAsk_: options, count, trial, samples, apply
     void confirmPropagation();                       // the dialog behind propagateAsk_
+    void confirmOcclusion();                         // the dialog behind occludeAsk_: thresholds, count, trial, samples, apply
+    void startOcclusion(bool dryRun, bool countOnly, int limit = -1);
+    void sampleGrid(const char* heading);            // the sample crops of a trial, with the note or the measured circle
     void startPropagation();                         // carries confirmed labels to repeated frames
     void startMissing(bool dryRun, bool countOnly, int limit = -1);   // runs the pass with the dialog's options; limit overrides the frame count
     void loadMissingSamples(Json samples = Json());  // crops of new balls: the last trial's, or the given ones
