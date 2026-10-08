@@ -18,19 +18,21 @@ UI는 네이티브로 렌더링하며 모델은 이 PC에서 추론합니다.
 
 ## 기존 데이터 가져오기와 저장
 
-기본 입력은 `D:/works/bochia/data/imports/`입니다. 첫 실행 때 기존
-`output/ball-labeler/project.json`과 `project-selection.json`을
-`output/native-labeler/`에 한 번 복사합니다. 네이티브 프로젝트가 이미 있으면 복사하지 않습니다.
-기존 사람 수정, 자동 마스크, 대표 프레임 선택을 이어받습니다.
+기본 입력은 `D:/works/bochia/data/imports/`입니다. 라벨과 내보내기는 **실행 파일 옆 `data/`**에 둡니다.
+배포 위치는 `bin/release/labeler/`이고 작업 파일은 **`bin/release/labeler/data/labels/project.json`**,
+내보내기는 `bin/release/labeler/data/exports/`입니다. 그 자리에서 처음 실행하면 라벨을 한 번 가져옵니다.
+이전 네이티브 프로젝트(`output/native-labeler/project.json`)가 있으면 그것을, 없으면 웹 라벨러의
+`output/ball-labeler/project.json`을 `-selection.json`, `-auto-status.json`, `-native-ui.json`과 함께 복사합니다.
+이미 라벨이 있으면 복사하지 않습니다. 기존 사람 수정, 자동 마스크, 대표 프레임 선택을 이어받습니다.
 
-네이티브 기본 포트는 **8767**, 작업 파일은 **`output/native-labeler/project.json`**입니다.
-기존 웹 도구의 8766 및 `output/ball-labeler/project.json`은 별도로 유지합니다.
+네이티브 기본 포트는 **8767**입니다. 기존 웹 도구의 8766 및 `output/ball-labeler/project.json`은 별도로 유지합니다.
 첫 가져오기 이후 두 프로젝트의 편집 결과는 각자 저장되므로 주 작업은 네이티브 프로젝트에서 이어갑니다.
 동일 프로젝트 파일에 서버 두 개를 연결하지 마세요. 서로 다른 서버의 메모리 상태가 충돌할 수 있습니다.
+다른 위치의 프로젝트를 열고 있던 엔진이 그 포트에 남아 있으면 앱이 "이 포트는 다른 프로젝트를 사용 중입니다"라고 알립니다. 그 엔진을 내리고 다시 실행하세요.
 
 수정은 약 450ms 후 자동 저장합니다. 프레임 이동과 검수 완료는 저장 성공 후에 진행합니다.
 `expected_revision`이 다른 저장은 거부하고 현재 변경을 보관합니다. 원본 촬영 파일은 수정하지 않습니다.
-저장 실패 또는 미확정 작업을 보관하며 종료하면 `output/native-labeler/recovery/`에 JSON을 남깁니다.
+저장 실패 또는 미확정 작업을 보관하며 종료하면 라벨 옆 `recovery/`에 JSON을 남깁니다.
 이 파일은 자동 병합하지 않습니다. 정상 종료 시 마지막 장면·카메라·편집 화면·보기 설정을
 프로젝트 옆 `project-native-ui.json`에 저장합니다.
 
@@ -73,9 +75,13 @@ Python은 CMake의 `BOCCIA_LABELER_PYTHON`, 작업 루트는 `BOCCIA_LABELER_ROO
 Python 의존성 및 모델 준비는 `requirements-labeler.txt`, `tools/setup_labeler_assist.py`를 따릅니다.
 
 ```powershell
-cmake --build build --config Release --target boccia_labeler native_labeler_tests -j 4
-& .\build\Release\boccia_labeler.exe
+cmake --build build-labeler --config Release --target boccia_labeler native_labeler_tests -j 4
+powershell -File tools/collect_release.ps1
+& .\bin\release\labeler\boccia_labeler.exe
 ```
+
+`tools/collect_release.ps1`은 빌드 결과에서 실행 파일과 DLL만 `bin/release/labeler/`에 복사합니다.
+그 아래 `data/`는 건드리지 않습니다. 다른 도구는 `bin/release/` 아래 제 폴더를 갖습니다. `bin/`은 git에 넣지 않습니다.
 
 앱은 지정 포트에 올바른 프로젝트 엔진이 있으면 연결하고, 없으면 백그라운드 Python 엔진을 시작합니다.
 엔진은 앱을 닫은 뒤에도 남으며 다음 실행에서 재사용합니다.

@@ -50,3 +50,4 @@ Thumbs.db
 
 # Labeler v2 work builds here so it never collides with builds in /build/.
 /build-labeler/
+/bin/

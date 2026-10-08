@@ -43,7 +43,7 @@ void Application::restorePosition() {
 bool Application::idle() const {return settled()&&std::none_of(frames_.begin(),frames_.end(),[](const FrameView& frame){return frame.dirty;});}
 bool Application::canClose() const {return !busy()&&!pending()&&std::none_of(frames_.begin(),frames_.end(),[](const FrameView& frame){return frame.dirty;});}
 void Application::preserveRecovery(){
-    auto text=std::string(BOCCIA_LABELER_ROOT);auto directory=std::filesystem::path(std::u8string(text.begin(),text.end()))/"output/native-labeler/recovery";std::filesystem::create_directories(directory);
+    const auto directory=config_.project.parent_path()/"recovery";std::filesystem::create_directories(directory);   // beside the labels it belongs to
     for(auto& frame:frames_)if(frame.dirty||(&frame==&current()&&pending())){
         auto file=directory/("pending-"+std::to_string(Clock::now().time_since_epoch().count())+".json");
         Json snapshot={{"frame",frame.annotation},{"proposal",proposal_},{"polygon",Json::array()},{"points",points_},{"project",utf8(config_.project)}};

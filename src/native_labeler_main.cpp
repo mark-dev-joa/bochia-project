@@ -13,7 +13,9 @@ using namespace boccia::labeler;
 int main() {
     int argc{}; auto args=CommandLineToArgvW(GetCommandLineW(),&argc);
     Configuration config; auto root=fromUtf8(BOCCIA_LABELER_ROOT);
-    config.source=root/"data/imports";const auto nativeProject=std::filesystem::absolute(root/"output/native-labeler/project.json");config.project=nativeProject;config.exports=root/"output/native-labeler/exports";
+    // The engine code stays in the repository; the labels and exports live in data/ beside this program.
+    wchar_t module[MAX_PATH]{};GetModuleFileNameW(nullptr,module,MAX_PATH);const auto home=std::filesystem::path(module).parent_path()/"data";
+    config.source=root/"data/imports";const auto nativeProject=std::filesystem::absolute(home/"labels/project.json");config.project=nativeProject;config.exports=home/"exports";
     bool hidden=false,selfTest=false,stageTest=false;std::filesystem::path capture;std::wstring mode=L"overview";int recording=5,frame=0,requestedWidth=1440,requestedHeight=850,selectCamera=-1,selectRank=-1,checkStep=0;
     for(int i=1;i<argc;++i){std::wstring argument=args[i];
         auto value=[&](){if(i+1>=argc)throw std::runtime_error("Missing option value");return std::wstring(args[++i]);};
@@ -25,15 +27,18 @@ int main() {
     }LocalFree(args);config.rememberUi=!hidden;
     // The engine and the screens get the same full paths with one kind of separator.
     for(auto* path:{&config.source,&config.project,&config.exports})*path=std::filesystem::absolute(*path);
-    // Copy the existing reviewed work once; the browser and native processes use
-    // separate stores so their in-memory caches cannot overwrite each other.
+    // First run in this place: bring the labels over once. The native project worked on before this layout comes
+    // first, then the web labeler's. Each program keeps its own store, so their engines never overwrite each other.
     try {if(config.project==nativeProject&&!std::filesystem::exists(nativeProject)){
-        auto original=root/"output/ball-labeler/project.json";
-        if(std::filesystem::exists(original)){
+        for(const auto& original:{root/"output/native-labeler/project.json",root/"output/ball-labeler/project.json"}){
+            if(!std::filesystem::exists(original))continue;
             std::filesystem::create_directories(nativeProject.parent_path());
-            auto selection=original.parent_path()/"project-selection.json";
-            if(std::filesystem::exists(selection))std::filesystem::copy_file(selection,nativeProject.parent_path()/"project-selection.json",std::filesystem::copy_options::skip_existing);
+            for(const char* suffix:{"-selection.json","-auto-status.json","-native-ui.json"}){
+                const auto from=original.parent_path()/(original.stem().string()+suffix);
+                if(std::filesystem::exists(from))std::filesystem::copy_file(from,nativeProject.parent_path()/(nativeProject.stem().string()+suffix),std::filesystem::copy_options::skip_existing);
+            }
             std::filesystem::copy_file(original,nativeProject,std::filesystem::copy_options::skip_existing);
+            std::cerr<<"라벨을 가져왔습니다: "<<original.string()<<"\n";break;
         }
     }}catch(const std::exception& error){std::cerr<<"기존 라벨 가져오기 실패: "<<error.what()<<"\n";return 4;}
     if(!glfwInit())return 1;
