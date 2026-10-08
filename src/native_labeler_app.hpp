@@ -45,7 +45,6 @@ public:
     void showPage(int page);
     void selectSceneForCapture(int recordingNumber, int index);
     void selectForCapture(int camera, int rank);     // rank = left-to-right position of the ball in that camera
-    void askRemoveForCapture(int camera, int rank);  // opens the delete dialog for that ball
     void foldForCapture() { listOpen_ = sideOpen_ = summaryOpen_ = false; }
     void showShortcutsForCapture() { shortcutsWanted_ = true; }
     void showViewForCapture(int mode) { view_ = std::clamp(mode, 0, viewCount - 1); for (auto& frame : frames_) frame.repaint = true; }
@@ -86,7 +85,6 @@ private:
     std::future<Thumbs> thumbTask_;
     std::vector<std::vector<cv::Point>> proposalContours_;
     std::vector<std::string> picked_;                            // recordings ticked on the split page
-    BallRef pendingRemove_;                                      // ball whose deletion the dialog is asking about
     std::vector<int> history_;                                   // scenes shown before the current one, for the back button
     int scene_ = 0, camera_ = 0, selected_ = 0, filter_ = 0, pageCaptureScene_ = -1, aheadScene_ = -1, aheadAuto_ = -1,
         targetScenes_ = -1, emptyDrafts_ = 0,                    // counted from the catalog when targetScenes_ < 0
@@ -155,7 +153,6 @@ private:
     void undo();
     void removeSelected();
     void removeBall(int slot, int ball);
-    void confirmRemoval();                           // the dialog behind pendingRemove_
     void confirmGrowth();                            // the dialog behind growAsk_
     void growMasks(int pixels);
     void confirmColors();                            // the dialog behind colorAsk_

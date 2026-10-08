@@ -80,7 +80,6 @@ int main() {
                 if(stage==0){application.selectSceneForCapture(recording,frame);stage=1;}
                 else if(stage==1){
                     if(mode==L"editor"||mode==L"focus"){if(selectCamera>=0)application.selectForCapture(selectCamera,selectRank);else application.showEditor(0);}
-                    else if(mode==L"remove"){if(selectCamera>=0)application.askRemoveForCapture(selectCamera,selectRank);}
                     if(fold)application.foldForCapture();if(shortcuts)application.showShortcutsForCapture();if(display>=0)application.showViewForCapture(display);if(propose)application.proposeForCapture();if(prompt)application.confirmForCapture();
                     if(mode==L"prepare")application.showPage(0);else if(mode==L"split")application.showPage(2);else if(mode==L"export")application.showPage(3);
                     stage=2;}

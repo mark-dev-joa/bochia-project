@@ -430,7 +430,7 @@ void Application::cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact) {
             ImGui::SetCursorScreenPos({b.x - 26, a.y + 4});
             const bool asked = ImGui::InvisibleButton("##remove", {22, 22});
             removing = ImGui::IsItemHovered();
-            if (asked) pendingRemove_ = {slot, order[i]};
+            if (asked) later_ = [this, slot, ball = order[i]] { removeBall(slot, ball); };   // at once, no dialog
         }
         ImGui::PopID();
         if (i >= int(order.size())) {
@@ -790,7 +790,7 @@ void Application::sidePanel() {
             bool removing = false;
             if (active) {
                 ImGui::SetCursorScreenPos({q.x - 30, p.y + 4});
-                if (ImGui::InvisibleButton("##delete", {24, 22})) pendingRemove_ = {slot, ball};
+                if (ImGui::InvisibleButton("##delete", {24, 22})) later_ = [this, slot, ball] { removeBall(slot, ball); };   // at once, no dialog
                 removing = ImGui::IsItemHovered();
                 if (removing) ImGui::SetTooltip("이 공 삭제 (Delete)");
                 theme::icon(list, theme::Icon::Trash, {q.x - 18, p.y + 15}, 12, removing ? theme::warn : theme::text2);

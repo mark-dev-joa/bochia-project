@@ -228,6 +228,7 @@ void Application::removeBall(int slot,int ball){
     if(slot!=camera_&&current().dirty){save([this,slot,ball]{removeBall(slot,ball);});return;}
     camera_=slot;auto& objects=current().annotation["boxes"];if(ball<0||ball>=int(objects.size()))return;
     checkpoint();objects.erase(objects.begin()+ball);selected_=-1;current().scale=0;current().repaint=true;changed();
+    message_="공을 지웠습니다 · Ctrl+Z로 되돌릴 수 있습니다";   // no dialog: deletion is immediate (2026-10-08 user request)
 }
 // Grows every draft mask outward. The dialog says how many images and balls that touches; a person's work is left alone.
 void Application::confirmGrowth(){
@@ -347,32 +348,6 @@ void Application::fillColors(){
     if(!frames_.empty()&&dirtySlot()>=0){save([this]{fillColors();},dirtySlot());return;}
     const auto engine=engine_;
     launch("색상 채우기 시작",[engine]{return JobResult{engine->nativeAction("fill-colors",Json::object()),{}};},[this](JobResult result){colorStatus_=result.data;message_="색상을 채우는 중입니다. 끝나면 알려 드립니다.";});
-}
-// Asked from a crop or the ball list, where a click must not delete by itself.
-void Application::confirmRemoval(){
-    if(pendingRemove_.camera<0)return;
-    if(pendingRemove_.camera>=int(frames_.size())||pendingRemove_.index<0||pendingRemove_.index>=int(frames_[pendingRemove_.camera].annotation["boxes"].size())){pendingRemove_={};return;}
-    if(!ImGui::IsPopupOpen("##remove-ball"))ImGui::OpenPopup("##remove-ball");
-    const auto viewport=ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos({viewport->WorkPos.x+viewport->WorkSize.x/2,viewport->WorkPos.y+viewport->WorkSize.y/2},ImGuiCond_Appearing,{.5f,.5f});
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{22,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,10});
-    if(ImGui::BeginPopupModal("##remove-ball",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
-        const auto& frame=frames_[pendingRemove_.camera];const auto order=sorted(frame);
-        const int rank=int(std::find(order.begin(),order.end(),pendingRemove_.index)-order.begin())+1;
-        ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::Text("%s · 공 %d",cameraLabel(frame.member).c_str(),rank);ImGui::PopFont();
-        ImGui::TextUnformatted("이 공을 삭제할까요?");
-        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"윤곽과 박스를 지웁니다. Ctrl+Z로 되돌릴 수 있습니다.");ImGui::PopFont();
-        ImGui::Dummy({0,4});
-        bool close=false;const auto target=pendingRemove_;
-        ImGui::PushStyleColor(ImGuiCol_Button,theme::rgb(0xc8453f));ImGui::PushStyleColor(ImGuiCol_ButtonHovered,theme::rgb(0xd9534f));ImGui::PushStyleColor(ImGuiCol_ButtonActive,theme::rgb(0xb33a35));ImGui::PushStyleColor(ImGuiCol_Text,theme::rgb(0xffffff));
-        // Space accepts (2026-10-08 user request); Enter still works.
-        if(ImGui::Button("삭제  Space",{124,34})||ImGui::IsKeyPressed(ImGuiKey_Space,false)||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this,target]{removeBall(target.camera,target.index);};close=true;}
-        ImGui::PopStyleColor(4);ImGui::SameLine();
-        if(ImGui::Button("취소  Esc",{110,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
-        if(close){pendingRemove_={};ImGui::CloseCurrentPopup();}
-        ImGui::EndPopup();
-    }
-    ImGui::PopStyleVar(2);
 }
 void Application::undo(){if(busy())return;if(pending()){cancel();return;}auto& f=current();if(f.history.empty())return;f.annotation=f.history.back();f.history.pop_back();selected_=f.annotation["boxes"].empty()?-1:std::min(selected_,int(f.annotation["boxes"].size())-1);changed();}
 void Application::segment(cv::Point2d point,bool negative) {
@@ -528,7 +503,6 @@ void Application::fit(FrameView& f,ImVec2 size,bool toBall){
     const View view=toBall&&selected_>=0&&selected_<int(boxes.size())?ballView(detectionBox(boxes[selected_]),f.image.cols,f.image.rows,size.x,size.y):fitView(f.image.cols,f.image.rows,size.x,size.y);
     f.scale=view.scale;f.offsetX=view.x;f.offsetY=view.y;
 }
-void Application::askRemoveForCapture(int camera,int rank){if(camera<0||camera>=int(frames_.size()))return;const auto order=sorted(frames_[camera]);if(rank>=0&&rank<int(order.size()))pendingRemove_={camera,order[rank]};}
 void Application::proposeForCapture(){
     if(frames_.empty()||!editor_||selected_<0||selected_>=int(current().annotation["boxes"].size()))return;
     const auto r=detectionBox(current().annotation["boxes"][selected_]);
@@ -630,7 +604,7 @@ void Application::refreshStage(){
 }
 void Application::keys() {
     auto& io=ImGui::GetIO();
-    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||pendingRemove_.camera>=0||growAsk_||colorAsk_||circleAsk_||nextAsk_)return;   // an open dialog owns the keys
+    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||growAsk_||colorAsk_||circleAsk_||nextAsk_)return;   // an open dialog owns the keys
     auto pressed=[](ImGuiKey key){return ImGui::IsKeyPressed(key,false);};
     if(pressed(ImGuiKey_Escape)){
         if(pending())cancel();
@@ -717,7 +691,7 @@ void Application::shortcutsPopup(ImVec2 below) {
         {"A / D","이전 / 다음 장면"},{"Backspace","이전에 보던 장면으로"},{"1 / 2 / 3","그 카메라를 크게"},{"Tab / Shift+Tab","다음 / 이전 공"},
         {"방향키","선택한 공의 그 방향 경계를 1픽셀 바깥으로"},{"Shift+방향키","1픽셀 안으로"},{"V / S / B / P / R","선택 / AI 분할 / 브러시 / 폴리곤 / 박스"},
         {"왼쪽 / 오른쪽 클릭","더하기 / 빼기"},{"[ / ]","브러시 굵기"},{"Space / Esc","윤곽 반영 / 취소, 선택 해제, 세 장 보기"},{"G / M / X / C","윤곽 / 마스크 채움 / 박스 / 원 표시"},{"I","보기: 원본 / 대비 / 흑백 / 에지 / 그래디언트 / 에지 겹침"},
-        {"F / Z","화면 맞춤 / 선택한 공으로"},{"O / Delete","일부 가림 / 공 삭제 (확인창에서 Space로 수락)"},{"Ctrl+Z / Ctrl+S","되돌리기 / 저장"},{"휠 / 가운데 끌기","확대 / 이동"}};
+        {"F / Z","화면 맞춤 / 선택한 공으로"},{"O / Delete","일부 가림 / 공 삭제 (바로, Ctrl+Z로 되돌림)"},{"Ctrl+Z / Ctrl+S","되돌리기 / 저장"},{"휠 / 가운데 끌기","확대 / 이동"}};
     ImGui::SetNextWindowPos({below.x,below.y+4},ImGuiCond_Always,{1,0});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{16,12});
     if(ImGui::BeginPopup("##shortcuts")){
@@ -794,7 +768,6 @@ void Application::draw(){
         ImGui::EndChild();ImGui::PopStyleColor();ImGui::PopStyleVar(2);
     }
     statusBar();
-    confirmRemoval();
     confirmGrowth();
     confirmColors();
     confirmCircles();
