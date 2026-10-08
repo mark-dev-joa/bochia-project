@@ -613,9 +613,15 @@ void Application::canvasInput(FrameView& frame, ImVec2 pos, ImVec2 size, bool ho
     const bool inside = point.x >= 0 && point.y >= 0 && point.x < frame.image.cols && point.y < frame.image.rows;
     const bool left = ImGui::IsMouseClicked(ImGuiMouseButton_Left), right = ImGui::IsMouseClicked(ImGuiMouseButton_Right);
     const bool active = ImGui::IsItemActive();
-    if (hovered && io.MouseWheel != 0) {
-        const float updated = std::clamp(frame.scale * std::exp(io.MouseWheel * .16f), .1f, 24.f);
-        frame.offsetX = mouse.x - pos.x - float(point.x) * updated; frame.offsetY = mouse.y - pos.y - float(point.y) * updated; frame.scale = updated;
+    if (hovered && (io.MouseWheel != 0 || io.MouseWheelH != 0)) {
+        // A trackpad's pinch arrives as Ctrl+wheel and its two-finger scroll as small fractional steps, a mouse wheel as whole
+        // steps (2026-10-08 user request, Mac trackpad): pinch and mouse wheel zoom under the pointer, two-finger scroll pans.
+        const bool fractional = std::abs(io.MouseWheel - std::round(io.MouseWheel)) > 1e-3f || std::abs(io.MouseWheelH - std::round(io.MouseWheelH)) > 1e-3f;
+        if (!io.KeyCtrl && fractional) { frame.offsetX += io.MouseWheelH * 40; frame.offsetY += io.MouseWheel * 40; }
+        else if (io.MouseWheel != 0) {
+            const float updated = std::clamp(frame.scale * std::exp(io.MouseWheel * (io.KeyCtrl ? .4f : .16f)), .1f, 24.f);
+            frame.offsetX = mouse.x - pos.x - float(point.x) * updated; frame.offsetY = mouse.y - pos.y - float(point.y) * updated; frame.scale = updated;
+        }
     }
     if (active && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 0) || (panning_ && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0)))) { frame.offsetX += io.MouseDelta.x; frame.offsetY += io.MouseDelta.y; }
     if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) panning_ = false;
