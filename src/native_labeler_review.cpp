@@ -14,6 +14,39 @@ std::string padded(int value, int width) { auto text = std::to_string(value); re
 ImU32 colorSwatch(const std::string& color) {
     return color == "red" ? theme::rgb(0xe03b3b) : color == "blue" ? theme::rgb(0x3b6fe0) : color == "white" ? theme::rgb(0xf2f2f2) : color == "black" ? theme::rgb(0x1a1a1a) : 0;
 }
+const char* colorName(const std::string& color) {
+    return color == "red" ? "빨강" : color == "blue" ? "파랑" : color == "white" ? "흰색" : color == "black" ? "검정" : "";
+}
+// A ball's colour as a small dot with a dark rim, so a white or black dot stays visible on any background.
+void colorDot(ImDrawList* draw, ImVec2 center, ImU32 swatch, float radius = 4.5f) {
+    draw->AddCircleFilled(center, radius, swatch);
+    draw->AddCircle(center, radius, theme::line2, 0, 1.f);
+}
+// The number badge above each ball. On the colour camera it carries the ball's colour as a dot, and its name where
+// there is room: "1 ● 빨강" on the editor canvas, "1 ●" on the small tiles.
+void ballBadges(ImDrawList* draw, const Json& boxes, const std::vector<int>& order, const std::function<ImVec2(double, double)>& at, bool colourCamera, bool withName, int skip = -1) {
+    std::vector<ImVec4> placed;   // badges already drawn, so neighbours stack upward instead of covering each other
+    for (int rank = 0; rank < int(order.size()); ++rank) {
+        const int ball = order[rank];
+        if (ball == skip) continue;
+        const auto r = detectionBox(boxes[ball]);
+        const std::string number = std::to_string(rank + 1), color = boxes[ball].value("color", "unknown");
+        const ImU32 swatch = colourCamera ? colorSwatch(color) : 0;
+        const std::string name = swatch && withName ? colorName(color) : "";
+        const float numberWidth = theme::extent(number, 11, theme::bold).x, dotWidth = swatch ? 13.f : 0.f, nameWidth = name.empty() ? 0.f : theme::extent(name, 11).x + 3;
+        const ImVec2 top = at(r.x + r.width / 2, r.y);
+        ImVec2 center{top.x, top.y - 12};
+        const float w = std::max(16.f, numberWidth + dotWidth + nameWidth + 8);
+        auto overlaps = [&] { for (const auto& p : placed) if (center.x - w / 2 < p.z + 2 && center.x + w / 2 > p.x - 2 && center.y - 8 < p.w + 2 && center.y + 8 > p.y - 2) return true; return false; };
+        for (int lift = 0; lift < 8 && overlaps(); ++lift) center.y -= 18;
+        placed.push_back({center.x - w / 2, center.y - 8, center.x + w / 2, center.y + 8});
+        draw->AddRectFilled({center.x - w / 2, center.y - 8}, {center.x + w / 2, center.y + 8}, theme::rgb(0x0d0f12, 210), 8);
+        float tx = center.x - (numberWidth + dotWidth + nameWidth) / 2;
+        theme::write(draw, {tx, center.y - 7}, theme::mask, number, 11, theme::bold); tx += numberWidth;
+        if (swatch) { colorDot(draw, {tx + 8, center.y}, swatch, 4); tx += dotWidth; }
+        if (!name.empty()) theme::write(draw, {tx + 3, center.y - 7}, theme::text, name, 11);
+    }
+}
 const char* sourceTag(const Json& box) {
     const auto source = box.value("source", "manual");
     return source == "auto_sam" || source == "efficientsam" ? "SAM" : source == "auto_tracking" || source == "tracking" ? "추적" : source == "circle" || source == "auto_geometry" ? "원형" : "수동";
@@ -345,18 +378,7 @@ void Application::viewImage(int slot, ImVec2 a, ImVec2 b, bool compact) {
     const bool here = editor_ && slot == camera_;
     paintImage(frame, a, b, {0, 0, double(frame.image.cols), double(frame.image.rows)}, {.fill = true, .boxes = boxes_, .circles = circles_, .selected = here ? selected_ : -1});
     const float scale = (b.x - a.x) / frame.image.cols;
-    if (!compact) {
-        const auto order = sorted(frame);
-        const auto& boxes = frame.annotation["boxes"];
-        for (int rank = 0; rank < int(order.size()); ++rank) {
-            const auto r = detectionBox(boxes[order[rank]]);
-            const std::string number = std::to_string(rank + 1);
-            const ImVec2 center{a.x + float(r.x + r.width / 2) * scale, a.y + float(r.y) * scale - 12};
-            const float w = std::max(16.f, theme::extent(number, 11, theme::bold).x + 8);
-            draw->AddRectFilled({center.x - w / 2, center.y - 8}, {center.x + w / 2, center.y + 8}, theme::rgb(0x0d0f12, 210), 8);
-            theme::write(draw, {center.x - theme::extent(number, 11, theme::bold).x / 2, center.y - 7}, theme::mask, number, 11, theme::bold);
-        }
-    }
+    if (!compact) ballBadges(draw, frame.annotation["boxes"], sorted(frame), [&](double x, double y) { return ImVec2{a.x + float(x) * scale, a.y + float(y) * scale}; }, frame.member.value("kind", "") == "컬러", false);
     const ImVec2 mouse = ImGui::GetIO().MousePos;
     const cv::Point2d point{(mouse.x - a.x) / scale, (mouse.y - a.y) / scale};
     if (clicked) { const int ball = hit(frame, point); later_ = [this, slot, ball] { if (ball >= 0) select(slot, ball); else focus(slot); }; }
@@ -422,9 +444,12 @@ void Application::cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact) {
         const std::string number = std::to_string(i + 1);
         const float font = compact ? 11.f : theme::caption;
         theme::write(draw, {a.x + 1, b.y + (compact ? 3 : 4)}, active ? theme::selected : theme::text, number, font, theme::bold);
+        float lx = a.x + 7 + theme::extent(number, font, theme::bold).x;
+        // The colour camera's crop caption carries the ball's colour too: "1 ● 27×26 · r 13.0".
+        if (const ImU32 swatch = frame.member.value("kind", "") == "컬러" ? colorSwatch(boxes[ball].value("color", "unknown")) : 0) { colorDot(draw, {lx + 2, b.y + (compact ? 9.f : 12.f)}, swatch, compact ? 3.5f : 4.5f); lx += 13; }
         std::string label = sizeText(r);
         if (circles_ && ball < int(frame.circles.size()) && frame.circles[ball].r > 0) { char radius[24]; std::snprintf(radius, sizeof radius, " · r %.1f", frame.circles[ball].r); label += radius; }
-        if (!compact) theme::write(draw, {a.x + 7 + theme::extent(number, font, theme::bold).x, b.y + 4}, theme::text2, label, theme::caption, theme::mono);
+        if (!compact) theme::write(draw, {lx, b.y + 4}, theme::text2, label, theme::caption, theme::mono);
         if (cell > 70) {
             const char* tag = sourceTag(boxes[ball]);
             const float w = theme::extent(tag, 11).x + 10;
@@ -493,6 +518,7 @@ void Application::canvas(FrameView& frame, ImVec2 pos, ImVec2 size) {
     }
     const bool proposing = !proposal_.is_null();
     paintMarks(frame, at, {.fill = false, .boxes = boxes_, .circles = circles_, .selected = proposing ? -1 : selected_, .skip = proposing ? replacement_ : -1});
+    ballBadges(draw, frame.annotation["boxes"], sorted(frame), at, frame.member.value("kind", "") == "컬러", true, proposing ? replacement_ : -1);
     if (proposing) {
         for (const auto& contour : proposalContours_) {
             if (contour.size() < 3) continue;
