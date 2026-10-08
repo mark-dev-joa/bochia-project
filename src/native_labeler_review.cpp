@@ -388,9 +388,6 @@ void Application::cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact) {
             const bool asked = ImGui::InvisibleButton("##remove", {22, 22});
             removing = ImGui::IsItemHovered();
             if (asked) pendingRemove_ = {slot, order[i]};
-            draw->AddRectFilled({b.x - 26, a.y + 4}, {b.x - 4, a.y + 26}, theme::rgb(0x0d0f12, removing ? 235 : 150), 5);
-            theme::icon(draw, theme::Icon::Trash, {b.x - 15, a.y + 15}, 12, removing ? theme::warn : hovered ? theme::text : theme::text2);
-            if (removing) ImGui::SetTooltip("이 공 삭제");
         }
         ImGui::PopID();
         if (i >= int(order.size())) {
@@ -406,6 +403,11 @@ void Application::cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact) {
         const bool active = here && ball == selected_;
         paintImage(frame, a, b, cropRegion(r, frame.image.cols, frame.image.rows), {.fill = false, .boxes = boxes_, .selected = active ? ball : -1});
         draw->AddRect(a, b, active ? theme::selected : hovered ? theme::text3 : theme::line, 4, 0, active ? 2.f : 1.f);
+        if (cell > 70) {   // drawn after the image, which would otherwise cover it
+            draw->AddRectFilled({b.x - 26, a.y + 4}, {b.x - 4, a.y + 26}, theme::rgb(0x0d0f12, removing ? 235 : 150), 5);
+            theme::icon(draw, theme::Icon::Trash, {b.x - 15, a.y + 15}, 12, removing ? theme::warn : hovered ? theme::text : theme::text2);
+            if (removing) ImGui::SetTooltip("이 공 삭제");
+        }
         const std::string number = std::to_string(i + 1);
         const float font = compact ? 11.f : theme::caption;
         theme::write(draw, {a.x + 1, b.y + (compact ? 3 : 4)}, active ? theme::selected : theme::text, number, font, theme::bold);
