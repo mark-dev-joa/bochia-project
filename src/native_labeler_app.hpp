@@ -49,6 +49,7 @@ public:
     void foldForCapture() { listOpen_ = sideOpen_ = summaryOpen_ = false; }
     void showShortcutsForCapture() { shortcutsWanted_ = true; }
     void showViewForCapture(int mode) { view_ = std::clamp(mode, 0, viewCount - 1); for (auto& frame : frames_) frame.repaint = true; }
+    void proposeForCapture();                        // a polygon proposal around the selected ball, to picture the preview
     bool selfCheckStep(int step);                    // scripted logic checks for the hidden smoke run
     bool stageCheckStep(int step);                   // the same for split and export; needs a fully confirmed project
     const std::string& error() const { return error_; }
@@ -118,6 +119,8 @@ private:
     ImVec2 dragScreen_{};
     size_t generation_ = 0;
     std::string error_, message_ = "촬영 데이터 연결 중…", busyLabel_;
+    std::string toast_, toastNext_;                              // the notice shown after moving on, and the one prepared for the next scene
+    std::chrono::steady_clock::time_point toastUntil_{};
     std::chrono::steady_clock::time_point changed_, poll_;
     void launch(std::string label, std::function<JobResult()> work, std::function<void(JobResult)> completed);
     void connect();
@@ -175,6 +178,7 @@ private:
     void queue();
     void reviewPane();
     void sceneBar(ImVec2 pos, float width);
+    void toastOverlay(ImVec2 origin, float width);   // "프레임 0003 확인 → 지금은 프레임 0005", fading out
     void overviewTile(int slot, ImVec2 pos, ImVec2 size);
     void smallTile(int slot, ImVec2 pos, ImVec2 size);
     void focusTile(int slot, ImVec2 pos, ImVec2 size);

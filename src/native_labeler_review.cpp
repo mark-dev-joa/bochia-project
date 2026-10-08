@@ -291,6 +291,7 @@ void Application::reviewPane() {
     ImGui::Dummy(avail);
     const float x = origin.x + 12, width = avail.x - 24;
     sceneBar({x, origin.y + 10}, width);
+    toastOverlay({x, origin.y}, width);
     const float top = origin.y + 58, height = avail.y - 58 - 10;
     const auto spans = tileSpans(editor_ ? camera_ : -1, width);
     for (int slot = 0; slot < 3; ++slot) {
@@ -351,6 +352,20 @@ void Application::sceneBar(ImVec2 pos, float width) {
     draw->PushClipRect({x, pos.y}, {right - 10, pos.y + 40}, true);   // narrow windows cut the summary instead of running under the toggles
     theme::write(draw, {x, pos.y + 13}, theme::text3, meta, theme::caption);
     draw->PopClipRect();
+}
+// The notice after moving on: a card below the scene bar for 1.8 s, fading over the last half second.
+void Application::toastOverlay(ImVec2 origin, float width) {
+    if (toast_.empty() || std::chrono::steady_clock::now() >= toastUntil_) return;
+    const float remaining = std::chrono::duration<float>(toastUntil_ - std::chrono::steady_clock::now()).count();
+    const float alpha = std::clamp(remaining / .5f, 0.f, 1.f);
+    auto draw = ImGui::GetForegroundDrawList();
+    const float size = theme::px(theme::title);
+    const ImVec2 extent = theme::extent(toast_, size, theme::bold);
+    const ImVec2 center{origin.x + width / 2, origin.y + 70};
+    const ImVec2 a{center.x - extent.x / 2 - 24, center.y}, b{center.x + extent.x / 2 + 24, center.y + extent.y + 24};
+    draw->AddRectFilled(a, b, theme::rgb(0x0d0f12, int(235 * alpha)), 10);
+    draw->AddRect(a, b, theme::rgb(0x5b9dff, int(255 * alpha)), 10, 0, 1.5f);
+    theme::write(draw, {center.x - extent.x / 2, center.y + 12}, theme::rgb(0xffffff, int(255 * alpha)), toast_, size, theme::bold);
 }
 void Application::emptyTile(ImVec2 pos, ImVec2 size) {
     auto draw = ImGui::GetWindowDrawList();
@@ -578,7 +593,7 @@ void Application::canvas(FrameView& frame, ImVec2 pos, ImVec2 size) {
     draw->PopClipRect();
     canvasOverlays(frame, pos, size);
 }
-// Left button adds, right button (or Shift+left) removes. Wheel zooms, middle or Space drag pans.
+// Left button adds, right button (or Shift+left) removes. Wheel zooms, a middle drag pans (Space confirms the scene).
 void Application::canvasInput(FrameView& frame, ImVec2 pos, ImVec2 size, bool hovered) {
     auto& io = ImGui::GetIO();
     const ImVec2 mouse = io.MousePos;
@@ -596,7 +611,7 @@ void Application::canvasInput(FrameView& frame, ImVec2 pos, ImVec2 size, bool ho
     if (hovered && !busy() && (left || right)) {
         const bool remove = right || io.KeyShift;
         const int ball = inside ? hit(frame, point) : -1;
-        if (left && (ImGui::IsKeyDown(ImGuiKey_Space) || (tool_ == Tool::Select && ball < 0))) panning_ = true;
+        if (left && tool_ == Tool::Select && ball < 0) panning_ = true;
         else if (!inside) {}
         else if (tool_ == Tool::Select) { if (left && !pending()) { selected_ = ball; frame.scale = 0; frame.repaint = true; } }
         else if (tool_ == Tool::Ai) {
@@ -699,6 +714,34 @@ void Application::canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size) {
         }
     }
 
+    // The pending proposal enlarged at the bottom right, to judge the outline before applying (2026-10-08 user request).
+    if (!proposal_.is_null() && size.x > 520 && size.y > 420) {
+        cv::Rect2d r;
+        if (proposal_.contains("bbox")) r = detectionBox(proposal_);
+        else if (!brushMask_.empty()) { const auto b = cv::boundingRect(brushMask_); r = {double(b.x), double(b.y), double(b.width), double(b.height)}; }
+        if (r.width >= 1 && r.height >= 1) {
+            const float side = 220;
+            const ImVec2 p0{end.x - 10 - side, end.y - 10 - 22 - side}, p1{p0.x + side, p0.y + side};
+            draw->AddRectFilled({p0.x - 3, p0.y - 3}, {p1.x + 3, p1.y + 22 + 3}, theme::rgb(0x0d0f12, 200), 8);
+            const auto region = cropRegion(r, frame.image.cols, frame.image.rows);
+            paintImage(frame, p0, p1, region, {.fill = false, .boxes = boxes_, .circles = circles_, .outlines = outlines_, .selected = -1, .skip = replacement_});
+            const double scale = side / region.width;
+            draw->PushClipRect(p0, p1, true);
+            for (const auto& contour : proposalContours_) {
+                if (contour.size() < 3) continue;
+                std::vector<ImVec2> points; points.reserve(contour.size());
+                for (const auto& p : contour) points.push_back({p0.x + float((p.x + .5 - region.x) * scale), p0.y + float((p.y + .5 - region.y) * scale)});
+                draw->AddPolyline(points.data(), int(points.size()), theme::proposal, ImDrawFlags_Closed, 2);
+            }
+            if (proposal_.contains("circle") && circles_) { const auto& c = proposal_["circle"]; draw->AddCircle({p0.x + float((c[0].get<double>() - region.x) * scale), p0.y + float((c[1].get<double>() - region.y) * scale)}, float(c[2].get<double>() * scale), theme::circle, 0, 1.5f); }
+            draw->PopClipRect();
+            draw->AddRect(p0, p1, theme::proposal, 0, 0, 1.5f);
+            std::string caption = "제안 · " + sizeText(r);
+            if (proposal_.contains("circle")) { char radius[24]; std::snprintf(radius, sizeof radius, " · r %.1f", proposal_["circle"][2].get<double>()); caption += radius; }
+            if (proposal_.contains("color")) { const auto name = colorName(proposal_.value("color", "unknown")); if (*name) caption += std::string(" · ") + name; }
+            theme::write(draw, {p0.x, p1.y + 5}, theme::proposal, caption, theme::caption, theme::bold);
+        }
+    }
     if ((!proposal_.is_null() || polygon_.size() >= 3) && !dragging_) {   // pending proposal: apply or cancel
         ImVec2 anchor{pos.x + size.x / 2, end.y - 70};
         if (!proposal_.is_null()) { const auto r = detectionBox(proposal_); anchor = {pos.x + frame.offsetX + float(r.x + r.width / 2) * frame.scale, pos.y + frame.offsetY + float(r.y + r.height) * frame.scale + 22}; }
@@ -855,7 +898,7 @@ void Application::sidePanel() {
     draw->AddLine({origin.x, top + .5f}, {origin.x + avail.x, top + .5f}, theme::line);
     ImGui::PushFont(theme::bold, theme::px(theme::base));
     ImGui::SetCursorScreenPos({origin.x + pad, top + 12});
-    if (theme::primaryButton("세 장 확인하고 다음 장면   E", {width, 44})) later_ = [this] { review(Scope::Scene, false); };
+    if (theme::primaryButton("세 장 확인하고 다음 장면   Space", {width, 44})) later_ = [this] { review(Scope::Scene, false); };
     ImGui::PopFont();
     ImGui::PushFont(nullptr, theme::px(theme::caption));
     ImGui::SetCursorScreenPos({origin.x + pad, top + 66});

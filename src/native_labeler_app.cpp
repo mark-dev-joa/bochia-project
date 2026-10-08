@@ -124,7 +124,9 @@ void Application::loadScene(int index,bool editor,int camera,std::string note) {
         const auto& members=catalog_["scenes"][index]["members"];
         for(size_t i=0;i<result.frames.size()&&i<members.size();++i){result.frames[i].member=members[i];result.frames[i].annotation["review_status"]=members[i].value("status","draft");}
         if(backing_)backing_=false;else if(!frames_.empty()&&scene_!=index){history_.push_back(scene_);if(history_.size()>50)history_.erase(history_.begin());}
-        releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor;stale_=false;aheadDirty_=true;scrollToCurrent_=true;cancel();message_=note.empty()?"원본과 저장 라벨 표시 중":note;};
+        releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor;stale_=false;aheadDirty_=true;scrollToCurrent_=true;cancel();message_=note.empty()?"원본과 저장 라벨 표시 중":note;
+        // After a confirmation the view changes at once; a short notice says which frame was left and which one this is.
+        if(!toastNext_.empty()){char now[32];std::snprintf(now,sizeof now,"프레임 %04d",catalog_["scenes"][index].value("index",0));toast_=toastNext_+"  →  지금은 "+now;toastNext_.clear();toastUntil_=Clock::now()+std::chrono::milliseconds(1800);}};
     // A scene fetched ahead is used only if no automatic draft has been written since.
     if(index==aheadScene_&&ahead_.valid()&&aheadAuto_==catalog_["summary"].value("auto_revision",0)){
         const auto fetched=ahead_.share();aheadScene_=-1;++aheadHits_;
@@ -210,12 +212,15 @@ void Application::apply() {
         auto box=proposal_;
         if(!brushMask_.empty())box=maskAnnotation(brushMask_,box,"manual_brush");
         checkpoint();auto& existing=current().annotation["boxes"];
-        if(replacement_>=0&&replacement_<int(existing.size())) {
+        const bool added=!(replacement_>=0&&replacement_<int(existing.size()));
+        if(!added) {
             box["occluded"]=existing[replacement_].value("occluded",false);
             if(existing[replacement_].contains("color"))box["color"]=existing[replacement_]["color"];
             existing[replacement_]=box;selected_=replacement_;
         } else {existing.push_back(box);selected_=int(existing.size())-1;}
         cancel();changed();message_="윤곽 반영 · 박스는 마스크에서 다시 계산했습니다.";
+        // A found ball, once applied, takes the user back to the three-tile view (2026-10-08 user request).
+        if(added){editor_=false;selected_=-1;message_="새 공 반영 · 세 장 보기로 돌아왔습니다. 확대 조각에서 확인하세요.";}
     } catch(const std::exception& error){error_=error.what();}
 }
 void Application::removeSelected(){if(editor_)removeBall(camera_,selected_);}
@@ -393,7 +398,8 @@ void Application::review(Scope scope,bool hold,int member) {
         if(result.data.contains("conflict")){updateCatalog(result.data["catalog"]);loadScene(scene_,editor_,camera_,"저장된 라벨이 화면과 달라 다시 불러왔습니다. 확인한 뒤 다시 누르세요.");return;}
         updateSummary(result.data.at("summary"));
         for(auto& f:frames_)if(std::find(keys.begin(),keys.end(),f.annotation["key"])!=keys.end()){f.annotation["reviewed"]=!hold;f.annotation["review_status"]=hold?"hold":"reviewed";}
-        message_=hold?"보류로 표시했습니다":"확인했습니다";if(advance)nextUnreviewed();});
+        message_=hold?"보류로 표시했습니다":"확인했습니다";
+        if(advance){char left[48];std::snprintf(left,sizeof left,"프레임 %04d %s",catalog_["scenes"][scene_].value("index",0),hold?"보류":"확인");toastNext_=left;nextUnreviewed();}});
 }
 // Held images are skipped; they are revisited through the list filter.
 int Application::nextUnreviewedIndex() const {
@@ -408,6 +414,7 @@ void Application::back(){
 }
 void Application::nextUnreviewed(){
     const int index=nextUnreviewedIndex();
+    if(index<0||index==scene_){if(!toastNext_.empty()){toast_=toastNext_+"  ·  더 넘어갈 미검수 장면이 없습니다";toastNext_.clear();toastUntil_=Clock::now()+std::chrono::milliseconds(1800);}}
     if(index<0){editor_=false;message_="검수 대상을 모두 확인했습니다. 분할 단계로 넘어가세요.";return;}
     if(index==scene_){message_="남은 미검수 이미지는 이 장면뿐입니다.";return;}
     loadScene(index);
@@ -500,6 +507,11 @@ void Application::fit(FrameView& f,ImVec2 size,bool toBall){
     f.scale=view.scale;f.offsetX=view.x;f.offsetY=view.y;
 }
 void Application::askRemoveForCapture(int camera,int rank){if(camera<0||camera>=int(frames_.size()))return;const auto order=sorted(frames_[camera]);if(rank>=0&&rank<int(order.size()))pendingRemove_={camera,order[rank]};}
+void Application::proposeForCapture(){
+    if(frames_.empty()||!editor_||selected_<0||selected_>=int(current().annotation["boxes"].size()))return;
+    const auto r=detectionBox(current().annotation["boxes"][selected_]);
+    polygon_={{r.x,r.y},{r.x+r.width,r.y},{r.x+r.width,r.y+r.height},{r.x,r.y+r.height}};tool_=Tool::Polygon;polygonProposal();
+}
 void Application::selectForCapture(int camera,int rank){if(frames_.empty()||camera<0||camera>=int(frames_.size()))return;const auto order=sorted(frames_[camera]);if(rank>=0&&rank<int(order.size()))select(camera,order[rank]);}
 // One step per call while the app is idle. Returns false when every step has passed; throws on a failed expectation.
 bool Application::selfCheckStep(int step) {
@@ -606,7 +618,7 @@ void Application::keys() {
     if(io.KeyCtrl&&pressed(ImGuiKey_Z))undo();
     if(io.KeyCtrl&&pressed(ImGuiKey_S))save();
     if(io.KeyCtrl||io.KeyAlt)return;
-    if(pressed(ImGuiKey_E))review(io.KeyShift&&editor_?Scope::Camera:Scope::Scene,false);
+    if(pressed(ImGuiKey_Space)||pressed(ImGuiKey_E))review(io.KeyShift&&editor_?Scope::Camera:Scope::Scene,false);   // Space confirms (2026-10-08 user request)
     if(pressed(ImGuiKey_Q))review(editor_?Scope::Camera:Scope::Scene,true);
     if(pressed(ImGuiKey_N)&&guard())nextUnreviewed();
     if(pressed(ImGuiKey_Backspace))back();
@@ -676,7 +688,7 @@ void Application::topBar() {
 }
 // The key list lives here instead of in hint lines all over the screens.
 void Application::shortcutsPopup(ImVec2 below) {
-    static const char* const rows[][2]={{"E","세 장 확인하고 다음 미검수 장면"},{"Shift+E","크게 보는 카메라 한 장만 확인"},{"Q","보류"},{"N","다음 미검수 장면"},
+    static const char* const rows[][2]={{"Space / E","세 장 확인하고 다음 미검수 장면"},{"Shift+Space / Shift+E","크게 보는 카메라 한 장만 확인"},{"Q","보류"},{"N","다음 미검수 장면"},
         {"A / D","이전 / 다음 장면"},{"Backspace","이전에 보던 장면으로"},{"1 / 2 / 3","그 카메라를 크게"},{"Tab / Shift+Tab","다음 / 이전 공"},
         {"방향키","선택한 공의 그 방향 경계를 1픽셀 바깥으로"},{"Shift+방향키","1픽셀 안으로"},{"V / S / B / P / R","선택 / AI 분할 / 브러시 / 폴리곤 / 박스"},
         {"왼쪽 / 오른쪽 클릭","더하기 / 빼기"},{"[ / ]","브러시 굵기"},{"Enter / Esc","윤곽 반영 / 취소, 선택 해제, 세 장 보기"},{"G / M / X / C","윤곽 / 마스크 채움 / 박스 / 원 표시"},{"I","보기: 원본 / 대비 / 흑백 / 에지 / 그래디언트 / 에지 겹침"},
