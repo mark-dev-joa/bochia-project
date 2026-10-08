@@ -284,6 +284,24 @@ void Application::preparePage() {
         if (refine.is_object()) { char used[32]; std::snprintf(used, sizeof used, " · 여유 %+.2f · ", refine.value("margin", .5)); box.text("다듬음 · 공 " + grouped(refine.value("balls", 0)) + "개 · 건너뜀 " + grouped(refine.value("skipped", 0)) + "개" + used + refine.value("at", "").substr(0, 10)); }
         sy = box.close();
     }
+    {
+        // The detector's balls the draft lacks, above all the colour camera's far balls (2026-10-08 investigation).
+        SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "초안에 없는 공 (검출기 결과)");
+        const auto filled = catalog_.value("missing_fill", Json());
+        const bool filling = missingStatus_.value("status", "") == "running";
+        if (filling) {
+            box.text((missingStatus_.value("dry_run", false) ? "시험 실행 중 · " : "채우는 중 · ") + grouped(missingStatus_.value("done", 0)) + " / " + grouped(missingStatus_.value("total", 0)) + "장", theme::text);
+            progressBar(draw, {box.left(), box.y}, box.inner(), missingStatus_.value("done", 0), missingStatus_.value("total", 0), theme::accent); box.y += 14;
+        } else box.text("컬러 카메라의 먼 공이 초안에서 빠졌습니다. 옵션을 정해 몇 장만 시험해 보고 적용하세요.", theme::text);
+        ImGui::PushFont(nullptr, theme::px(theme::caption));
+        ImGui::SetCursorScreenPos({box.left(), box.y});
+        if (ImGui::Button("옵션 · 시험 실행 · 적용…", {box.inner(), 30})) missingAsk_ = true;
+        ImGui::PopFont();
+        box.y += 36;
+        if (missingStatus_.value("status", "") == "error") box.text(missingStatus_.value("error", ""), theme::warn);
+        if (filled.is_object()) box.text("추가함 · " + grouped(filled.value("frames", 0)) + "장에 공 " + grouped(filled.value("balls", 0)) + "개 · " + filled.value("at", "").substr(0, 10));
+        sy = box.close();
+    }
     if (!recordings.empty()) {
         SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "카메라");
         for (const auto& camera : recordings[0]["cameras"]) {

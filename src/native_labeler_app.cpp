@@ -367,6 +367,106 @@ void Application::confirmNext(){
     }
     ImGui::PopStyleVar(2);
 }
+// The missing-ball pass (2026-10-08 user request): the detector's balls the draft lacks, with options, a count, a trial
+// on a few frames whose new balls are shown as crops, and the full apply. Only images nobody has touched are changed.
+void Application::startMissing(bool dryRun,bool countOnly,int limit){
+    if(busy())return;
+    const auto engine=engine_;
+    const Json payload={{"cameras",missingCameras_==0?"colour":"all"},{"coverage",double(missingCoverage_)},{"min_radius",double(missingMinRadius_)},{"max_radius",double(missingMaxRadius_)},
+                        {"margin",double(circleMargin_)},{"dry_run",dryRun},{"count_only",countOnly},{"limit_frames",limit>=0?limit:dryRun?missingTrial_:0},{"sample_limit",8}};
+    launch(countOnly?"누락 공 후보 세기":dryRun?"누락 공 시험 실행":"누락 공 채우기",[engine,payload]{return JobResult{engine->nativeAction("fill-missing",payload),{}};},
+           [this,countOnly](JobResult result){missingStatus_=result.data;if(countOnly)message_="후보 "+grouped(missingStatus_.value("candidates",0))+"개 · "+grouped(missingStatus_.value("frames_with_candidates",0))+"장";else message_="누락 공 작업을 시작했습니다. 그동안 계속 작업할 수 있습니다.";});
+}
+// Each sample: the image around one new ball, the box and circle moved into the crop, shown by the usual tile painter.
+void Application::loadMissingSamples(){
+    const Json samples=missingStatus_.value("samples",Json::array());
+    if(samples.empty()||busy()){for(auto& s:missingSamples_){if(s.texture)doomed_.push_back(s.texture);if(s.overlay)doomed_.push_back(s.overlay);}missingSamples_.clear();return;}
+    const auto engine=engine_;
+    launch("샘플 조각 읽기",[engine,samples]{
+        JobResult result;
+        for(const auto& sample:samples){
+            const std::string key=sample.value("key","");const auto a=key.find('/'),b=key.rfind('/');if(a==std::string::npos||b==a)continue;
+            const std::string recording=key.substr(0,a),camera=key.substr(a+1,b-a-1);const int index=std::stoi(key.substr(b+1));
+            const cv::Mat image=engine->image(recording,camera,index);if(image.empty())continue;
+            Json box=sample["box"];const auto r=detectionBox(box);const auto region=cropRegion(r,image.cols,image.rows,2.6);
+            const int x0=std::max(0,int(std::floor(region.x))),y0=std::max(0,int(std::floor(region.y)));
+            const int x1=std::min(image.cols,int(std::ceil(region.x+region.width))),y1=std::min(image.rows,int(std::ceil(region.y+region.height)));
+            if(x1-x0<4||y1-y0<4)continue;
+            auto shift=[&](const char* name){if(box.contains(name)){box[name][0]=box[name][0].get<double>()-x0;box[name][1]=box[name][1].get<double>()-y0;}};
+            shift("bbox");shift("detection_bbox");shift("circle");box.erase("segmentation");box.erase("contours");
+            FrameView view;view.image=image(cv::Rect(x0,y0,x1-x0,y1-y0)).clone();
+            view.annotation={{"key",key},{"boxes",Json::array({box})},{"index",index}};
+            view.member={{"index",index},{"kind",box.contains("color")?"컬러":"모노"},{"count",sample.value("count",1)},{"camera",camera}};
+            result.frames.push_back(std::move(view));
+        }
+        return result;},
+        [this](JobResult result){for(auto& s:missingSamples_){if(s.texture)doomed_.push_back(s.texture);if(s.overlay)doomed_.push_back(s.overlay);}missingSamples_=std::move(result.frames);});
+}
+void Application::confirmMissing(){
+    if(!missingAsk_)return;
+    if(!ImGui::IsPopupOpen("##fill-missing"))ImGui::OpenPopup("##fill-missing");
+    const auto viewport=ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({viewport->WorkPos.x+viewport->WorkSize.x/2,viewport->WorkPos.y+viewport->WorkSize.y/2},ImGuiCond_Appearing,{.5f,.5f});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{22,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,10});
+    if(ImGui::BeginPopupModal("##fill-missing",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
+        const std::string status=missingStatus_.value("status","idle");const bool running=status=="running";
+        ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted("검출기가 찾았지만 초안에 없는 공 채우기");ImGui::PopFont();
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+720);ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"초안의 씨앗은 스테레오 매칭을 거친 공뿐이라 컬러 카메라의 먼 공이 빠졌습니다. 검출기 결과(detections.jsonl)에서 조건에 맞고 초안에 없는 공을 SAM으로 따고 원 맞춤과 색상까지 붙여 더합니다. 사람이 손댄 이미지는 건드리지 않습니다.");ImGui::PopTextWrapPos();ImGui::PopFont();
+        ImGui::Dummy({0,2});
+        ImGui::BeginDisabled(running);
+        ImGui::TextUnformatted("카메라");ImGui::SameLine();ImGui::RadioButton("컬러만",&missingCameras_,0);ImGui::SameLine();ImGui::RadioButton("모든 카메라",&missingCameras_,1);
+        ImGui::TextUnformatted("커버리지 기준");ImGui::SameLine();ImGui::SetNextItemWidth(96);ImGui::DragFloat("##coverage",&missingCoverage_,.01f,.5f,1.f,"%.2f");ImGui::SameLine();
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"검출기가 본 테두리 비율. 낮출수록 공이 늘고 오검출도 늘어납니다");ImGui::PopFont();
+        ImGui::TextUnformatted("반지름 범위");ImGui::SameLine();ImGui::SetNextItemWidth(72);ImGui::DragFloat("##rmin",&missingMinRadius_,.5f,2.f,100.f,"%.0f px");ImGui::SameLine();ImGui::TextUnformatted("~");ImGui::SameLine();ImGui::SetNextItemWidth(72);ImGui::DragFloat("##rmax",&missingMaxRadius_,.5f,2.f,300.f,"%.0f px");
+        if(missingMaxRadius_<missingMinRadius_)missingMaxRadius_=missingMinRadius_;
+        ImGui::TextUnformatted("시험 장수");ImGui::SameLine();ImGui::SetNextItemWidth(96);ImGui::DragInt("##trial",&missingTrial_,1,5,500,"%d장");ImGui::SameLine();
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"고르게 뽑은 프레임에서만 돌려 보고 저장하지 않음 · 둘레 여유는 공 둘레 설정(%+.2f px)",circleMargin_);ImGui::PopFont();
+        ImGui::EndDisabled();
+        ImGui::Dummy({0,2});
+        // What the last run (count, trial or apply) found.
+        if(running){char line[96];std::snprintf(line,sizeof line,"%s · %s / %s장",missingStatus_.value("dry_run",false)?"시험 실행 중":"채우는 중",grouped(missingStatus_.value("done",0)).c_str(),grouped(missingStatus_.value("total",0)).c_str());ImGui::TextUnformatted(line);}
+        else if(status=="complete"){
+            char line[200];
+            if(missingStatus_.value("count_only",false))std::snprintf(line,sizeof line,"후보 %s개 · %s장 (손대지 않은 %s장 중)",grouped(missingStatus_.value("candidates",0)).c_str(),grouped(missingStatus_.value("frames_with_candidates",0)).c_str(),grouped(missingStatus_.value("scanned",0)).c_str());
+            else if(missingStatus_.value("dry_run",false))std::snprintf(line,sizeof line,"시험 %s장 · 공 %s개 추가 가능 (SAM %s · 기하 %s · 원 맞춤 %s) · 전체 후보 %s개 / %s장",grouped(missingStatus_.value("total",0)).c_str(),grouped(missingStatus_.value("balls",0)).c_str(),grouped(missingStatus_.value("sam",0)).c_str(),grouped(missingStatus_.value("geometry",0)).c_str(),grouped(missingStatus_.value("circles",0)).c_str(),grouped(missingStatus_.value("candidates",0)).c_str(),grouped(missingStatus_.value("frames_with_candidates",0)).c_str());
+            else std::snprintf(line,sizeof line,"적용 완료 · %s장에 공 %s개 추가 (SAM %s · 기하 %s · 원 맞춤 %s) · 건너뜀 %s장",grouped(missingStatus_.value("applied_frames",0)).c_str(),grouped(missingStatus_.value("applied_balls",0)).c_str(),grouped(missingStatus_.value("sam",0)).c_str(),grouped(missingStatus_.value("geometry",0)).c_str(),grouped(missingStatus_.value("circles",0)).c_str(),grouped(missingStatus_.value("skipped",0)).c_str());
+            ImGui::TextUnformatted(line);
+        } else if(status=="error")ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::warn),"%s",missingStatus_.value("error","").c_str());
+        else ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"먼저 후보를 세거나 시험 실행으로 몇 장을 확인하세요.");
+        if(!missingSamples_.empty()&&status=="complete"){
+            ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"시험에서 더해질 공 (각 프레임의 첫 공)");ImGui::PopFont();
+            auto draw=ImGui::GetWindowDrawList();const float side=132,gap=8;const ImVec2 start=ImGui::GetCursorScreenPos();
+            const int columns=4;const int rows=(int(missingSamples_.size())+columns-1)/columns;
+            ImGui::Dummy({columns*(side+gap)-gap,rows*(side+gap+18)-gap});
+            for(size_t i=0;i<missingSamples_.size();++i){
+                auto& sample=missingSamples_[i];if(sample.repaint)repaint(sample);
+                const ImVec2 p0{start.x+float(i%columns)*(side+gap),start.y+float(i/columns)*(side+gap+18)},p1{p0.x+side,p0.y+side};
+                paintImage(sample,p0,p1,{0,0,double(sample.image.cols),double(sample.image.rows)},{.fill=false,.boxes=true,.circles=true,.outlines=false,.selected=-1,.skip=-1});
+                draw->AddRect(p0,p1,theme::line,4);
+                const auto& box=sample.annotation["boxes"][0];char caption[96];
+                const std::string camera=sample.member.value("camera","");
+                std::snprintf(caption,sizeof caption,"%s·%04d r%.1f %s",camera.empty()?"?":camera.substr(camera.size()-1).c_str(),sample.member.value("index",0),box.contains("circle")?box["circle"][2].get<double>():0.0,box.value("source","")=="auto_sam"?"SAM":"기하");
+                theme::write(draw,{p0.x,p1.y+3},theme::text2,caption,11,theme::mono);
+            }
+        }
+        ImGui::Dummy({0,4});
+        bool close=false;
+        ImGui::BeginDisabled(running||busy());
+        if(ImGui::Button("후보 세기",{110,34}))later_=[this]{startMissing(false,true);};
+        ImGui::SameLine();
+        {char label[48];std::snprintf(label,sizeof label,"시험 실행 %d장",missingTrial_);if(ImGui::Button(label,{150,34}))later_=[this]{startMissing(true,false);};}
+        ImGui::SameLine();
+        ImGui::PushFont(theme::bold,theme::px(theme::base));
+        if(theme::primaryButton("전체 적용",{130,34}))later_=[this]{startMissing(false,false);};
+        ImGui::PopFont();
+        ImGui::EndDisabled();ImGui::SameLine();
+        if(running){if(ImGui::Button("중단",{90,34}))later_=[this]{const auto engine=engine_;launch("누락 공 작업 중단",[engine]{return JobResult{engine->nativeAction("stop-missing",Json::object()),{}};},[this](JobResult result){missingStatus_=result.data;});};ImGui::SameLine();}
+        if(ImGui::Button("닫기  Esc",{100,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
+        if(close){missingAsk_=false;ImGui::CloseCurrentPopup();}
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(2);
+}
 void Application::refineCircles(){
     if(!guard())return;
     if(!frames_.empty()&&dirtySlot()>=0){save([this]{refineCircles();},dirtySlot());return;}
@@ -481,13 +581,18 @@ void Application::tick(){
     if(queued_){if(!error_.empty())queued_=nullptr;else if(!busy()){auto action=std::move(queued_);queued_=nullptr;action();}}
     pumpThumbs();prefetch();
     if(ready()&&!busy()&&!pending()&&dirtySlot()>=0&&Clock::now()-changed_>std::chrono::milliseconds(450)&&error_.empty())save({},dirtySlot());
-    const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running"||colorStatus_.value("status","")=="running"||circleStatus_.value("status","")=="running";
+    const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running"||colorStatus_.value("status","")=="running"||circleStatus_.value("status","")=="running"||missingStatus_.value("status","")=="running";
     if(activeJob&&ready()&&!busy()&&Clock::now()-poll_>std::chrono::seconds(3)&&error_.empty()&&!current().dirty&&!pending()){
         poll_=Clock::now();const auto engine=engine_;
-        launch("작업 상태 확인",[engine]{return JobResult{{{"auto",engine->autoStatus()},{"export",engine->exportStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"catalog",engine->nativeCatalog()}}, {}};},[this](JobResult result){
+        launch("작업 상태 확인",[engine]{return JobResult{{{"auto",engine->autoStatus()},{"export",engine->exportStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"missing",engine->missingFillStatus()},{"catalog",engine->nativeCatalog()}}, {}};},[this](JobResult result){
             const auto oldRevision=catalog_["summary"].value("revision",0),oldAuto=catalog_["summary"].value("auto_revision",0);const bool exporting=exportStatus_.value("status","")=="running";
-            const bool coloring=colorStatus_.value("status","")=="running",refining=circleStatus_.value("status","")=="running";
-            autoStatus_=result.data["auto"];exportStatus_=result.data["export"];colorStatus_=result.data["color"];circleStatus_=result.data["circle"];updateCatalog(result.data["catalog"]);
+            const bool coloring=colorStatus_.value("status","")=="running",refining=circleStatus_.value("status","")=="running",filling=missingStatus_.value("status","")=="running";
+            autoStatus_=result.data["auto"];exportStatus_=result.data["export"];colorStatus_=result.data["color"];circleStatus_=result.data["circle"];missingStatus_=result.data["missing"];updateCatalog(result.data["catalog"]);
+            if(filling&&missingStatus_.value("status","")!="running"){
+                const bool trial=missingStatus_.value("dry_run",false);
+                if(missingStatus_.value("status","")!="complete")message_="누락 공 채우기가 실패했습니다: "+missingStatus_.value("error","");
+                else if(trial){message_="시험 실행 완료 · "+grouped(missingStatus_.value("frames",0))+"장에 공 "+grouped(missingStatus_.value("balls",0))+"개 (저장 안 함)";loadMissingSamples();}
+                else{message_="누락 공 "+grouped(missingStatus_.value("applied_balls",0))+"개를 "+grouped(missingStatus_.value("applied_frames",0))+"장에 추가했습니다.";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}}
             if(refining&&circleStatus_.value("status","")!="running"){message_=circleStatus_.value("status","")=="complete"?"공 "+grouped(circleStatus_.value("balls",0))+"개의 둘레를 다시 쟀습니다. 건너뛴 공 "+grouped(circleStatus_.value("skipped",0))+"개.":"둘레 다듬기가 실패했습니다.";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
             if(coloring&&colorStatus_.value("status","")!="running"){message_=colorStatus_.value("status","")=="complete"?"공 "+grouped(colorStatus_.value("filled",0))+"개의 색상을 채웠습니다.":"색상 채우기가 실패했습니다.";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
             if(oldRevision!=catalog_["summary"].value("revision",0)||oldAuto!=catalog_["summary"].value("auto_revision",0)){if(page_==Page::Review)loadScene(scene_,editor_,camera_);else stale_=true;}
@@ -650,9 +755,10 @@ bool Application::stageCheckStep(int step) {
 // The stage pages show per-recording counts that only the full catalog carries.
 void Application::refreshStage(){
     if(busy())return;const auto engine=engine_;
-    launch("현황 새로 읽기",[engine]{return JobResult{{{"catalog",engine->nativeCatalog()},{"exports",engine->exports()},{"export",engine->exportStatus()},{"auto",engine->autoStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()}},{}};},
+    launch("현황 새로 읽기",[engine]{return JobResult{{{"catalog",engine->nativeCatalog()},{"exports",engine->exports()},{"export",engine->exportStatus()},{"auto",engine->autoStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"missing",engine->missingFillStatus()}},{}};},
         [this](JobResult result){
             const auto revision=catalog_["summary"].value("revision",0),automatic=catalog_["summary"].value("auto_revision",0);
+            missingStatus_=result.data["missing"];
             updateCatalog(result.data["catalog"]);
             if(revision!=catalog_["summary"].value("revision",0)||automatic!=catalog_["summary"].value("auto_revision",0))stale_=true;
             exports_=result.data["exports"].value("exports",Json::array());exportStatus_=result.data["export"];autoStatus_=result.data["auto"];colorStatus_=result.data["color"];circleStatus_=result.data["circle"];
@@ -663,7 +769,7 @@ void Application::refreshStage(){
 }
 void Application::keys() {
     auto& io=ImGui::GetIO();
-    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||growAsk_||colorAsk_||circleAsk_||nextAsk_)return;   // an open dialog owns the keys
+    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||growAsk_||colorAsk_||circleAsk_||nextAsk_||missingAsk_)return;   // an open dialog owns the keys
     auto pressed=[](ImGuiKey key){return ImGui::IsKeyPressed(key,false);};
     if(pressed(ImGuiKey_Escape)){
         if(pending())cancel();
@@ -832,6 +938,7 @@ void Application::draw(){
     confirmColors();
     confirmCircles();
     confirmNext();
+    confirmMissing();
     ImGui::PopStyleVar();
     ImGui::End();
     if(later_){auto action=std::move(later_);later_=nullptr;action();}

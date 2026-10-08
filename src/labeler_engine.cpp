@@ -1,4 +1,5 @@
 #include "labeler_engine.hpp"
+#include "labeler_missing.hpp"
 #include "labeler_util.hpp"
 #include <stdexcept>
 
@@ -17,7 +18,12 @@ cv::Mat Engine::thumbnail(const std::string& key, int width) {
 }
 Json Engine::saveAnnotation(const Json& payload) { return {{"summary", project_.saveFrame(payload)}}; }
 Json Engine::saveSplits(const Json& payload) { return {{"summary", project_.saveSplits(payload)}}; }
-Json Engine::nativeAction(const std::string& action, const Json& payload) { return boccia::labeler::nativeAction(project_, action, payload); }
+Json Engine::nativeAction(const std::string& action, const Json& payload) {
+    if (action == "fill-missing") return startMissingFill(project_, paths.root, paths.models, missingOptions(payload, project_));   // needs the model and the detector files
+    if (action == "stop-missing") return stopMissingFill(project_);
+    return boccia::labeler::nativeAction(project_, action, payload);
+}
+Json Engine::missingFillStatus() const { return boccia::labeler::missingFillStatus(project_); }
 Json Engine::assist(const std::string& method, const Json& payload) { return assistance(project_, assist_, method, payload); }
 Json Engine::assistStatus() const { return assist_.status(); }
 Json Engine::exportStatus() const { std::lock_guard guard(project_.lock); return project_.job; }
