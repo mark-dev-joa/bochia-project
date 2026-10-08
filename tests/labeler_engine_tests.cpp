@@ -5,6 +5,7 @@
 #include "labeler_store.hpp"
 #include "labeler_export.hpp"
 #include "labeler_native.hpp"
+#include "labeler_selection.hpp"
 #include "labeler_util.hpp"
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -13,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <chrono>
 #include <numeric>
 #include <set>
 #include <stdexcept>
@@ -680,6 +682,104 @@ void samTests() {
     } else std::cout << "SKIP: no EfficientSAM model files at " << utf8(models) << "\n";
     std::cout << "PASS: SAM prompts, crop cache, click rules, circles, tracking and the assistance dispatcher\n";
 }
+
+// SelectionTests.setUp of tests/test_labeler_selection.py: two image folders of five identical frames with one ball.
+struct SelectionFixture {
+    TempDir temp;
+    fs::path source;
+    cv::Mat image;
+    Json box;
+    std::vector<std::string> ids;
+    std::unique_ptr<Catalog> catalog;
+    std::unique_ptr<Project> project;
+    SelectionFixture() : source(temp.path / "images"), image(100, 120, CV_8UC3, cv::Scalar(80, 80, 80)) {
+        cv::circle(image, {50, 50}, 10, cv::Scalar(20, 20, 200), -1);
+        std::vector<unsigned char> png; cv::imencode(".png", image, png);
+        for (const char* folder : {"a", "b"}) for (int i = 0; i < 5; ++i) writeFile(source / folder / (std::to_string(i) + ".png"), std::string(png.begin(), png.end()));
+        catalog = std::make_unique<Catalog>(source);
+        for (const auto& recording : catalog->recordings) ids.push_back(recording.id);
+        project = std::make_unique<Project>(*catalog, temp.path / "project.json", temp.path / "exports");
+        cv::Mat mask(100, 120, CV_8UC1, cv::Scalar(0)); cv::circle(mask, {50, 50}, 10, cv::Scalar(1), -1);
+        box = {{"bbox", {40, 40, 21, 21}}, {"segmentation", encodeMask(mask)}, {"occluded", false}};
+        for (const auto& id : ids) for (int i = 0; i < 5; ++i)
+            project->state["frames"][id + "/images/" + std::to_string(i)] = {{"recording", id}, {"camera", "images"}, {"index", i}, {"width", 120}, {"height", 100}, {"boxes", {box}}, {"reviewed", false}, {"human_touched", false}};
+    }
+};
+void selectionTests() {
+    SelectionFixture f;
+    check(f.ids.size() == 2 && f.catalog->recordings[0].name == "a", "selection fixture wrong");
+    // test_static_selection_representatives_and_camera_isolation
+    const Json before = f.project->state;
+    const Json result = buildSelection(*f.catalog, before);
+    check(result["total"] == 10 && result["selected"] == 4 && result["excluded"] == 6, "static selection counts wrong: " + std::to_string(result["selected"].get<int>()));
+    for (const auto& [key, entry] : result["frames"].items()) if (!entry["selected"].get<bool>()) {
+        const std::string representative = entry["representative"];
+        check(key.substr(0, key.rfind('/')) == representative.substr(0, representative.rfind('/')) && result["frames"][representative]["selected"] == true, "a duplicate must point at a kept frame of its own camera");
+    }
+    check(f.project->state == before, "selection must not change the project");
+    check(result["algorithm"] == "within-camera-geometry-mask-appearance-v2" && result["version"] == 1 && result["source_signature"] == f.catalog->signature && result["cameras"].size() == 2
+          && result["cameras"][0]["selected"] == 2 && result["cameras"][0]["camera"] == "images" && result["rules"]["center_pixels"] == 8.0 && result["rules"]["scene_width"] == 720 && result["frames"].size() == 10 && result["project_revision"] == 0, "selection file fields wrong");
+    const Json periodic = buildSelection(*f.catalog, before, {}, {{"periodic_frames_without_timestamps", 2}});
+    check(periodic["selected"] == 6 && periodic["rules"]["periodic_frames_without_timestamps"] == 2 && periodic["frames"][f.ids[0] + "/images/2"]["reason"] == "periodic_static_sample", "periodic retention wrong");
+    for (const auto& id : f.ids) for (int i : {0, 4}) check(result["frames"][id + "/images/" + std::to_string(i)]["selected"] == true, "endpoints must be kept");
+    const Json& second = result["frames"][f.ids[0] + "/images/1"];
+    check(second["reason"] == "near_duplicate" && second["representative"] == f.ids[0] + "/images/0" && second["metrics"]["scene_mae"] == 0.0 && second["metrics"]["mask_iou"] == 1.0 && second["metrics"]["ball_correlation"] == 1.0
+          && result["frames"][f.ids[0] + "/images/0"]["reason"] == "first_frame" && !result["frames"][f.ids[0] + "/images/0"].contains("metrics") && result["frames"][f.ids[0] + "/images/4"]["reason"] == "last_frame", "decision records wrong: " + second.dump());
+    // test_movement_occlusion_light_texture_and_unknown_ball_are_preserved
+    const FrameFeatures reference = frameFeatures(f.image, Json::array({f.box}));
+    const auto pairs = matchBoxes(Json::array({f.box}), Json::array({f.box}));
+    check(pairs && pairs->size() == 1 && compareFrames(reference, reference, *pairs).duplicate, "identical frames must be duplicates");
+    cv::Mat changed = f.image.clone(); changed(cv::Rect(46, 42, 11, 14)).setTo(cv::Scalar(80, 80, 80));
+    check(!compareFrames(reference, frameFeatures(changed, Json::array({f.box})), *pairs).duplicate, "a changed ball region must be kept");
+    cv::Mat brighter; f.image.convertTo(brighter, -1, 1, 15);
+    check(!compareFrames(reference, frameFeatures(brighter, Json::array({f.box})), *pairs).duplicate, "a lighting change must be kept");
+    changed = f.image.clone(); cv::circle(changed, {90, 75}, 8, cv::Scalar(200, 20, 20), -1);
+    check(!compareFrames(reference, frameFeatures(changed, Json::array({f.box})), *pairs).duplicate, "a new object must be kept");
+    Json occluded = f.box; occluded["occluded"] = true;
+    check(!matchBoxes(Json::array({f.box}), Json::array({occluded})), "an occlusion change must not match");
+    Json jittered = f.box; jittered["bbox"] = {46, 40, 21, 21};
+    check(matchBoxes(Json::array({f.box}), Json::array({jittered})) && matchBoxes(Json::array({f.box}), Json::array({jittered}))->size() == 1, "a jittered box must match");
+    Json moved = f.box; moved["bbox"] = {50, 40, 21, 21};
+    check(!matchBoxes(Json::array({f.box}), Json::array({moved})) && !matchBoxes(Json::array({f.box}), Json::array()), "a moved or missing ball must not match");
+    check(matchBoxes(Json::array({f.box, jittered}), Json::array({jittered, f.box}))->size() == 2, "two boxes must match crosswise");
+    // test_box_jitter_on_a_still_ball_is_a_duplicate_but_a_moved_ball_is_not
+    auto comparison = compareFrames(reference, frameFeatures(f.image, Json::array({jittered})), *matchBoxes(Json::array({f.box}), Json::array({jittered})));
+    check(comparison.duplicate, "jitter on a still ball must be a duplicate: " + comparison.reason);
+    cv::Mat movedImage(100, 120, CV_8UC3, cv::Scalar(80, 80, 80)); cv::circle(movedImage, {56, 50}, 10, cv::Scalar(20, 20, 200), -1);
+    cv::Mat movedMask(100, 120, CV_8UC1, cv::Scalar(0)); cv::circle(movedMask, {56, 50}, 10, cv::Scalar(1), -1);
+    Json movedBall = jittered; movedBall["segmentation"] = encodeMask(movedMask);
+    comparison = compareFrames(reference, frameFeatures(movedImage, Json::array({movedBall})), *matchBoxes(Json::array({f.box}), Json::array({movedBall})));
+    check(!comparison.duplicate, "a moved ball must be kept: " + comparison.reason);
+    // test_mask_shape_change_is_kept_even_with_identical_pixels
+    Json square = f.box; cv::Mat squareMask(100, 120, CV_8UC1, cv::Scalar(0)); squareMask(cv::Rect(40, 40, 21, 21)).setTo(1); square["segmentation"] = encodeMask(squareMask);
+    comparison = compareFrames(frameFeatures(f.image, Json::array({f.box})), frameFeatures(f.image, Json::array({square})), *matchBoxes(Json::array({f.box}), Json::array({square})));
+    check(!comparison.duplicate && comparison.reason == "mask_change" && comparison.metrics["mask_iou"] < .85, "a mask shape change must be kept");
+    const Json plain = {{"bbox", {40, 40, 21, 21}}};
+    check(compareFrames(reference, frameFeatures(cv::Mat(50, 60, CV_8UC3, cv::Scalar(0, 0, 0)), Json::array({plain})), *pairs).reason == "image_dimensions", "different sizes must be kept");
+    check(fails([&] { buildSelection(*f.catalog, Json{{"source_signature", "other"}, {"frames", Json::object()}}); }, "원본 촬영이 다릅니다"), "a foreign snapshot was filtered");
+    // test_sidecar_human_override_reload_and_invalid_reference, with the built selection
+    atomicJson(selectionPath(f.project->path), result, true);
+    std::string duplicate;
+    for (const auto& [key, entry] : result["frames"].items()) if (!entry["selected"].get<bool>()) { duplicate = key; break; }
+    check(f.project->summary()["frames"][duplicate]["selected"] == false, "built sidecar not applied");
+    const auto slash = duplicate.rfind('/');
+    f.project->saveFrame({{"recording", duplicate.substr(0, duplicate.find('/'))}, {"camera", "images"}, {"index", std::stoi(duplicate.substr(slash + 1))}, {"boxes", {f.box}}, {"reviewed", false}, {"expected_revision", 0}});
+    Json summary = f.project->summary();
+    check(summary["frames"][duplicate]["selected"] == true && summary["selection"]["selected"] == 5 && f.project->state["revision"] == 1, "human work must override the built sidecar");
+    // test_project_export_uses_filter_and_preserves_existing_review
+    SelectionFixture g;
+    atomicJson(selectionPath(g.project->path), buildSelection(*g.catalog, g.project->state), true);
+    std::string reviewed;
+    const Json summary2 = g.project->summary();   // a named value: a range-for over a member of a temporary dangles
+    for (const auto& [key, entry] : summary2["frames"].items()) if (!entry["selected"].get<bool>()) { reviewed = key; break; }
+    g.project->state["frames"][reviewed]["reviewed"] = true;
+    check(g.project->summary()["frames"][reviewed]["selected"] == true && g.project->summary()["export_frames"] == 1, "a reviewed duplicate must stay in the export");
+    for (const auto& id : g.ids) g.project->state["splits"][id] = "train";
+    Json snapshot = g.project->state; snapshot["frame_selection"] = g.project->selection.view(g.project->state["frames"]);
+    const Json exported = exportDataset(*g.catalog, snapshot, g.temp.path / "exports", false);
+    check(exported["images"] == 1 && readJson(fromUtf8(exported["path"]) / "manifest.json")["frame_selection"]["selected"] == 5, "the export must follow the filter and record it");
+    std::cout << "PASS: representative frames, box matching, scene and ball comparison, mask changes and the built sidecar\n";
+}
 }
 
 int main(int argc, char** argv) try {
@@ -764,6 +864,17 @@ int main(int argc, char** argv) try {
         }
         return 0;
     }
+    if (argc >= 5 && std::string(argv[1]) == "--selection") {
+        // Parity with the Python filter: builds the selection of a project file and writes it, like scratch parity_selection.py.
+        const auto started = std::chrono::steady_clock::now();
+        Catalog catalog(fromUtf8(argv[2]));
+        const Json snapshot = Json::parse(readFile(fromUtf8(argv[3])));
+        Json result = buildSelection(catalog, snapshot, [](int done, int total, const std::string& camera) { if (done % 1000 == 0) std::cout << done << "/" << total << " " << camera << "\n"; });
+        result["elapsed_seconds"] = std::round(std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() * 100) / 100;
+        atomicJson(fromUtf8(argv[4]), result, result["frames"].size() < 128);
+        std::cout << "selected " << result["selected"] << " excluded " << result["excluded"] << " seconds " << result["elapsed_seconds"] << "\n";
+        return 0;
+    }
     utilTests();
     catalogTests();
     assistTests();
@@ -771,5 +882,6 @@ int main(int argc, char** argv) try {
     nativeTests();
     exportTests();
     samTests();
+    selectionTests();
     return 0;
 } catch (const std::exception& error) { std::cerr << "FAIL: " << error.what() << "\n"; return 1; }

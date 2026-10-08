@@ -1,5 +1,8 @@
 #include "native_labeler_app.hpp"
 #include "native_labeler_theme.hpp"
+#include "labeler_selection.hpp"
+#include "labeler_util.hpp"
+#include <chrono>
 #include <GLFW/glfw3.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
@@ -18,11 +21,11 @@ int main() {
     config.source=root/"data/imports";const auto nativeProject=std::filesystem::absolute(home/"labels/project.json");config.project=nativeProject;config.exports=home/"exports";config.root=root;
     // The EfficientSAM files ship beside the program; a build run from the repository finds the repository's copy.
     config.models=std::filesystem::exists(home.parent_path()/"models/efficientsam")?home.parent_path()/"models/efficientsam":root/"data/models/efficientsam";
-    bool hidden=false,selfTest=false,stageTest=false,fold=false,shortcuts=false;std::filesystem::path capture;std::wstring mode=L"overview";int recording=5,frame=0,requestedWidth=1440,requestedHeight=850,selectCamera=-1,selectRank=-1,checkStep=0;
+    bool hidden=false,selfTest=false,stageTest=false,fold=false,shortcuts=false,buildSelectionOnly=false;std::filesystem::path capture;std::wstring mode=L"overview";int recording=5,frame=0,requestedWidth=1440,requestedHeight=850,selectCamera=-1,selectRank=-1,checkStep=0;
     for(int i=1;i<argc;++i){std::wstring argument=args[i];
         auto value=[&](){if(i+1>=argc)throw std::runtime_error("Missing option value");return std::wstring(args[++i]);};
         if(argument==L"--source")config.source=value();else if(argument==L"--project")config.project=value();else if(argument==L"--export-root")config.exports=value();
-        else if(argument==L"--smoke-hidden")hidden=true;
+        else if(argument==L"--smoke-hidden")hidden=true;else if(argument==L"--build-selection")buildSelectionOnly=true;
         else if(argument==L"--capture")capture=value();else if(argument==L"--view")mode=value();else if(argument==L"--recording")recording=std::stoi(value());else if(argument==L"--frame")frame=std::stoi(value());
         else if(argument==L"--width")requestedWidth=std::stoi(value());else if(argument==L"--height")requestedHeight=std::stoi(value());
         else if(argument==L"--select"){auto text=value();auto colon=text.find(L':');selectCamera=std::stoi(text.substr(0,colon));selectRank=std::stoi(text.substr(colon+1));}else if(argument==L"--fold")fold=true;else if(argument==L"--shortcuts")shortcuts=true;else if(argument==L"--self-test")selfTest=true;else if(argument==L"--stage-test")stageTest=true;
@@ -43,6 +46,15 @@ int main() {
             std::cerr<<"라벨을 가져왔습니다: "<<original.string()<<"\n";break;
         }
     }}catch(const std::exception& error){std::cerr<<"기존 라벨 가져오기 실패: "<<error.what()<<"\n";return 4;}
+    // Without a window: picks the representative frames of the project again and writes the sidecar, like tools/filter_labeler_frames.py.
+    if(buildSelectionOnly){try{
+        const auto started=std::chrono::steady_clock::now();Catalog catalog(config.source);Project project(catalog,config.project,config.exports);
+        Json result=buildSelection(catalog,project.state,[](int done,int total,const std::string& camera){if(done%200==0)std::cout<<done<<"/"<<total<<" "<<camera<<"\n";});
+        result["elapsed_seconds"]=std::round(std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count()*100)/100;
+        Json reasons=Json::object();for(const auto& [key,entry]:result["frames"].items()){const std::string reason=entry["reason"];reasons[reason]=reasons.value(reason,0)+1;}
+        result["reasons"]=reasons;const auto output=selectionPath(project.path);atomicJson(output,result,result["frames"].size()<128);
+        std::cout<<Json{{"path",utf8(output)},{"total",result["total"]},{"selected",result["selected"]},{"excluded",result["excluded"]},{"reasons",reasons},{"elapsed_seconds",result["elapsed_seconds"]}}.dump()<<"\n";return 0;
+    }catch(const std::exception& error){std::cerr<<error.what()<<"\n";return 4;}}
     if(!glfwInit())return 1;
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,3);glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,3);glfwWindowHint(GLFW_OPENGL_PROFILE,GLFW_OPENGL_CORE_PROFILE);
     if(hidden)glfwWindowHint(GLFW_VISIBLE,GLFW_FALSE);
