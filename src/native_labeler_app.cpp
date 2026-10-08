@@ -171,6 +171,19 @@ void Application::focus(int camera) {
     if(current().dirty&&camera!=camera_){save([this,camera]{focus(camera);});return;}
     current().repaint=true;camera_=camera;editor_=true;selected_=-1;current().scale=0;current().repaint=true;cancel();
 }
+// The large view of a camera keeps the zoom and position last used there: the next ball is usually near the last one,
+// so "공 추가" opens the view as it was left instead of fitting the whole image (2026-10-09 user request).
+void Application::rememberView(const FrameView& frame){
+    if(!editor_||camera_<0||frame.scale<=0)return;
+    if(int(lastView_.size())<=camera_)lastView_.resize(size_t(camera_)+1);
+    lastView_[size_t(camera_)]={frame.scale,frame.offsetX,frame.offsetY};
+}
+void Application::addBallHere(int slot){
+    focus(slot);
+    if(!editor_||camera_!=slot)return;
+    tool_=Tool::Ai;
+    if(slot<int(lastView_.size())&&lastView_[size_t(slot)].scale>0){auto& f=frames_[size_t(slot)];f.scale=lastView_[size_t(slot)].scale;f.offsetX=lastView_[size_t(slot)].offsetX;f.offsetY=lastView_[size_t(slot)].offsetY;}
+}
 // Enlarge the camera, select the ball and zoom to it.
 void Application::select(int camera,int ball) {
     if(frames_.empty()||camera<0||camera>=int(frames_.size())||!guard())return;

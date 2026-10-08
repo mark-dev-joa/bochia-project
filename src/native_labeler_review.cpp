@@ -443,7 +443,7 @@ void Application::cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact) {
             const bool roomy = cell > 120;
             theme::icon(draw, theme::Icon::Plus, {a.x + cell / 2, a.y + cell / 2 - (roomy ? 18 : 0)}, 14, theme::text3);
             if (roomy) theme::write(draw, {a.x + (cell - theme::extent("공 추가", theme::caption).x) / 2, a.y + cell / 2}, theme::text3, "공 추가", theme::caption);
-            if (clicked) later_ = [this, slot] { focus(slot); if (editor_ && camera_ == slot) tool_ = Tool::Ai; };
+            if (clicked) later_ = [this, slot] { addBallHere(slot); };
             continue;
         }
         const int ball = order[i];
@@ -540,6 +540,7 @@ void Application::canvas(FrameView& frame, ImVec2 pos, ImVec2 size) {
     canvasSize_ = size;
     if (frame.repaint) repaint(frame);
     if (frame.scale <= 0) fit(frame, size, true);
+    rememberView(frame);
     const ImVec2 end{pos.x + size.x, pos.y + size.y};
     ImGui::SetCursorScreenPos(pos); ImGui::SetNextItemAllowOverlap();
     ImGui::InvisibleButton("##canvas", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle | ImGuiButtonFlags_MouseButtonRight);

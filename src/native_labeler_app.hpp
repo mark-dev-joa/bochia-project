@@ -54,12 +54,13 @@ public:
     void missingTrialForCapture(int frames) { missingTrial_ = frames; missingAsk_ = true; startMissing(true, false); }   // a trial of the missing-ball pass, to picture its dialog
     void missingApplyForCapture(int frames) { missingAsk_ = true; startMissing(false, false, frames); }           // applies the pass to a few frames, for the check of the apply path
     void propagateForCapture() { startPropagation(); }   // runs the propagation, for the check of its path
+    void showErrorForCapture(std::string text) { error_ = std::move(text); errorDemo_ = true; }   // pictures the floating error notice
     void occlusionTrialForCapture(int frames) { occlTrial_ = frames; occludeAsk_ = true; startOcclusion(true, false); }
     void occlusionApplyForCapture(int frames) { occludeAsk_ = true; startOcclusion(false, false, frames); }
     bool selfCheckStep(int step);                    // scripted logic checks for the hidden smoke run
     bool stageCheckStep(int step);                   // the same for split and export; needs a fully confirmed project
     bool missingScriptStep(int step);                // trials of the missing-ball pass, their assembly and the apply of one
-    const std::string& error() const { return error_; }
+    const std::string& error() const { return errorDemo_ ? empty_ : error_; }   // a pictured error must not end a hidden run
     bool canClose() const;
     void preserveRecovery();
 private:
@@ -228,6 +229,11 @@ private:
     void canvas(FrameView& frame, ImVec2 pos, ImVec2 size);
     void zoomBy(FrameView& frame, float factor);     // zooms around the middle of the canvas, for the +/- keys and rail buttons
     ImVec2 canvasSize_{0, 0};                        // the canvas drawn last, so a key can zoom around its middle
+    struct ViewMemory { float scale = 0, offsetX = 0, offsetY = 0; };
+    std::vector<ViewMemory> lastView_;               // per camera: the zoom and position last used in its large view
+    void rememberView(const FrameView& frame);       // from the canvas, every frame
+    void addBallHere(int slot);                      // "공 추가" on a crop: the large view at the last zoom, the AI tool ready
+    bool errorDemo_ = false; const std::string empty_;
     void canvasInput(FrameView& frame, ImVec2 pos, ImVec2 size, bool hovered);
     void paintImage(FrameView& frame, ImVec2 a, ImVec2 b, cv::Rect2d region, Paint paint);
     void paintMarks(FrameView& frame, const std::function<ImVec2(double, double)>& at, Paint paint);
