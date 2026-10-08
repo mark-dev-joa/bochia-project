@@ -241,7 +241,7 @@ void Application::paintMarks(FrameView& frame, const std::function<ImVec2(double
     auto draw = ImGui::GetWindowDrawList();
     const auto& boxes = frame.annotation["boxes"];
     for (int i = 0; i < int(boxes.size()); ++i) {
-        if (i == paint.skip) continue;
+        if (i == paint.skip || (paint.only >= 0 && i != paint.only)) continue;   // a crop shows its own ball's marks alone (2026-10-08 user request)
         const bool active = i == paint.selected;
         const ImU32 color = active ? theme::selected : theme::mask;
         if (paint.outlines && i < int(frame.contours.size())) for (const auto& contour : frame.contours[i]) {
@@ -450,7 +450,7 @@ void Application::cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact) {
         const auto r = detectionBox(boxes[ball]);
         const bool active = here && ball == selected_;
         const auto region = cropRegion(r, frame.image.cols, frame.image.rows);
-        paintImage(frame, a, b, region, {.fill = false, .boxes = boxes_, .circles = circles_, .outlines = outlines_, .selected = active ? ball : -1});
+        paintImage(frame, a, b, region, {.fill = false, .boxes = boxes_, .circles = circles_, .outlines = outlines_, .selected = active ? ball : -1, .only = ball});
         {   // Outside the ball's box the crop is dimmed, so the ball stands out from its neighbours (2026-10-08 user request).
             const double scale = cell / region.width;
             const float x0 = std::clamp(float(a.x + (r.x - region.x) * scale), a.x, b.x), y0 = std::clamp(float(a.y + (r.y - region.y) * scale), a.y, b.y);

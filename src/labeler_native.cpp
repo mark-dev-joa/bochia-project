@@ -1,5 +1,6 @@
 #include "labeler_native.hpp"
 #include "labeler_propagate.hpp"
+#include "native_labeler_model.hpp"
 #include "labeler_assist.hpp"
 #include "labeler_export.hpp"
 #include "labeler_util.hpp"
@@ -508,10 +509,36 @@ Json assistance(const Project& project, BallAssist& assist, const std::string& m
     }
     const cv::Mat image = project.catalog.read(recording, camera, index);
     if (method == "segment") {
+        // With two balls overlapping, the one in front must not win: the other balls' centres become exclusion clicks, and
+        // their discs are cut out of the result before the circle is fitted on the visible arc (2026-10-08 user report).
+        const int replacement = payload.value("replacement", -1);
+        const Json boxes = payload.value("boxes", Json::array());
+        Json points = payload.at("points");
+        const double clickX = points.at(0).value("x", 0.0), clickY = points.at(0).value("y", 0.0), radius = payload.value("radius", 14.0);
+        const double half = std::max(32.0, radius * 3.5) - 1;
+        struct Disc { double x, y, r; }; std::vector<Disc> others;
+        for (size_t i = 0; i < boxes.size(); ++i) {
+            if (int(i) == replacement) continue;
+            const Json& b = boxes[i].contains("detection_bbox") ? boxes[i]["detection_bbox"] : boxes[i]["bbox"];
+            Disc d{b[0].get<double>() + b[2].get<double>() / 2, b[1].get<double>() + b[3].get<double>() / 2, std::min(b[2].get<double>(), b[3].get<double>()) / 2};
+            if (boxes[i].contains("circle")) d = {boxes[i]["circle"][0].get<double>(), boxes[i]["circle"][1].get<double>(), boxes[i]["circle"][2].get<double>()};
+            if (std::hypot(d.x - clickX, d.y - clickY) <= d.r) continue;                               // the clicked ball itself
+            if (std::abs(d.x - clickX) >= half || std::abs(d.y - clickY) >= half) continue;           // outside the model's crop
+            others.push_back(d);
+            if (points.size() < 32) points.push_back({{"x", d.x}, {"y", d.y}, {"label", 0}});
+        }
         Json box;
-        try { box = assist.segment(image, project.catalog.signature + "/" + frame["key"].get<std::string>(), payload.at("points"), payload.value("radius", Json(14)), payload.value("box", Json())); }
+        try { box = assist.segment(image, project.catalog.signature + "/" + frame["key"].get<std::string>(), points, payload.value("radius", Json(14)), payload.value("box", Json())); }
         catch (const std::runtime_error&) { throw; }
         catch (const std::exception& error) { throw std::runtime_error(std::string("분할 실행에 실패했습니다: ") + std::string(error.what()).substr(0, 240)); }
+        if (!others.empty()) {
+            cv::Mat mask = decodeMaskChecked(box["segmentation"], width, height);
+            const int before = cv::countNonZero(mask);
+            for (const auto& d : others) cv::circle(mask, cv::Point(int(std::lround(d.x)), int(std::lround(d.y))), int(std::ceil(d.r + 1)), cv::Scalar(0), -1);
+            const int after = cv::countNonZero(mask);
+            if (after < std::max(8, before / 10)) throw std::runtime_error("클릭한 공이 옆 공에 거의 다 가려 있습니다. 폴리곤으로 보이는 부분을 그리세요.");
+            if (after != before) box = maskAnnotation(mask, box, "efficientsam");
+        }
         refineBallBox(box, image, circleMargin(project));   // the box from the image's own edge, with the project's rim margin
         return {{"key", frame["key"]}, {"proposals", Json::array({coloured(box, image)})}};
     }

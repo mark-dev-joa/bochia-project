@@ -75,7 +75,7 @@ private:
         int cameras = 0;
         std::string thumb;
     };
-    struct Paint { bool fill = true, boxes = false, circles = false, outlines = true; int selected = -1, skip = -1; };
+    struct Paint { bool fill = true, boxes = false, circles = false, outlines = true; int selected = -1, skip = -1, only = -1; };   // only: marks of that ball alone
     using Thumbs = std::vector<std::pair<std::string, cv::Mat>>;
     Configuration config_;
     std::shared_ptr<Engine> engine_;                             // the labels, the recordings and the models, in this process

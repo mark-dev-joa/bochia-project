@@ -664,7 +664,7 @@ void Application::segment(cv::Point2d point,bool negative) {
     if(points_.empty()) {if(negative){message_="첫 점은 공 내부에 클릭하세요.";return;}replacement_=target(current(),point);if(replacement_>=0)selected_=replacement_;}
     if(points_.size()>=32){message_="점은 최대 32개입니다. 현재 결과를 반영하거나 취소하세요.";return;}
     points_.push_back({{"x",point.x},{"y",point.y},{"label",negative?0:1}});
-    auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["radius"]=radius_;
+    auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["replacement"]=replacement_;payload["radius"]=radius_;
     const auto key=current().annotation.at("key").get<std::string>();const auto engine=engine_;const auto token=generation_;
     launch("EfficientSAM으로 공 윤곽 분리",[engine,payload]{return JobResult{engine->assist("segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_=proposal_.contains("circle")?"제안 미확정 · 원 맞춤 완료 · Space 반영, Esc 취소":"제안 미확정 · 원 맞춤 실패, 마스크 경계 박스 · Space 반영, Esc 취소";});
 }
@@ -674,7 +674,7 @@ void Application::segmentBox(cv::Rect2d box) {
     const cv::Point2d center{box.x+box.width/2,box.y+box.height/2};
     replacement_=target(current(),center);if(replacement_>=0)selected_=replacement_;
     points_.push_back({{"x",center.x},{"y",center.y},{"label",1}});
-    auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["radius"]=std::max(box.width,box.height)/2;payload["box"]={box.x,box.y,box.width,box.height};
+    auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["replacement"]=replacement_;payload["radius"]=std::max(box.width,box.height)/2;payload["box"]={box.x,box.y,box.width,box.height};
     const auto key=current().annotation.at("key").get<std::string>();const auto engine=engine_;const auto token=generation_;
     launch("EfficientSAM으로 공 윤곽 분리",[engine,payload]{return JobResult{engine->assist("segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_=proposal_.contains("circle")?"제안 미확정 · 원 맞춤 완료 · Space 반영, Esc 취소":"제안 미확정 · 원 맞춤 실패, 마스크 경계 박스 · Space 반영, Esc 취소";});
 }
@@ -836,9 +836,17 @@ void Application::repaint(FrameView& f){
     uploadTexture(f.overlay,overlay,true);f.repaint=false;
 }
 // The ball a new outline at this point changes, or -1 when it adds a ball.
+// The ball whose circle holds the point, the nearest centre first: with two balls overlapping, a click on the one behind
+// must not pick the one in front just because its box is wider (2026-10-08 user report).
 int Application::target(const FrameView& frame,cv::Point2d point)const {
-    std::vector<cv::Rect2d> boxes;for(const auto& box:frame.annotation["boxes"])boxes.push_back(detectionBox(box));
-    return replaceTarget(boxes,point,selected_);
+    const auto& boxes=frame.annotation["boxes"];int best=-1;double bestDistance=0;
+    for(int i=0;i<int(boxes.size());++i){
+        const auto r=detectionBox(boxes[i]);double cx=r.x+r.width/2,cy=r.y+r.height/2,radius=std::min(r.width,r.height)/2;
+        if(boxes[i].contains("circle")){cx=boxes[i]["circle"][0].get<double>();cy=boxes[i]["circle"][1].get<double>();radius=boxes[i]["circle"][2].get<double>();}
+        const double distance=std::hypot(point.x-cx,point.y-cy);
+        if(distance<=radius&&(best<0||distance<bestDistance)){best=i;bestDistance=distance;}
+    }
+    return best;
 }
 int Application::hit(const FrameView& frame,cv::Point2d point)const {for(int i=int(frame.annotation["boxes"].size())-1;i>=0;--i)if(detectionBox(frame.annotation["boxes"][i]).contains(point))return i;return -1;}
 // scale 0 means automatic: zoom to the selected ball, otherwise fit the whole image.
