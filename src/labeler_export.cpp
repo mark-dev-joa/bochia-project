@@ -33,7 +33,7 @@ Json exportDataset(const Catalog& catalog, const Json& snapshot, const fs::path&
     const fs::path incomplete = output / "INCOMPLETE.txt";
     writeText(incomplete, "내보내기가 끝나지 않았습니다. manifest.json이 있는 완료된 폴더를 사용하세요.\n");
     Json coco = Json::object(), detectionCoco = Json::object();
-    for (const char* split : splitNames) {
+    for (const char* split : datasetSplits) {
         coco[split] = emptyCoco(); detectionCoco[split] = emptyCoco();
         fs::create_directories(output / "images" / split); fs::create_directories(output / "labels" / split);
         if (crops) fs::create_directories(output / "crops" / split);
@@ -50,7 +50,7 @@ Json exportDataset(const Catalog& catalog, const Json& snapshot, const fs::path&
             const std::string recording = item["recording"], camera = item["camera"];
             const int index = item["index"];
             const Json splitValue = snapshot["splits"].value(recording, Json());
-            if (!splitValue.is_string() || std::find(std::begin(splitNames), std::end(splitNames), splitValue.get<std::string>()) == std::end(splitNames)) throw std::runtime_error("검수한 촬영의 분할이 지정되지 않았습니다.");
+            if (!splitValue.is_string() || std::find(std::begin(datasetSplits), std::end(datasetSplits), splitValue.get<std::string>()) == std::end(datasetSplits)) throw std::runtime_error("검수한 촬영의 분할이 지정되지 않았습니다.");
             const std::string split = splitValue;
             const cv::Mat image = catalog.read(recording, camera, index);
             const int width = image.cols, height = image.rows;
@@ -96,7 +96,7 @@ Json exportDataset(const Catalog& catalog, const Json& snapshot, const fs::path&
             if (progress) progress(imageId);
         }
         Json counts = Json::object();
-        for (const char* split : splitNames) {
+        for (const char* split : datasetSplits) {
             atomicJson(output / "annotations" / (std::string("instances_") + split + ".json"), coco[split], true);
             atomicJson(output / "annotations" / (std::string("instances_detection_") + split + ".json"), detectionCoco[split], true);
             counts[split] = {{"images", coco[split]["images"].size()}, {"boxes", coco[split]["annotations"].size()}};
@@ -125,7 +125,7 @@ Json startExport(Project& project, bool crops) {
     if (reviewed.empty()) throw std::runtime_error("검수 완료한 프레임이 없습니다. 공을 모두 표시한 뒤 검수 완료를 누르세요.");
     for (const auto& [key, item] : reviewed) {
         const Json split = snapshot["splits"].value(item["recording"].get<std::string>(), Json());
-        if (!split.is_string() || std::find(std::begin(splitNames), std::end(splitNames), split.get<std::string>()) == std::end(splitNames))
+        if (!split.is_string() || std::find(std::begin(datasetSplits), std::end(datasetSplits), split.get<std::string>()) == std::end(datasetSplits))
             throw std::runtime_error("검수한 촬영의 학습 / 검증 / 시험 분할을 먼저 지정하세요.");
     }
     project.job = {{"status", "running"}, {"done", 0}, {"total", reviewed.size()}, {"revision", snapshot["revision"]}};

@@ -108,11 +108,11 @@ void Application::pumpThumbs() {
     const size_t count = std::min<size_t>(12, thumbWanted_.size());
     std::vector<std::pair<std::string, bool>> batch(thumbWanted_.end() - count, thumbWanted_.end());
     thumbWanted_.resize(thumbWanted_.size() - count);
-    const auto client = client_; const float gain = brightness_;
-    thumbTask_ = std::async(std::launch::async, [client, batch, gain] {
+    const auto engine = engine_; const float gain = brightness_;
+    thumbTask_ = std::async(std::launch::async, [engine, batch, gain] {
         Thumbs result;
         for (const auto& [key, color] : batch) {
-            try { cv::Mat image = client.thumbnail(key), shown; image.convertTo(shown, CV_8UC3, color ? gain : 1.12); result.emplace_back(key, shown); }
+            try { cv::Mat image = engine->thumbnail(key), shown; image.convertTo(shown, CV_8UC3, color ? gain : 1.12); result.emplace_back(key, shown); }
             catch (...) { result.emplace_back(key, cv::Mat()); }
         }
         return result;

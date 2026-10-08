@@ -130,32 +130,32 @@ add_custom_command(TARGET boccia_calibration POST_BUILD
 add_custom_command(TARGET boccia_calibration POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${zstd_SOURCE_DIR}/LICENSE" "$<TARGET_FILE_DIR:boccia_calibration>/LICENSE-zstd.txt")
 
-# Native annotation UI shares the proven local inference/store engine, not a webview.
-find_program(BOCCIA_LABELER_PYTHON NAMES python python3
-  HINTS "C:/Users/PC/AppData/Local/Programs/Python/Python312" REQUIRED)
+# The native annotation app: Dear ImGui screens over the labeler engine built below.
 add_library(native_labeler_model src/native_labeler_model.cpp src/native_labeler_view.cpp)
 target_include_directories(native_labeler_model PUBLIC src ${OpenCV_INCLUDE_DIRS} "${DEPENDENCY_ROOT}/nlohmann/include")
 target_link_libraries(native_labeler_model PUBLIC ${OpenCV_LIBS})
-add_executable(boccia_labeler WIN32 src/native_labeler_main.cpp src/native_labeler_app.cpp src/native_labeler_client.cpp src/native_labeler_theme.cpp src/native_labeler_review.cpp src/native_labeler_pages.cpp)
-target_link_libraries(boccia_labeler PRIVATE native_labeler_model imgui opengl32 winhttp shell32)
+add_executable(boccia_labeler WIN32 src/native_labeler_main.cpp src/native_labeler_app.cpp src/native_labeler_theme.cpp src/native_labeler_review.cpp src/native_labeler_pages.cpp)
+target_link_libraries(boccia_labeler PRIVATE labeler_engine imgui opengl32 shell32)
 target_compile_definitions(boccia_labeler PRIVATE GLFW_INCLUDE_NONE NOMINMAX
-  BOCCIA_LABELER_ROOT="${CMAKE_SOURCE_DIR}" BOCCIA_LABELER_PYTHON="${BOCCIA_LABELER_PYTHON}")
+  BOCCIA_LABELER_ROOT="${CMAKE_SOURCE_DIR}")
 if(MSVC)
   target_compile_options(native_labeler_model PRIVATE /utf-8 /W4)
   target_compile_options(boccia_labeler PRIVATE /utf-8 /W4)
   target_link_options(boccia_labeler PRIVATE /ENTRY:mainCRTStartup)
 endif()
 add_custom_command(TARGET boccia_labeler POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:opencv_world>" "$<TARGET_FILE_DIR:boccia_labeler>")
-add_executable(native_labeler_tests tests/native_labeler_tests.cpp src/native_labeler_client.cpp)
-target_link_libraries(native_labeler_tests PRIVATE native_labeler_model winhttp)
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:opencv_world>" "$<TARGET_FILE_DIR:boccia_labeler>"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:onnxruntime>" "$<TARGET_FILE_DIR:boccia_labeler>")
+add_executable(native_labeler_tests tests/native_labeler_tests.cpp)
+target_link_libraries(native_labeler_tests PRIVATE labeler_engine)
 target_compile_definitions(native_labeler_tests PRIVATE NOMINMAX
-  BOCCIA_LABELER_ROOT="${CMAKE_SOURCE_DIR}" BOCCIA_LABELER_PYTHON="${BOCCIA_LABELER_PYTHON}")
+  BOCCIA_LABELER_ROOT="${CMAKE_SOURCE_DIR}")
 if(MSVC)
   target_compile_options(native_labeler_tests PRIVATE /utf-8 /W4)
 endif()
 add_custom_command(TARGET native_labeler_tests POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:opencv_world>" "$<TARGET_FILE_DIR:native_labeler_tests>")
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:opencv_world>" "$<TARGET_FILE_DIR:native_labeler_tests>"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:onnxruntime>" "$<TARGET_FILE_DIR:native_labeler_tests>")
 add_test(NAME native_labeler_data_contracts COMMAND native_labeler_tests)
 
 # The labeler engine: the recording catalog, label store, review rules, export and EfficientSAM, built into the app.
@@ -165,7 +165,7 @@ set_target_properties(onnxruntime PROPERTIES
   IMPORTED_LOCATION "${ONNXRUNTIME_ROOT}/lib/onnxruntime.dll"
   IMPORTED_IMPLIB "${ONNXRUNTIME_ROOT}/lib/onnxruntime.lib"
   INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_ROOT}/include")
-add_library(labeler_engine STATIC src/labeler_util.cpp src/labeler_catalog.cpp src/labeler_assist.cpp src/labeler_sam.cpp src/labeler_store.cpp src/labeler_native.cpp src/labeler_export.cpp)
+add_library(labeler_engine STATIC src/labeler_util.cpp src/labeler_catalog.cpp src/labeler_assist.cpp src/labeler_sam.cpp src/labeler_store.cpp src/labeler_native.cpp src/labeler_export.cpp src/labeler_engine.cpp)
 target_include_directories(labeler_engine PUBLIC src ${OpenCV_INCLUDE_DIRS} "${DEPENDENCY_ROOT}/nlohmann/include")
 target_link_libraries(labeler_engine PUBLIC native_labeler_model ${OpenCV_LIBS} libzstd_static bcrypt onnxruntime)
 target_compile_definitions(labeler_engine PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)

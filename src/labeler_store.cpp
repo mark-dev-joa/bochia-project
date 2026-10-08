@@ -183,7 +183,7 @@ Json Project::saveSplits(const Json& payload) {
     if (valid) for (const auto& [recording, split] : splits.items()) {
         if (!catalog.find(recording) || !split.is_string()) { valid = false; break; }
         const std::string name = split;
-        if (name != "unassigned" && std::find(std::begin(splitNames), std::end(splitNames), name) == std::end(splitNames)) { valid = false; break; }
+        if (name != "unassigned" && std::find(std::begin(datasetSplits), std::end(datasetSplits), name) == std::end(datasetSplits)) { valid = false; break; }
     }
     if (!valid) throw std::runtime_error("촬영별 분할이 올바르지 않습니다.");
     return mutate(payload.at("expected_revision").get<int>(), [&](Json& next) { for (const auto& [recording, split] : splits.items()) next["splits"][recording] = split; });

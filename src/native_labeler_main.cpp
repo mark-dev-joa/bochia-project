@@ -15,18 +15,20 @@ int main() {
     Configuration config; auto root=fromUtf8(BOCCIA_LABELER_ROOT);
     // The engine code stays in the repository; the labels and exports live in data/ beside this program.
     wchar_t module[MAX_PATH]{};GetModuleFileNameW(nullptr,module,MAX_PATH);const auto home=std::filesystem::path(module).parent_path()/"data";
-    config.source=root/"data/imports";const auto nativeProject=std::filesystem::absolute(home/"labels/project.json");config.project=nativeProject;config.exports=home/"exports";
+    config.source=root/"data/imports";const auto nativeProject=std::filesystem::absolute(home/"labels/project.json");config.project=nativeProject;config.exports=home/"exports";config.root=root;
+    // The EfficientSAM files ship beside the program; a build run from the repository finds the repository's copy.
+    config.models=std::filesystem::exists(home.parent_path()/"models/efficientsam")?home.parent_path()/"models/efficientsam":root/"data/models/efficientsam";
     bool hidden=false,selfTest=false,stageTest=false,fold=false,shortcuts=false;std::filesystem::path capture;std::wstring mode=L"overview";int recording=5,frame=0,requestedWidth=1440,requestedHeight=850,selectCamera=-1,selectRank=-1,checkStep=0;
     for(int i=1;i<argc;++i){std::wstring argument=args[i];
         auto value=[&](){if(i+1>=argc)throw std::runtime_error("Missing option value");return std::wstring(args[++i]);};
-        if(argument==L"--port")config.port=std::stoi(value());else if(argument==L"--source")config.source=value();else if(argument==L"--project")config.project=value();else if(argument==L"--export-root")config.exports=value();
-        else if(argument==L"--no-start-server")config.startServer=false;else if(argument==L"--smoke-hidden")hidden=true;
+        if(argument==L"--source")config.source=value();else if(argument==L"--project")config.project=value();else if(argument==L"--export-root")config.exports=value();
+        else if(argument==L"--smoke-hidden")hidden=true;
         else if(argument==L"--capture")capture=value();else if(argument==L"--view")mode=value();else if(argument==L"--recording")recording=std::stoi(value());else if(argument==L"--frame")frame=std::stoi(value());
         else if(argument==L"--width")requestedWidth=std::stoi(value());else if(argument==L"--height")requestedHeight=std::stoi(value());
         else if(argument==L"--select"){auto text=value();auto colon=text.find(L':');selectCamera=std::stoi(text.substr(0,colon));selectRank=std::stoi(text.substr(colon+1));}else if(argument==L"--fold")fold=true;else if(argument==L"--shortcuts")shortcuts=true;else if(argument==L"--self-test")selfTest=true;else if(argument==L"--stage-test")stageTest=true;
     }LocalFree(args);config.rememberUi=!hidden;
     // The engine and the screens get the same full paths with one kind of separator.
-    for(auto* path:{&config.source,&config.project,&config.exports})*path=std::filesystem::absolute(*path);
+    for(auto* path:{&config.source,&config.project,&config.exports,&config.models})*path=std::filesystem::absolute(*path);
     // First run in this place: bring the labels over once. The native project worked on before this layout comes
     // first, then the web labeler's. Each program keeps its own store, so their engines never overwrite each other.
     try {if(config.project==nativeProject&&!std::filesystem::exists(nativeProject)){

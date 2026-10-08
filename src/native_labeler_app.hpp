@@ -1,5 +1,5 @@
 #pragma once
-#include "native_labeler_client.hpp"
+#include "labeler_engine.hpp"
 #include "native_labeler_view.hpp"
 #include <glad/gl.h>
 #include <imgui.h>
@@ -7,14 +7,14 @@
 #include <chrono>
 #include <functional>
 #include <future>
+#include <memory>
 #include <unordered_map>
 
 namespace boccia::labeler {
 struct Configuration {
-    int port = 8767;
-    bool startServer = true;
     bool rememberUi = true;
-    std::filesystem::path source, project, exports;
+    std::filesystem::path source, project, exports;   // the recordings, the label file and the export folder
+    std::filesystem::path models, root;               // the EfficientSAM files and the repository
 };
 struct FrameView {
     Json member, annotation;
@@ -29,6 +29,7 @@ struct FrameView {
 struct JobResult {
     Json data;
     std::vector<FrameView> frames;
+    std::shared_ptr<Engine> engine;   // set by the connect job
 };
 class Application {
 public:
@@ -68,7 +69,7 @@ private:
     struct Paint { bool fill = true, boxes = false, circles = false; int selected = -1, skip = -1; };
     using Thumbs = std::vector<std::pair<std::string, cv::Mat>>;
     Configuration config_;
-    Client client_;
+    std::shared_ptr<Engine> engine_;                             // the labels, the recordings and the models, in this process
     Json catalog_, groups_ = Json::object(), splits_ = Json::object(), autoStatus_ = Json::object(), exportStatus_ = Json::object(), exports_ = Json::array(),
          colorStatus_ = Json::object();                          // the background colour fill
     std::vector<FrameView> frames_;

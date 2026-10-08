@@ -221,14 +221,14 @@ void Application::preparePage() {
         ImGui::PushFont(nullptr, theme::px(theme::caption));
         ImGui::SetCursorScreenPos({box.left(), box.y});
         if (ImGui::Button("시작 / 이어하기", {(box.inner() - 8) / 2, 30})) later_ = [this] {
-            const auto client = client_;
-            launch("자동 초안 시작", [client] { return JobResult{client.post("/api/auto-start", Json::object()), {}}; },
+            const auto engine = engine_;
+            launch("자동 초안 시작", [engine] { return JobResult{engine->autoStart(), {}}; },
                    [this](JobResult result) { autoStatus_["job"] = result.data; message_ = "자동 초안을 시작했습니다. 초안과 사람의 확인은 별개입니다."; });
         };
         ImGui::SameLine(0, 8);
         if (ImGui::Button("중단", {(box.inner() - 8) / 2, 30})) later_ = [this] {
-            const auto client = client_;
-            launch("자동 초안 중단", [client] { return JobResult{client.post("/api/auto-stop", Json::object()), {}}; }, [this](JobResult result) { autoStatus_["job"] = result.data; });
+            const auto engine = engine_;
+            launch("자동 초안 중단", [engine] { return JobResult{engine->autoStop(), {}}; }, [this](JobResult result) { autoStatus_["job"] = result.data; });
         };
         ImGui::PopFont();
         box.y += 38;
@@ -285,8 +285,8 @@ void Application::preparePage() {
 // ---- split ----------------------------------------------------------------------------------
 
 void Application::proposeSplit() {
-    const auto client = client_; const auto groups = groups_;
-    launch("배분안 만들기", [client, groups] { return JobResult{client.post("/api/native/split-preview", {{"groups", groups}}), {}}; },
+    const auto engine = engine_; const auto groups = groups_;
+    launch("배분안 만들기", [engine, groups] { return JobResult{engine->nativeAction("split-preview", {{"groups", groups}}), {}}; },
            [this](JobResult result) { splits_ = result.data.at("splits"); planEdited_ = true; message_ = "배분안입니다. 촬영별 배정을 확인하고 확정하세요."; });
 }
 // Puts the ticked recordings, and the groups they are in, into one group. It takes the split of the first one ticked.
@@ -304,8 +304,8 @@ void Application::assignSplit(const std::string& recording, const std::string& s
     splits_[recording] = split; planEdited_ = true;
 }
 void Application::confirmSplit() {
-    const auto client = client_; Json payload = {{"groups", groups_}, {"splits", splits_}, {"expected_revision", catalog_["summary"]["revision"]}};
-    launch("분할 확정", [client, payload] { return JobResult{client.post("/api/native/split-confirm", payload), {}}; }, [this](JobResult result) {
+    const auto engine = engine_; Json payload = {{"groups", groups_}, {"splits", splits_}, {"expected_revision", catalog_["summary"]["revision"]}};
+    launch("분할 확정", [engine, payload] { return JobResult{engine->nativeAction("split-confirm", payload), {}}; }, [this](JobResult result) {
         updateSummary(result.data.at("summary")); planEdited_ = false; catalog_["split_confirmed"] = true; catalog_["fingerprint"] = result.data.value("fingerprint", "");
         page_ = Page::Export; message_ = "분할을 확정했습니다. 이 데이터 버전으로 모델을 비교하세요."; refreshStage();
     });
@@ -460,8 +460,8 @@ void Application::startExport() {
     if (exportStatus_.value("status", "") == "running") { message_ = "내보내기가 진행 중입니다."; return; }
     if (!splitConfirmed()) { message_ = planEdited_ ? "바꾼 배정을 먼저 확정하세요." : "분할을 먼저 확정하세요."; openPage(Page::Split); return; }
     if (!guard()) return;
-    const auto client = client_; const bool crops = crops_;
-    launch("내보내기 시작", [client, crops] { return JobResult{client.post("/api/native/export", {{"crops", crops}}), {}}; },
+    const auto engine = engine_; const bool crops = crops_;
+    launch("내보내기 시작", [engine, crops] { return JobResult{engine->nativeAction("export", {{"crops", crops}}), {}}; },
            [this](JobResult result) { exportStatus_ = result.data; message_ = "확인하고 분할한 데이터를 내보내기 시작했습니다."; });
 }
 void Application::exportPage() {

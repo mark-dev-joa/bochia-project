@@ -13,7 +13,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 std::string title(const Json& scene) { return "촬영 " + std::to_string(scene.at("recording_number").get<int>()) + " · 프레임 " + std::to_string(scene.at("index").get<int>()); }
 }
-Application::Application(Configuration config): config_(std::move(config)), client_(config_.port), poll_(Clock::now()) { connect(); }
+Application::Application(Configuration config): config_(std::move(config)), poll_(Clock::now()) { connect(); }
 Application::~Application() {
     if(task_.valid()) task_.wait(); if(thumbTask_.valid()) thumbTask_.wait(); if(ahead_.valid()) ahead_.wait();
     if(config_.rememberUi){try{rememberPosition();}catch(...){}} releaseFrames();
@@ -58,35 +58,16 @@ void Application::launch(std::string label, std::function<JobResult()> work, std
     busyLabel_=std::move(label); completion_=std::move(completed); error_.clear();
     task_=std::async(std::launch::async,std::move(work));
 }
+// The engine lives in this process: the recordings are scanned and the labels opened on a worker thread, so the
+// window appears at once and an error (another source, a changed recording folder) shows in the usual place.
 void Application::connect() {
-    const auto config=config_; const auto client=client_;
-    launch("로컬 데이터 연결", [config,client] {
-        Json base;
-        try { base=client.get("/api/catalog"); }
-        catch (...) {
-            if(!config.startServer) throw;
-            const HANDLE engine=Client::startServer(config.port,config.source,config.project,config.exports);
-            for(int i=0;;++i) {
-                try {base=client.get("/api/catalog");break;}
-                catch(...) {
-                    // Waits between attempts and notices an engine that gave up, as it does when the recording folders changed.
-                    if(WaitForSingleObject(engine,150)!=WAIT_OBJECT_0&&i<99)continue;
-                    CloseHandle(engine);
-                    const auto reason=Client::engineError(config.project);
-                    if(reason.empty())throw;
-                    throw std::runtime_error("라벨 엔진이 시작되지 않았습니다. "+reason);
-                }
-            }
-            CloseHandle(engine);
-        }
-        auto same=[](const std::string& path,const std::filesystem::path& expected){return std::filesystem::weakly_canonical(fromUtf8(path))==std::filesystem::weakly_canonical(expected);};
-        if(!same(base.at("source").get<std::string>(),config.source)||!same(base.at("project_path").get<std::string>(),config.project))
-            throw std::runtime_error("이 포트는 다른 프로젝트를 사용 중입니다. 별도 --port와 --project를 지정하세요.");
-        auto catalog=client.get("/api/native/catalog");
-        // The engine keeps running after the app closes, so an older one may still own the port.
-        if(catalog.value("api_version",0)<4)throw std::runtime_error("실행 중인 라벨 엔진이 이전 버전입니다. 포트 "+std::to_string(config.port)+"의 엔진(python ball_labeler.py)을 종료한 뒤 앱을 다시 실행하세요.");
-        return JobResult{{{"catalog",std::move(catalog)},{"auto",client.get("/api/auto-status")},{"assist",client.get("/api/assist-status")}}, {}};
-    }, [this](JobResult result){ updateCatalog(result.data.at("catalog")); autoStatus_=result.data.at("auto"); message_="기존 촬영과 라벨 연결 완료"; restorePosition(); });
+    const auto config=config_;
+    launch("로컬 데이터 연결", [config] {
+        auto engine=std::make_shared<Engine>(EnginePaths{config.source,config.project,config.exports,config.models,config.root});
+        JobResult result{{{"catalog",engine->nativeCatalog()},{"auto",engine->autoStatus()},{"assist",engine->assistStatus()}}, {}};
+        result.engine=std::move(engine);
+        return result;
+    }, [this](JobResult result){ engine_=std::move(result.engine); updateCatalog(result.data.at("catalog")); autoStatus_=result.data.at("auto"); message_="기존 촬영과 라벨 연결 완료"; restorePosition(); });
 }
 void Application::updateCatalog(Json value) {
     catalog_=std::move(value);rowsDirty_=true;aheadDirty_=true;targetScenes_=-1;
@@ -114,12 +95,13 @@ void Application::updateSummary(const Json& summary) {
 }
 void Application::releaseFrames(){for(auto& frame:frames_){if(frame.texture)glDeleteTextures(1,&frame.texture);if(frame.overlay)glDeleteTextures(1,&frame.overlay);}frames_.clear();}
 namespace {
-// The cameras of one scene are fetched at the same time; every request opens its own connection.
-JobResult fetchScene(const Client& client,const Json& scene) {
+// The cameras of one scene are read at the same time, each on its own thread.
+JobResult fetchScene(const std::shared_ptr<Engine>& engine,const Json& scene) {
     const auto recording=scene.at("recording").get<std::string>();
     std::vector<std::future<FrameView>> cameras;
-    for(const auto& member:scene.at("members"))cameras.push_back(std::async(std::launch::async,[client,member,recording]{
-        FrameView frame;frame.member=member;frame.annotation=client.get("/api/frame"+Client::frameQuery(member,recording));frame.image=client.image(member,recording);return frame;}));
+    for(const auto& member:scene.at("members"))cameras.push_back(std::async(std::launch::async,[engine,member,recording]{
+        const auto camera=member.at("camera").get<std::string>();const int index=member.at("index").get<int>();
+        FrameView frame;frame.member=member;frame.annotation=engine->frame(recording,camera,index);frame.image=engine->image(recording,camera,index);return frame;}));
     JobResult result;for(auto& camera:cameras)result.frames.push_back(camera.get());
     return result;
 }
@@ -142,8 +124,8 @@ void Application::loadScene(int index,bool editor,int camera,std::string note) {
         if(fetched.wait_for(std::chrono::seconds(0))!=std::future_status::ready){launch("카메라 이미지 불러오기",[fetched]{return fetched.get();},show);return;}
         try{show(fetched.get());return;}catch(...){}   // fetch again below, so a failure is reported the usual way
     }
-    const auto scene=catalog_["scenes"][index];const auto client=client_;
-    launch("카메라 이미지 불러오기",[client,scene]{return fetchScene(client,scene);},show);
+    const auto scene=catalog_["scenes"][index];const auto engine=engine_;
+    launch("카메라 이미지 불러오기",[engine,scene]{return fetchScene(engine,scene);},show);
 }
 // Fetches the next unreviewed scene in the background, so confirming a scene does not wait for the images.
 void Application::prefetch() {
@@ -156,9 +138,9 @@ void Application::prefetch() {
     }
     aheadDirty_=false;aheadScene_=-1;
     if(next<0||next==scene_)return;
-    const auto client=client_;const auto scene=catalog_["scenes"][next];
+    const auto engine=engine_;const auto scene=catalog_["scenes"][next];
     aheadScene_=next;aheadAuto_=revision;
-    ahead_=std::async(std::launch::async,[client,scene]{return fetchScene(client,scene);});
+    ahead_=std::async(std::launch::async,[engine,scene]{return fetchScene(engine,scene);});
 }
 bool Application::pending() const { return !proposal_.is_null()||!polygon_.empty()||!points_.empty()||dragging_; }
 bool Application::guard(){if(busy()){message_="처리가 끝난 뒤 이동하세요. 화면 확대·이동은 계속할 수 있습니다.";return false;}if(pending()){message_="미확정 윤곽을 반영하거나 취소하세요.";return false;}return true;}
@@ -205,8 +187,8 @@ void Application::changed(bool repaint){auto& f=current();f.dirty=true;if(repain
 void Application::save(std::function<void()> next) {
     if(frames_.empty()||pending()||busy())return;
     const int slot=camera_; const auto key=current().annotation.at("key").get<std::string>();
-    const auto payload=annotationPayload(current().annotation,catalog_["summary"].at("revision").get<int>()); const auto client=client_;
-    launch("라벨 저장",[client,payload]{return JobResult{client.post("/api/annotation",payload),{}};},[this,slot,key,next](JobResult result){updateSummary(result.data.at("summary"));if(slot<int(frames_.size())&&frames_[slot].annotation.value("key","")==key)frames_[slot].dirty=false;message_="자동 저장 완료";if(next)next();});
+    const auto payload=annotationPayload(current().annotation,catalog_["summary"].at("revision").get<int>()); const auto engine=engine_;
+    launch("라벨 저장",[engine,payload]{return JobResult{engine->saveAnnotation(payload),{}};},[this,slot,key,next](JobResult result){updateSummary(result.data.at("summary"));if(slot<int(frames_.size())&&frames_[slot].annotation.value("key","")==key)frames_[slot].dirty=false;message_="자동 저장 완료";if(next)next();});
 }
 void Application::cancel(){++generation_;proposal_=nullptr;brushMask_.release();polygon_.clear();points_=Json::array();replacement_=-1;dragging_=false;if(!frames_.empty())current().repaint=true;}
 void Application::apply() {
@@ -258,8 +240,8 @@ void Application::confirmGrowth(){
 void Application::growMasks(int pixels){
     if(!guard())return;
     if(!frames_.empty()&&current().dirty){save([this,pixels]{growMasks(pixels);});return;}
-    const auto client=client_;const Json payload={{"pixels",pixels},{"expected_revision",catalog_["summary"]["revision"]}};
-    launch("윤곽 넓히는 중",[client,payload]{return JobResult{client.post("/api/native/grow-masks",payload),{}};},[this](JobResult result){
+    const auto engine=engine_;const Json payload={{"pixels",pixels},{"expected_revision",catalog_["summary"]["revision"]}};
+    launch("윤곽 넓히는 중",[engine,payload]{return JobResult{engine->nativeAction("grow-masks",payload),{}};},[this](JobResult result){
         updateSummary(result.data.at("summary"));catalog_["mask_growth"]=result.data.value("mask_growth",Json::object());catalog_["growable"]=result.data.value("growable",Json::object());
         message_="공 "+grouped(result.data.value("balls",0))+"개의 윤곽을 넓혔습니다.";
         if(!frames_.empty())loadScene(scene_,editor_,camera_,message_);
@@ -290,8 +272,8 @@ void Application::confirmColors(){
 void Application::fillColors(){
     if(!guard())return;
     if(!frames_.empty()&&current().dirty){save([this]{fillColors();});return;}
-    const auto client=client_;
-    launch("색상 채우기 시작",[client]{return JobResult{client.post("/api/native/fill-colors",Json::object()),{}};},[this](JobResult result){colorStatus_=result.data;message_="색상을 채우는 중입니다. 끝나면 알려 드립니다.";});
+    const auto engine=engine_;
+    launch("색상 채우기 시작",[engine]{return JobResult{engine->nativeAction("fill-colors",Json::object()),{}};},[this](JobResult result){colorStatus_=result.data;message_="색상을 채우는 중입니다. 끝나면 알려 드립니다.";});
 }
 // Asked from a crop or the ball list, where a click must not delete by itself.
 void Application::confirmRemoval(){
@@ -326,8 +308,8 @@ void Application::segment(cv::Point2d point,bool negative) {
     if(points_.size()>=32){message_="점은 최대 32개입니다. 현재 결과를 반영하거나 취소하세요.";return;}
     points_.push_back({{"x",point.x},{"y",point.y},{"label",negative?0:1}});
     auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["radius"]=radius_;
-    const auto key=current().annotation.at("key").get<std::string>();const auto client=client_;const auto token=generation_;
-    launch("EfficientSAM으로 공 윤곽 분리",[client,payload]{return JobResult{client.post("/api/assist/segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_="제안 미확정 · Enter 반영, Esc 취소";});
+    const auto key=current().annotation.at("key").get<std::string>();const auto engine=engine_;const auto token=generation_;
+    launch("EfficientSAM으로 공 윤곽 분리",[engine,payload]{return JobResult{engine->assist("segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_="제안 미확정 · Enter 반영, Esc 취소";});
 }
 // A dragged box is sent together with its center as the positive point.
 void Application::segmentBox(cv::Rect2d box) {
@@ -336,15 +318,15 @@ void Application::segmentBox(cv::Rect2d box) {
     replacement_=target(current(),center);if(replacement_>=0)selected_=replacement_;
     points_.push_back({{"x",center.x},{"y",center.y},{"label",1}});
     auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["radius"]=std::max(box.width,box.height)/2;payload["box"]={box.x,box.y,box.width,box.height};
-    const auto key=current().annotation.at("key").get<std::string>();const auto client=client_;const auto token=generation_;
-    launch("EfficientSAM으로 공 윤곽 분리",[client,payload]{return JobResult{client.post("/api/assist/segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_="제안 미확정 · Enter 반영, Esc 취소";});
+    const auto key=current().annotation.at("key").get<std::string>();const auto engine=engine_;const auto token=generation_;
+    launch("EfficientSAM으로 공 윤곽 분리",[engine,payload]{return JobResult{engine->assist("segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_="제안 미확정 · Enter 반영, Esc 취소";});
 }
 void Application::polygonProposal(){
     if(busy()||polygon_.size()<3)return;Json points=Json::array();for(auto point:polygon_)points.push_back({point.x,point.y});
     // An outline follows the edge of a ball, so its middle says which ball it is; its first point may lie in a neighbour's box.
     replacement_=target(current(),boundsCenter(polygon_));if(replacement_>=0)selected_=replacement_;
-    auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points;const auto client=client_;const auto token=generation_;
-    launch("수동 폴리곤 마스크 만들기",[client,payload]{return JobResult{client.post("/api/assist/polygon",payload),{}};},[this,token](JobResult result){if(token!=generation_)return;proposal_=result.data.at("proposals").at(0);polygon_.clear();current().repaint=true;message_="폴리곤 미리보기 · Enter로 반영";});
+    auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points;const auto engine=engine_;const auto token=generation_;
+    launch("수동 폴리곤 마스크 만들기",[engine,payload]{return JobResult{engine->assist("polygon",payload),{}};},[this,token](JobResult result){if(token!=generation_)return;proposal_=result.data.at("proposals").at(0);polygon_.clear();current().repaint=true;message_="폴리곤 미리보기 · Enter로 반영";});
 }
 void Application::review(Scope scope,bool hold,int member) {
     if(!guard()||frames_.empty())return;
@@ -356,10 +338,10 @@ void Application::review(Scope scope,bool hold,int member) {
     const bool advance=scope==Scope::Scene||hold;
     // The engine refuses when it holds a different number of balls than this screen shows, as after an automatic draft.
     Json seen=Json::object();for(const auto& frame:frames_)seen[frame.annotation.at("key").get<std::string>()]=frame.annotation["boxes"].size();
-    const auto client=client_;Json payload={{"keys",keys},{"seen",seen},{"status",hold?"hold":"reviewed"},{"expected_revision",catalog_["summary"]["revision"]}};
-    launch(hold?"보류 상태 저장":"확인 저장",[client,payload]{
-        try{return JobResult{client.post("/api/native/review",payload),{}};}
-        catch(const Conflict&){return JobResult{{{"conflict",true},{"catalog",client.get("/api/native/catalog")}},{}};}
+    const auto engine=engine_;Json payload={{"keys",keys},{"seen",seen},{"status",hold?"hold":"reviewed"},{"expected_revision",catalog_["summary"]["revision"]}};
+    launch(hold?"보류 상태 저장":"확인 저장",[engine,payload]{
+        try{return JobResult{engine->nativeAction("review",payload),{}};}
+        catch(const Conflict&){return JobResult{{{"conflict",true},{"catalog",engine->nativeCatalog()}},{}};}
     },[this,advance,hold,keys](JobResult result){
         if(result.data.contains("conflict")){updateCatalog(result.data["catalog"]);loadScene(scene_,editor_,camera_,"저장된 라벨이 화면과 달라 다시 불러왔습니다. 확인한 뒤 다시 누르세요.");return;}
         updateSummary(result.data.at("summary"));
@@ -396,8 +378,8 @@ void Application::tick(){
     if(ready()&&!busy()&&!pending()&&current().dirty&&Clock::now()-changed_>std::chrono::milliseconds(450)&&error_.empty())save();
     const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running"||colorStatus_.value("status","")=="running";
     if(activeJob&&ready()&&!busy()&&Clock::now()-poll_>std::chrono::seconds(3)&&error_.empty()&&!current().dirty&&!pending()){
-        poll_=Clock::now();const auto client=client_;
-        launch("작업 상태 확인",[client]{return JobResult{{{"auto",client.get("/api/auto-status")},{"export",client.get("/api/export-status")},{"color",client.get("/api/native/color-fill")},{"catalog",client.get("/api/native/catalog")}}, {}};},[this](JobResult result){
+        poll_=Clock::now();const auto engine=engine_;
+        launch("작업 상태 확인",[engine]{return JobResult{{{"auto",engine->autoStatus()},{"export",engine->exportStatus()},{"color",engine->colorFillStatus()},{"catalog",engine->nativeCatalog()}}, {}};},[this](JobResult result){
             const auto oldRevision=catalog_["summary"].value("revision",0),oldAuto=catalog_["summary"].value("auto_revision",0);const bool exporting=exportStatus_.value("status","")=="running";
             const bool coloring=colorStatus_.value("status","")=="running";
             autoStatus_=result.data["auto"];exportStatus_=result.data["export"];colorStatus_=result.data["color"];updateCatalog(result.data["catalog"]);
@@ -529,8 +511,8 @@ bool Application::stageCheckStep(int step) {
 }
 // The stage pages show per-recording counts that only the full catalog carries.
 void Application::refreshStage(){
-    if(busy())return;const auto client=client_;
-    launch("현황 새로 읽기",[client]{return JobResult{{{"catalog",client.get("/api/native/catalog")},{"exports",client.get("/api/native/exports")},{"export",client.get("/api/export-status")},{"auto",client.get("/api/auto-status")},{"color",client.get("/api/native/color-fill")}},{}};},
+    if(busy())return;const auto engine=engine_;
+    launch("현황 새로 읽기",[engine]{return JobResult{{{"catalog",engine->nativeCatalog()},{"exports",engine->exports()},{"export",engine->exportStatus()},{"auto",engine->autoStatus()},{"color",engine->colorFillStatus()}},{}};},
         [this](JobResult result){
             const auto revision=catalog_["summary"].value("revision",0),automatic=catalog_["summary"].value("auto_revision",0);
             updateCatalog(result.data["catalog"]);

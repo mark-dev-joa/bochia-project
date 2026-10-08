@@ -13,7 +13,7 @@
 namespace boccia::labeler {
 // Another writer moved the project on: the request assumed an older revision (the engine's old HTTP 409).
 struct Conflict : std::runtime_error { using std::runtime_error::runtime_error; };
-inline constexpr const char* splitNames[] = {"train", "val", "test"};
+inline constexpr const char* datasetSplits[] = {"train", "val", "test"};
 std::filesystem::path selectionPath(const std::filesystem::path& project);   // <stem>-selection.json beside the project
 class SelectionFile {
 public:

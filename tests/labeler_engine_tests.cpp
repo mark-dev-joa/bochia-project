@@ -556,7 +556,7 @@ void exportTests() {
             for (const auto& frame : manifest3["frames"]) if (frame["recording_path"] == catalog2.recording(id).relativePath) used.insert(frame["split"].get<std::string>());
             check(used == std::set<std::string>{project2.state["splits"][id].get<std::string>()}, "a recording was split across sets");
         }
-        for (const char* split : splitNames) check(fs::exists(output / "annotations" / (std::string("instances_detection_") + split + ".json")), "detection coco missing");
+        for (const char* split : datasetSplits) check(fs::exists(output / "annotations" / (std::string("instances_detection_") + split + ".json")), "detection coco missing");
         check(!fs::exists(output / "crops"), "crops were written although not requested");
         const fs::path broken = other.exports / "20990101-000000-broken";
         writeFile(broken / "manifest.json", "{}"); writeFile(broken / "INCOMPLETE.txt", "x");

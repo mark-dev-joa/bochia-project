@@ -340,7 +340,7 @@ Json nativeAction(Project& project, const std::string& action, const Json& paylo
         bool valid = splits.is_object() && splits.size() == project.catalog.recordings.size();
         if (valid) for (const auto& recording : project.catalog.recordings) {
             const auto found = splits.find(recording.id);
-            if (found == splits.end() || !found->is_string() || std::find(std::begin(splitNames), std::end(splitNames), found->get<std::string>()) == std::end(splitNames)) { valid = false; break; }
+            if (found == splits.end() || !found->is_string() || std::find(std::begin(datasetSplits), std::end(datasetSplits), found->get<std::string>()) == std::end(datasetSplits)) { valid = false; break; }
         }
         if (!valid) throw std::runtime_error("모든 촬영을 학습·검증·최종 평가로 지정하세요.");
         std::map<std::string, std::set<std::string>> perGroup;

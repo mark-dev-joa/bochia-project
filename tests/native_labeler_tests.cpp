@@ -1,5 +1,5 @@
 #include "native_labeler_model.hpp"
-#include "native_labeler_client.hpp"
+#include "labeler_engine.hpp"
 #include "native_labeler_view.hpp"
 #include <opencv2/imgproc.hpp>
 #include <cmath>
@@ -95,19 +95,22 @@ int main(int argc,char** argv){try{
     for(int edge=0;edge<4;++edge)check(nudgeEdge(box,edge,false,13,9),"edge shrink failed");check(detectionBox(box)==cv::Rect2d(4,2,5,5),"inverse edge corrections wrong");
     Json boundary={{"bbox",{0,0,1,1}}};for(int edge=0;edge<4;++edge)check(!nudgeEdge(boundary,edge,false,13,9),"subpixel box accepted");check(!nudgeEdge(boundary,0,true,13,9),"top image edge overflow");check(!nudgeEdge(boundary,2,true,13,9),"left image edge overflow");
     mask.at<uchar>(1,4)=1;auto changed=maskAnnotation(mask,box,"manual_brush");check(!changed.contains("detection_bbox"),"mask edit retained stale correction");check(changed["area"]==25,"brush mask area wrong");
-    if(argc>1){
-        Client client(std::stoi(argv[1]));auto catalog=client.get("/api/native/catalog");check(catalog["api_version"]==4,"native catalog incompatible");
+    if(argc>2){
+        // A real project (a QA copy: this run saves to it) with the engine in this process, as the app uses it.
+        const auto source=fromUtf8(argv[1]),project=fromUtf8(argv[2]),repository=fromUtf8(BOCCIA_LABELER_ROOT);
+        Engine engine({source,project,project.parent_path()/"v2-qa-exports",repository/"data/models/efficientsam",repository});
+        auto catalog=engine.nativeCatalog();check(catalog["api_version"]==5,"native catalog incompatible");
         auto found=std::find_if(catalog["scenes"].begin(),catalog["scenes"].end(),[](const Json& scene){return scene.value("recording_number",0)==5&&scene.value("index",-1)==0;});check(found!=catalog["scenes"].end(),"test scene absent");
-        auto member=(*found)["members"][0];auto query=Client::frameQuery(member,(*found)["recording"].get<std::string>());auto frame=client.get("/api/frame"+query);auto original=frame;
-        check(!frame["boxes"].empty(),"test ball absent");check(!client.image(member,(*found)["recording"].get<std::string>()).empty(),"native image decode failed");
+        auto member=(*found)["members"][0];const std::string recording=(*found)["recording"],camera=member["camera"];const int index=member["index"];auto frame=engine.frame(recording,camera,index);auto original=frame;
+        check(!frame["boxes"].empty(),"test ball absent");check(!engine.image(recording,camera,index).empty(),"native image decode failed");check(engine.thumbnail(member["key"]).cols==128,"thumbnail failed");
         auto oldMask=frame["boxes"][0]["segmentation"];check(nudgeEdge(frame["boxes"][0],0,true,frame["width"],frame["height"]),"test correction failed");frame["reviewed"]=false;frame["review_status"]="editing";
-        auto saved=client.post("/api/annotation",annotationPayload(frame,catalog["summary"]["revision"]));auto reread=client.get("/api/frame"+query);check(reread["boxes"][0]["segmentation"]==oldMask,"HTTP save lost mask");check(reread["boxes"][0].contains("detection_bbox"),"HTTP save lost edge correction");
+        auto saved=engine.saveAnnotation(annotationPayload(frame,catalog["summary"]["revision"]));auto reread=engine.frame(recording,camera,index);check(reread["boxes"][0]["segmentation"]==oldMask,"save lost mask");check(reread["boxes"][0].contains("detection_bbox"),"save lost edge correction");
         auto rectangle=detectionBox(original["boxes"][0]);Json prompt=annotationPayload(original,saved["summary"]["revision"]);prompt["points"]={{{"x",rectangle.x+rectangle.width/2},{"y",rectangle.y+rectangle.height/2},{"label",1}}};prompt["radius"]=18;
-        auto proposed=client.post("/api/assist/segment",prompt);auto& inferred=proposed["proposals"][0];check(inferred.contains("segmentation")&&inferred.value("source","")=="efficientsam","real SAM inference failed");
+        auto proposed=engine.assist("segment",prompt);auto& inferred=proposed["proposals"][0];check(inferred.contains("segmentation")&&inferred.value("source","")=="efficientsam","real SAM inference failed");
         Json boxed=annotationPayload(original,saved["summary"]["revision"]);boxed["points"]=prompt["points"];boxed["radius"]=18;boxed["box"]={rectangle.x-2,rectangle.y-2,rectangle.width+4,rectangle.height+4};
-        auto boxProposal=client.post("/api/assist/segment",boxed);check(boxProposal["proposals"][0].contains("segmentation"),"box prompted SAM inference failed");
-        original["review_status"]=original.value("reviewed",false)?"reviewed":"editing";client.post("/api/annotation",annotationPayload(original,saved["summary"]["revision"]));
-        std::cout<<"PASS: native HTTP image, mask-preserving save/reload and actual EfficientSAM inference\n";
+        auto boxProposal=engine.assist("segment",boxed);check(boxProposal["proposals"][0].contains("segmentation"),"box prompted SAM inference failed");
+        original["review_status"]=original.value("reviewed",false)?"reviewed":"editing";engine.saveAnnotation(annotationPayload(original,saved["summary"]["revision"]));
+        std::cout<<"PASS: in-process engine image, thumbnail, mask-preserving save/reload and actual EfficientSAM inference\n";
     }
     std::cout<<"PASS: RLE, original-pixel edge corrections, bounds, mask preservation and brush invalidation\n";return 0;
 }catch(const std::exception& error){std::cerr<<error.what()<<"\n";return 1;}}
