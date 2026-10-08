@@ -178,7 +178,7 @@ private:
     void queue();
     void reviewPane();
     void sceneBar(ImVec2 pos, float width);
-    void toastOverlay(ImVec2 origin, float width);   // "프레임 0003 확인 → 지금은 프레임 0005", fading out
+    void toastOverlay(ImVec2 origin, ImVec2 size);   // "프레임 0003 확인 → 지금은 프레임 0005", centred, fading out
     void overviewTile(int slot, ImVec2 pos, ImVec2 size);
     void smallTile(int slot, ImVec2 pos, ImVec2 size);
     void focusTile(int slot, ImVec2 pos, ImVec2 size);

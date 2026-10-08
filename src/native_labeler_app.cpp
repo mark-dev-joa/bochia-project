@@ -361,7 +361,7 @@ void Application::segment(cv::Point2d point,bool negative) {
     points_.push_back({{"x",point.x},{"y",point.y},{"label",negative?0:1}});
     auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["radius"]=radius_;
     const auto key=current().annotation.at("key").get<std::string>();const auto engine=engine_;const auto token=generation_;
-    launch("EfficientSAM으로 공 윤곽 분리",[engine,payload]{return JobResult{engine->assist("segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_="제안 미확정 · Enter 반영, Esc 취소";});
+    launch("EfficientSAM으로 공 윤곽 분리",[engine,payload]{return JobResult{engine->assist("segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_="제안 미확정 · Space 반영, Esc 취소";});
 }
 // A dragged box is sent together with its center as the positive point.
 void Application::segmentBox(cv::Rect2d box) {
@@ -371,14 +371,14 @@ void Application::segmentBox(cv::Rect2d box) {
     points_.push_back({{"x",center.x},{"y",center.y},{"label",1}});
     auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["radius"]=std::max(box.width,box.height)/2;payload["box"]={box.x,box.y,box.width,box.height};
     const auto key=current().annotation.at("key").get<std::string>();const auto engine=engine_;const auto token=generation_;
-    launch("EfficientSAM으로 공 윤곽 분리",[engine,payload]{return JobResult{engine->assist("segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_="제안 미확정 · Enter 반영, Esc 취소";});
+    launch("EfficientSAM으로 공 윤곽 분리",[engine,payload]{return JobResult{engine->assist("segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_="제안 미확정 · Space 반영, Esc 취소";});
 }
 void Application::polygonProposal(){
     if(busy()||polygon_.size()<3)return;Json points=Json::array();for(auto point:polygon_)points.push_back({point.x,point.y});
     // An outline follows the edge of a ball, so its middle says which ball it is; its first point may lie in a neighbour's box.
     replacement_=target(current(),boundsCenter(polygon_));if(replacement_>=0)selected_=replacement_;
     auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points;const auto engine=engine_;const auto token=generation_;
-    launch("수동 폴리곤 마스크 만들기",[engine,payload]{return JobResult{engine->assist("polygon",payload),{}};},[this,token](JobResult result){if(token!=generation_)return;proposal_=result.data.at("proposals").at(0);polygon_.clear();current().repaint=true;message_="폴리곤 미리보기 · Enter로 반영";});
+    launch("수동 폴리곤 마스크 만들기",[engine,payload]{return JobResult{engine->assist("polygon",payload),{}};},[this,token](JobResult result){if(token!=generation_)return;proposal_=result.data.at("proposals").at(0);polygon_.clear();current().repaint=true;message_="폴리곤 미리보기 · Space로 반영";});
 }
 void Application::review(Scope scope,bool hold,int member) {
     if(!guard()||frames_.empty())return;
@@ -618,7 +618,9 @@ void Application::keys() {
     if(io.KeyCtrl&&pressed(ImGuiKey_Z))undo();
     if(io.KeyCtrl&&pressed(ImGuiKey_S))save();
     if(io.KeyCtrl||io.KeyAlt)return;
-    if(pressed(ImGuiKey_Space)||pressed(ImGuiKey_E))review(io.KeyShift&&editor_?Scope::Camera:Scope::Scene,false);   // Space confirms (2026-10-08 user request)
+    // Space applies a pending proposal, otherwise confirms the scene (2026-10-08 user request); E confirms only.
+    if(pressed(ImGuiKey_Space)){if(pending())apply();else review(io.KeyShift&&editor_?Scope::Camera:Scope::Scene,false);}
+    if(pressed(ImGuiKey_E))review(io.KeyShift&&editor_?Scope::Camera:Scope::Scene,false);
     if(pressed(ImGuiKey_Q))review(editor_?Scope::Camera:Scope::Scene,true);
     if(pressed(ImGuiKey_N)&&guard())nextUnreviewed();
     if(pressed(ImGuiKey_Backspace))back();
@@ -691,7 +693,7 @@ void Application::shortcutsPopup(ImVec2 below) {
     static const char* const rows[][2]={{"Space / E","세 장 확인하고 다음 미검수 장면"},{"Shift+Space / Shift+E","크게 보는 카메라 한 장만 확인"},{"Q","보류"},{"N","다음 미검수 장면"},
         {"A / D","이전 / 다음 장면"},{"Backspace","이전에 보던 장면으로"},{"1 / 2 / 3","그 카메라를 크게"},{"Tab / Shift+Tab","다음 / 이전 공"},
         {"방향키","선택한 공의 그 방향 경계를 1픽셀 바깥으로"},{"Shift+방향키","1픽셀 안으로"},{"V / S / B / P / R","선택 / AI 분할 / 브러시 / 폴리곤 / 박스"},
-        {"왼쪽 / 오른쪽 클릭","더하기 / 빼기"},{"[ / ]","브러시 굵기"},{"Enter / Esc","윤곽 반영 / 취소, 선택 해제, 세 장 보기"},{"G / M / X / C","윤곽 / 마스크 채움 / 박스 / 원 표시"},{"I","보기: 원본 / 대비 / 흑백 / 에지 / 그래디언트 / 에지 겹침"},
+        {"왼쪽 / 오른쪽 클릭","더하기 / 빼기"},{"[ / ]","브러시 굵기"},{"Space / Esc","윤곽 반영 / 취소, 선택 해제, 세 장 보기"},{"G / M / X / C","윤곽 / 마스크 채움 / 박스 / 원 표시"},{"I","보기: 원본 / 대비 / 흑백 / 에지 / 그래디언트 / 에지 겹침"},
         {"F / Z","화면 맞춤 / 선택한 공으로"},{"O / Delete","일부 가림 / 공 삭제 (확인창에서 Space로 수락)"},{"Ctrl+Z / Ctrl+S","되돌리기 / 저장"},{"휠 / 가운데 끌기","확대 / 이동"}};
     ImGui::SetNextWindowPos({below.x,below.y+4},ImGuiCond_Always,{1,0});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{16,12});

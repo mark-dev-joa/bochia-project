@@ -291,7 +291,7 @@ void Application::reviewPane() {
     ImGui::Dummy(avail);
     const float x = origin.x + 12, width = avail.x - 24;
     sceneBar({x, origin.y + 10}, width);
-    toastOverlay({x, origin.y}, width);
+    toastOverlay({x, origin.y}, {width, avail.y});
     const float top = origin.y + 58, height = avail.y - 58 - 10;
     const auto spans = tileSpans(editor_ ? camera_ : -1, width);
     for (int slot = 0; slot < 3; ++slot) {
@@ -353,19 +353,19 @@ void Application::sceneBar(ImVec2 pos, float width) {
     theme::write(draw, {x, pos.y + 13}, theme::text3, meta, theme::caption);
     draw->PopClipRect();
 }
-// The notice after moving on: a card below the scene bar for 1.8 s, fading over the last half second.
-void Application::toastOverlay(ImVec2 origin, float width) {
+// The notice after moving on: a card in the middle of the review area for 1.8 s, fading over the last half second.
+void Application::toastOverlay(ImVec2 origin, ImVec2 size) {
     if (toast_.empty() || std::chrono::steady_clock::now() >= toastUntil_) return;
     const float remaining = std::chrono::duration<float>(toastUntil_ - std::chrono::steady_clock::now()).count();
     const float alpha = std::clamp(remaining / .5f, 0.f, 1.f);
     auto draw = ImGui::GetForegroundDrawList();
-    const float size = theme::px(theme::title);
-    const ImVec2 extent = theme::extent(toast_, size, theme::bold);
-    const ImVec2 center{origin.x + width / 2, origin.y + 70};
+    const float fontSize = theme::px(theme::title);
+    const ImVec2 extent = theme::extent(toast_, fontSize, theme::bold);
+    const ImVec2 center{origin.x + size.x / 2, origin.y + size.y / 2 - extent.y / 2 - 12};
     const ImVec2 a{center.x - extent.x / 2 - 24, center.y}, b{center.x + extent.x / 2 + 24, center.y + extent.y + 24};
     draw->AddRectFilled(a, b, theme::rgb(0x0d0f12, int(235 * alpha)), 10);
     draw->AddRect(a, b, theme::rgb(0x5b9dff, int(255 * alpha)), 10, 0, 1.5f);
-    theme::write(draw, {center.x - extent.x / 2, center.y + 12}, theme::rgb(0xffffff, int(255 * alpha)), toast_, size, theme::bold);
+    theme::write(draw, {center.x - extent.x / 2, center.y + 12}, theme::rgb(0xffffff, int(255 * alpha)), toast_, fontSize, theme::bold);
 }
 void Application::emptyTile(ImVec2 pos, ImVec2 size) {
     auto draw = ImGui::GetWindowDrawList();
@@ -746,7 +746,7 @@ void Application::canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size) {
         ImVec2 anchor{pos.x + size.x / 2, end.y - 70};
         if (!proposal_.is_null()) { const auto r = detectionBox(proposal_); anchor = {pos.x + frame.offsetX + float(r.x + r.width / 2) * frame.scale, pos.y + frame.offsetY + float(r.y + r.height) * frame.scale + 22}; }
         std::string label = "폴리곤 작성 중";
-        if (!proposal_.is_null()) {   // say what Enter will do: change that ball or add one
+        if (!proposal_.is_null()) {   // say what Space will do: change that ball or add one
             const auto order = sorted(frame);
             const auto found = std::find(order.begin(), order.end(), replacement_);
             label = found == order.end() ? "새 공 추가" : "공 " + std::to_string(found - order.begin() + 1) + " 윤곽 바꾸기";
@@ -757,7 +757,7 @@ void Application::canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size) {
         theme::write(draw, {p.x + 12, p.y + 9}, theme::proposal, label, theme::caption, theme::bold);
         ImGui::PushFont(nullptr, theme::px(theme::caption)); ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {6, 4});
         ImGui::SetCursorScreenPos({p.x + 24 + labelWidth, p.y + 5});
-        if (theme::primaryButton(proposal_.is_null() ? "닫기  Enter" : "반영  Enter", {104, 24})) apply();
+        if (theme::primaryButton(proposal_.is_null() ? "닫기  Space" : "반영  Space", {104, 24})) apply();
         ImGui::SetCursorScreenPos({p.x + 24 + labelWidth + 110, p.y + 5});
         if (ImGui::Button("취소  Esc", {88, 24})) cancel();
         ImGui::PopStyleVar(); ImGui::PopFont();
