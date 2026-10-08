@@ -55,6 +55,7 @@ public:
     void missingApplyForCapture(int frames) { missingAsk_ = true; startMissing(false, false, frames); }           // applies the pass to a few frames, for the check of the apply path
     bool selfCheckStep(int step);                    // scripted logic checks for the hidden smoke run
     bool stageCheckStep(int step);                   // the same for split and export; needs a fully confirmed project
+    bool missingScriptStep(int step);                // trials of the missing-ball pass, their assembly and the apply of one
     const std::string& error() const { return error_; }
     bool canClose() const;
     void preserveRecovery();
@@ -82,6 +83,9 @@ private:
     std::vector<FrameView> missingSamples_;                      // crops of a trial's new balls, shown in the dialog
     int missingCameras_ = 0, missingTrial_ = 30;                 // 0 colour only, 1 all cameras; frames per trial
     float missingCoverage_ = .8f, missingMinRadius_ = 6, missingMaxRadius_ = 45;
+    Json missingTrials_ = Json::array();                         // the saved trials, as the engine lists them
+    char trialName_[33] = "A";                                   // the name the next saved trial gets
+    int combineA_ = 0, combineOp_ = 0, combineB_ = 0;            // the assembly row: trial, operator, trial
     std::vector<FrameView> frames_;
     std::future<JobResult> task_, ahead_;
     std::function<void(JobResult)> completion_;
@@ -177,7 +181,9 @@ private:
     void confirmNext();                              // the prompt behind nextAsk_: Space moves on, Esc stays
     void confirmMissing();                           // the dialog behind missingAsk_: options, count, trial, samples, apply
     void startMissing(bool dryRun, bool countOnly, int limit = -1);   // runs the pass with the dialog's options; limit overrides the frame count
-    void loadMissingSamples();                       // crops of the last trial's new balls
+    void loadMissingSamples(Json samples = Json());  // crops of new balls: the last trial's, or the given ones
+    void refreshMissingTrials();                     // the saved trials, from the engine
+    void missingAction(const std::string& action, Json payload, std::string done);   // a trial action, then the list again
     void refineCircles();
     void segment(cv::Point2d point, bool negative);
     void segmentBox(cv::Rect2d box);

@@ -295,7 +295,7 @@ void Application::preparePage() {
         } else box.text("컬러 카메라의 먼 공이 초안에서 빠졌습니다. 옵션을 정해 몇 장만 시험해 보고 적용하세요.", theme::text);
         ImGui::PushFont(nullptr, theme::px(theme::caption));
         ImGui::SetCursorScreenPos({box.left(), box.y});
-        if (ImGui::Button("옵션 · 시험 실행 · 적용…", {box.inner(), 30})) missingAsk_ = true;
+        if (ImGui::Button("옵션 · 시험 실행 · 적용…", {box.inner(), 30})) { missingAsk_ = true; refreshMissingTrials(); }
         ImGui::PopFont();
         box.y += 36;
         if (missingStatus_.value("status", "") == "error") box.text(missingStatus_.value("error", ""), theme::warn);

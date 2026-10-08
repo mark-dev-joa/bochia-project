@@ -21,6 +21,12 @@ Json Engine::saveSplits(const Json& payload) { return {{"summary", project_.save
 Json Engine::nativeAction(const std::string& action, const Json& payload) {
     if (action == "fill-missing") return startMissingFill(project_, paths.root, paths.models, missingOptions(payload, project_));   // needs the model and the detector files
     if (action == "stop-missing") return stopMissingFill(project_);
+    if (action == "missing-trials") return missingTrials(project_);
+    if (action == "save-missing-trial") return saveMissingTrial(project_, payload.value("name", ""));
+    if (action == "combine-missing-trials") return combineMissingTrials(project_, payload.value("name", ""), payload.value("op", ""), payload.value("a", ""), payload.value("b", ""));
+    if (action == "drop-missing-trial") return dropMissingTrial(project_, payload.value("name", ""));
+    if (action == "missing-trial-samples") return missingTrialSamples(project_, payload.value("name", ""), payload.value("limit", 8));
+    if (action == "apply-missing-trial") return applyMissingTrial(project_, payload.value("name", ""));
     return boccia::labeler::nativeAction(project_, action, payload);
 }
 Json Engine::missingFillStatus() const { return boccia::labeler::missingFillStatus(project_); }

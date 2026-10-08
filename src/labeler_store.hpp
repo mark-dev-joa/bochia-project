@@ -40,6 +40,7 @@ public:
     Json colorJob = {{"status", "idle"}};
     Json circleJob = {{"status", "idle"}};
     Json missingJob = {{"status", "idle"}};   // the pass that adds the detector's balls the draft lacks
+    Json missingTrials;                       // its named trials; null until the sidecar next to the label file is read
     std::map<std::string, cv::Mat> thumbnails;   // "recording/camera/index@width"
     mutable SelectionFile selection;    // its sidecar cache refreshes on read
     Json summary() const;

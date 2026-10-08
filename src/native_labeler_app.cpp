@@ -190,7 +190,8 @@ void Application::nudge(int edge,bool expand) {
     auto& frame=current();auto& box=frame.annotation["boxes"][selected_];auto trial=box;
     if(!nudgeEdge(trial,edge,expand,frame.image.cols,frame.image.rows)){message_=expand?"이미지 밖으로 넓힐 수 없습니다.":"박스는 1픽셀보다 작아질 수 없습니다.";return;}
     // The edited box defines the ball: the circle inscribed in it, and the mask as that disc (2026-10-08 user request).
-    inscribeCircle(trial,frame.image.cols,frame.image.rows);
+    // A partly hidden ball's box is its visible part, so no circle fits in it; its mask stays and an old circle goes.
+    if(trial.value("occluded",false))trial.erase("circle");else inscribeCircle(trial,frame.image.cols,frame.image.rows);
     // A correction that ends up equal to the mask bounds is no correction.
     if(trial.at("detection_bbox")==trial.at("bbox"))trial.erase("detection_bbox");
     checkpoint();box=trial;boxes_=true;changed(masks_||outlines_);   // the overlay is rebuilt only when the mask is shown: doing it always made every key press lag
@@ -378,8 +379,8 @@ void Application::startMissing(bool dryRun,bool countOnly,int limit){
            [this,countOnly](JobResult result){missingStatus_=result.data;if(countOnly)message_="후보 "+grouped(missingStatus_.value("candidates",0))+"개 · "+grouped(missingStatus_.value("frames_with_candidates",0))+"장";else message_="누락 공 작업을 시작했습니다. 그동안 계속 작업할 수 있습니다.";});
 }
 // Each sample: the image around one new ball, the box and circle moved into the crop, shown by the usual tile painter.
-void Application::loadMissingSamples(){
-    const Json samples=missingStatus_.value("samples",Json::array());
+void Application::loadMissingSamples(Json samples){
+    if(samples.is_null())samples=missingStatus_.value("samples",Json::array());
     if(samples.empty()||busy()){for(auto& s:missingSamples_){if(s.texture)doomed_.push_back(s.texture);if(s.overlay)doomed_.push_back(s.overlay);}missingSamples_.clear();return;}
     const auto engine=engine_;
     launch("샘플 조각 읽기",[engine,samples]{
@@ -401,6 +402,50 @@ void Application::loadMissingSamples(){
         }
         return result;},
         [this](JobResult result){for(auto& s:missingSamples_){if(s.texture)doomed_.push_back(s.texture);if(s.overlay)doomed_.push_back(s.overlay);}missingSamples_=std::move(result.frames);});
+}
+void Application::refreshMissingTrials(){
+    if(busy())return;const auto engine=engine_;
+    launch("시험 목록 읽기",[engine]{return JobResult{engine->nativeAction("missing-trials",Json::object()),{}};},[this](JobResult result){missingTrials_=result.data.value("trials",Json::array());
+        const int n=int(missingTrials_.size());combineA_=std::clamp(combineA_,0,std::max(0,n-1));combineB_=std::clamp(combineB_,0,std::max(0,n-1));});
+}
+void Application::missingAction(const std::string& action,Json payload,std::string done){
+    if(busy())return;const auto engine=engine_;
+    launch(done,[engine,action,payload]{return JobResult{engine->nativeAction(action,payload),{}};},[this,action,done](JobResult result){
+        if(result.data.contains("samples")){loadMissingSamples(result.data["samples"]);message_=done+" · 공 "+grouped(int(result.data["samples"].size()))+"개 조각";return;}
+        if(action=="apply-missing-trial"){message_=done+" · "+grouped(result.data.value("applied_frames",0))+"장에 공 "+grouped(result.data.value("applied_balls",0))+"개 추가, 건너뜀 "+grouped(result.data.value("skipped",0))+"장";refreshStage();return;}
+        missingTrials_=result.data.value("trials",Json::array());message_=done;
+        const int n=int(missingTrials_.size());combineA_=std::clamp(combineA_,0,std::max(0,n-1));combineB_=std::clamp(combineB_,0,std::max(0,n-1));
+        // The next trial gets the next letter, so A, B, C come without typing.
+        if(action=="save-missing-trial"&&trialName_[0]&&!trialName_[1]&&trialName_[0]>='A'&&trialName_[0]<'Z')++trialName_[0];});
+}
+// The hidden run's check of the trial path: two trials on the same frames, their assembly and the apply of one.
+bool Application::missingScriptStep(int step){
+    auto expect=[](bool condition,const char* what){if(!condition)throw std::runtime_error(std::string("missing-script: ")+what);};
+    auto trial=[&](const char* name)->Json{for(const auto& t:missingTrials_)if(t.value("name","")==name)return t;return Json();};
+    switch(step){
+    case 0:missingTrial_=6;missingCoverage_=.8f;startMissing(true,false);return true;
+    case 1:{expect(missingStatus_.value("status","")=="complete"&&missingStatus_.value("dry_run",false),"the first trial did not complete");
+        engine_->nativeAction("save-missing-trial",{{"name","A"}});missingCoverage_=.65f;startMissing(true,false);return true;}
+    case 2:{expect(missingStatus_.value("status","")=="complete","the second trial did not complete");
+        engine_->nativeAction("save-missing-trial",{{"name","B"}});
+        engine_->nativeAction("combine-missing-trials",{{"name","A or B"},{"op","or"},{"a","A"},{"b","B"}});
+        engine_->nativeAction("combine-missing-trials",{{"name","A and B"},{"op","and"},{"a","A"},{"b","B"}});
+        engine_->nativeAction("combine-missing-trials",{{"name","B not A"},{"op","and_not"},{"a","B"},{"b","A"}});
+        missingTrials_=engine_->nativeAction("missing-trials",Json::object()).value("trials",Json::array());
+        const Json a=trial("A"),b=trial("B"),both=trial("A and B"),either=trial("A or B"),rest=trial("B not A");
+        expect(!a.is_null()&&!b.is_null()&&!both.is_null()&&!either.is_null()&&!rest.is_null(),"a trial is missing from the list");
+        expect(a.value("balls",0)>0&&b.value("balls",0)>=a.value("balls",0),"a looser coverage must find at least as many balls on the same frames");
+        expect(both.value("balls",0)==a.value("balls",0)&&either.value("balls",0)==b.value("balls",0)&&rest.value("balls",0)==b.value("balls",0)-a.value("balls",0),"the assembly does not follow set algebra");
+        const Json applied=engine_->nativeAction("apply-missing-trial",{{"name","A and B"}});
+        expect(applied.value("applied_balls",0)==a.value("balls",0)&&applied.value("skipped",0)==0,"applying the assembled trial did not add its balls");
+        const Json again=engine_->nativeAction("apply-missing-trial",{{"name","A and B"}});
+        expect(again.value("applied_balls",0)==0,"applying twice must add nothing, since the drafts changed");
+        engine_->nativeAction("drop-missing-trial",{{"name","B not A"}});
+        missingTrials_=engine_->nativeAction("missing-trials",Json::object()).value("trials",Json::array());
+        expect(trial("B not A").is_null()&&missingTrials_.size()==4,"dropping a trial failed");
+        missingAsk_=true;refreshStage();return false;}
+    }
+    return false;
 }
 void Application::confirmMissing(){
     if(!missingAsk_)return;
@@ -447,6 +492,42 @@ void Application::confirmMissing(){
                 const std::string camera=sample.member.value("camera","");
                 std::snprintf(caption,sizeof caption,"%s·%04d r%.1f %s",camera.empty()?"?":camera.substr(camera.size()-1).c_str(),sample.member.value("index",0),box.contains("circle")?box["circle"][2].get<double>():0.0,box.value("source","")=="auto_sam"?"SAM":"기하");
                 theme::write(draw,{p0.x,p1.y+3},theme::text2,caption,11,theme::mono);
+            }
+        }
+        // Saving the trial under a name, the saved trials, and the assembly of two of them (2026-10-08 user request).
+        if(status=="complete"&&missingStatus_.value("dry_run",false)&&!missingStatus_.value("count_only",false)&&missingStatus_.contains("results")){
+            ImGui::BeginDisabled(busy());
+            ImGui::TextUnformatted("이 시험을 저장");ImGui::SameLine();ImGui::SetNextItemWidth(110);ImGui::InputText("##trial-name",trialName_,sizeof trialName_);ImGui::SameLine();
+            if(ImGui::Button("시험 저장",{96,26}))later_=[this]{missingAction("save-missing-trial",{{"name",std::string(trialName_)}},"시험을 저장했습니다");};
+            ImGui::EndDisabled();
+        }
+        if(!missingTrials_.empty()){
+            ImGui::Dummy({0,2});
+            ImGui::PushFont(theme::bold,theme::px(theme::base));ImGui::TextUnformatted("저장한 시험");ImGui::PopFont();
+            std::string names;for(const auto& t:missingTrials_){names+=t.value("name","");names+='\0';}names+='\0';
+            for(size_t i=0;i<missingTrials_.size();++i){
+                const auto& t=missingTrials_[i];const std::string name=t.value("name","");ImGui::PushID(int(i));
+                char line[160];
+                if(t["derived"].is_string())std::snprintf(line,sizeof line,"%s  =  %s  ·  %d장 · 공 %d개",name.c_str(),t["derived"].get<std::string>().c_str(),t.value("frames",0),t.value("balls",0));
+                else{const auto& o=t["options"];std::snprintf(line,sizeof line,"%s  ·  %s · 커버리지 %.2f · r %.0f~%.0f · %s  ·  %d장 · 공 %d개",name.c_str(),o.value("cameras","")=="all"?"모든 카메라":"컬러",o.value("coverage",0.0),o.value("min_radius",0.0),o.value("max_radius",0.0),o.value("limit_frames",0)>0?(std::to_string(o.value("limit_frames",0))+"장 시험").c_str():"전체",t.value("frames",0),t.value("balls",0));}
+                ImGui::TextUnformatted(line);ImGui::SameLine();
+                ImGui::BeginDisabled(busy()||running);
+                if(ImGui::SmallButton("샘플"))later_=[this,name]{missingAction("missing-trial-samples",{{"name",name},{"limit",8}},"시험 "+name);};ImGui::SameLine();
+                if(ImGui::SmallButton("적용"))later_=[this,name]{missingAction("apply-missing-trial",{{"name",name}},"시험 "+name+" 적용");};ImGui::SameLine();
+                if(ImGui::SmallButton("지우기"))later_=[this,name]{missingAction("drop-missing-trial",{{"name",name}},"시험 "+name+"을 지웠습니다");};
+                ImGui::EndDisabled();ImGui::PopID();
+            }
+            if(missingTrials_.size()>=2){
+                ImGui::TextUnformatted("조립");ImGui::SameLine();ImGui::SetNextItemWidth(120);ImGui::Combo("##ca",&combineA_,names.c_str());ImGui::SameLine();
+                ImGui::SetNextItemWidth(110);ImGui::Combo("##cop",&combineOp_,"or (합집합)\0and (교집합)\0and not (차집합)\0\0");ImGui::SameLine();
+                ImGui::SetNextItemWidth(120);ImGui::Combo("##cb",&combineB_,names.c_str());ImGui::SameLine();
+                ImGui::BeginDisabled(busy()||running||combineA_==combineB_);
+                if(ImGui::Button("조립",{70,26}))later_=[this]{
+                    const std::string a=missingTrials_[combineA_].value("name",""),b=missingTrials_[combineB_].value("name","");const char* op=combineOp_==0?"or":combineOp_==1?"and":"and_not";
+                    const std::string name=a+(combineOp_==0?" or ":combineOp_==1?" and ":" and not ")+b;
+                    missingAction("combine-missing-trials",{{"name",name},{"op",op},{"a",a},{"b",b}},"조립했습니다: "+name);};
+                ImGui::EndDisabled();
+                ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"같은 프레임에서 중심이 반지름 안에 들면 같은 공으로 봅니다. 조립한 결과도 시험으로 저장되어 다시 조립하거나 적용할 수 있습니다.");ImGui::PopFont();
             }
         }
         ImGui::Dummy({0,4});
@@ -638,7 +719,7 @@ void Application::repaint(FrameView& f){
         // The circle shown is the one measured from the image (Canny + RANSAC): the stored one for a refined ball, measured
         // on the spot for the others, and only when the image gives no trustworthy circle a fit to the mask's outline.
         if(boxes[i].contains("circle")){const auto& c=boxes[i]["circle"];f.circles[i]={c[0].get<double>()-.5,c[1].get<double>()-.5,c[2].get<double>()};}
-        else{const CircleFit fit=refineCircle(f.image,mask);f.circles[i]=fit.ok?Circle{fit.x-.5,fit.y-.5,fit.r+circleMargin_}:fitCircle(edge);}
+        else{const CircleFit fit=refineCircle(f.image,mask);f.circles[i]=fit.ok?Circle{fit.x-.5,fit.y-.5,fit.r+circleMargin_}:boxes[i].value("occluded",false)?Circle{}:fitCircle(edge);}   // a hidden ball shows no guessed circle
         if(active&&replacement_==i&&!proposal_.is_null())continue;
         overlay.setTo(active&&editor_&&i==selected_?cv::Scalar(255,216,74,13):cv::Scalar(46,230,208,51),mask);
     }
