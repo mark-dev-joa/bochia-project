@@ -1,5 +1,6 @@
 #include "native_labeler_app.hpp"
 #include "native_labeler_theme.hpp"
+#include "labeler_assist.hpp"
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
 #include <fstream>
@@ -16,7 +17,7 @@ std::string title(const Json& scene) { return "촬영 " + std::to_string(scene.a
 Application::Application(Configuration config): config_(std::move(config)), poll_(Clock::now()) { connect(); }
 Application::~Application() {
     if(task_.valid()) task_.wait(); if(thumbTask_.valid()) thumbTask_.wait(); if(ahead_.valid()) ahead_.wait();
-    if(config_.rememberUi){try{rememberPosition();}catch(...){}} releaseFrames();
+    if(config_.rememberUi){try{rememberPosition();}catch(...){}} releaseFrames();deleteDoomed();
     for(auto& [key,id]:thumbs_)if(id)glDeleteTextures(1,&id);
 }
 std::filesystem::path Application::preferencesPath() const { return config_.project.parent_path()/(config_.project.stem().wstring()+L"-native-ui.json"); }
@@ -100,7 +101,10 @@ void Application::updateSummary(const Json& summary) {
         if(summary["frames"].contains(key)) {const auto& state=summary["frames"][key];frame.member["selected"]=state.value("selected",true);frame.member["reviewed"]=state.value("reviewed",false);frame.member["status"]=state.value("review_status","draft");}
     }
 }
-void Application::releaseFrames(){for(auto& frame:frames_){if(frame.texture)glDeleteTextures(1,&frame.texture);if(frame.overlay)glDeleteTextures(1,&frame.overlay);}frames_.clear();}
+// The textures are not deleted here: a scene change from a key or button runs after this frame's draw list was built, and
+// that list still shows the old frames. Deleting at once left one frame sampling a freed id (the font atlas, as it happened).
+void Application::releaseFrames(){for(auto& frame:frames_){if(frame.texture)doomed_.push_back(frame.texture);if(frame.overlay)doomed_.push_back(frame.overlay);}frames_.clear();}
+void Application::deleteDoomed(){if(!doomed_.empty()){glDeleteTextures(GLsizei(doomed_.size()),doomed_.data());doomed_.clear();}}
 namespace {
 // The cameras of one scene are read at the same time, each on its own thread.
 JobResult fetchScene(const std::shared_ptr<Engine>& engine,const Json& scene) {
@@ -137,7 +141,7 @@ void Application::loadScene(int index,bool editor,int camera,std::string note) {
 // Fetches the next unreviewed scene in the background, so confirming a scene does not wait for the images.
 void Application::prefetch() {
     if(!aheadDirty_||!ready()||busy()||page_!=Page::Review)return;
-    const int next=nextUnreviewedIndex(),revision=catalog_["summary"].value("auto_revision",0);
+    const int next=advanceIndex(),revision=catalog_["summary"].value("auto_revision",0);
     if(ahead_.valid()){
         if(aheadScene_==next&&aheadAuto_==revision){aheadDirty_=false;return;}
         if(ahead_.wait_for(std::chrono::seconds(0))!=std::future_status::ready)return;   // dropping a running fetch would block until it ends
@@ -185,9 +189,11 @@ void Application::nudge(int edge,bool expand) {
     if(frames_.empty()||!editor_||selected_<0||pending()||busy())return;
     auto& frame=current();auto& box=frame.annotation["boxes"][selected_];auto trial=box;
     if(!nudgeEdge(trial,edge,expand,frame.image.cols,frame.image.rows)){message_=expand?"이미지 밖으로 넓힐 수 없습니다.":"박스는 1픽셀보다 작아질 수 없습니다.";return;}
+    // The edited box defines the ball: the circle inscribed in it, and the mask as that disc (2026-10-08 user request).
+    inscribeCircle(trial,frame.image.cols,frame.image.rows);
     // A correction that ends up equal to the mask bounds is no correction.
     if(trial.at("detection_bbox")==trial.at("bbox"))trial.erase("detection_bbox");
-    checkpoint();box=trial;boxes_=true;changed(false);   // only the box moved; rebuilding the overlay textures here made every key press lag
+    checkpoint();box=trial;boxes_=true;changed(masks_||outlines_);   // the overlay is rebuilt only when the mask is shown: doing it always made every key press lag
 }
 void Application::checkpoint(){auto& f=current();f.history.push_back(f.annotation);if(f.history.size()>40)f.history.erase(f.history.begin());}
 void Application::changed(bool repaint){auto& f=current();f.dirty=true;if(repaint)f.repaint=true;f.annotation["reviewed"]=false;f.annotation["review_status"]="editing";f.member["reviewed"]=false;f.member["status"]="editing";catalog_["split_confirmed"]=false;rowsDirty_=true;changed_=Clock::now();message_="수정됨 · 자동 저장 대기";}
@@ -323,13 +329,15 @@ void Application::confirmNext(){
     if(ImGui::BeginPopupModal("##next-scene",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
         char title[48];std::snprintf(title,sizeof title,"프레임 %04d 확인 완료",frames_.empty()?0:catalog_["scenes"][scene_].value("index",0));
         ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted(title);ImGui::PopFont();
-        const int next=nextUnreviewedIndex();
-        if(next<0||next==scene_)ImGui::TextUnformatted("더 넘어갈 미검수 장면이 없습니다.");
-        else{char line[64];std::snprintf(line,sizeof line,"다음 미검수 장면은 프레임 %04d입니다.",catalog_["scenes"][next].value("index",0));ImGui::TextUnformatted(line);}
+        const int next=advanceIndex();
+        if(next<0||next==scene_)ImGui::TextUnformatted("더 넘어갈 장면이 없습니다.");
+        else{
+            bool reviewed=true;for(const auto& member:catalog_["scenes"][next]["members"])if(member.value("selected",true)&&!member.value("reviewed",false))reviewed=false;
+            char line[96];std::snprintf(line,sizeof line,"다음 장면은 프레임 %04d입니다.%s",catalog_["scenes"][next].value("index",0),reviewed?"  (이미 확인한 장면)":"");ImGui::TextUnformatted(line);}
         ImGui::Dummy({0,4});
         bool close=false;
         ImGui::PushFont(theme::bold,theme::px(theme::base));
-        if(theme::primaryButton("다음 장면  Space",{160,36})||ImGui::IsKeyPressed(ImGuiKey_Space,false)||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{nextUnreviewed();};close=true;}
+        if(theme::primaryButton("다음 장면  Space",{160,36})||ImGui::IsKeyPressed(ImGuiKey_Space,false)||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{advance();};close=true;}
         ImGui::PopFont();ImGui::SameLine();
         if(ImGui::Button("머물기  Esc",{110,36})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
         if(close){nextAsk_=false;ImGui::CloseCurrentPopup();}
@@ -378,26 +386,32 @@ void Application::polygonProposal(){
     launch("수동 폴리곤 마스크 만들기",[engine,payload]{return JobResult{engine->assist("polygon",payload),{}};},[this,token](JobResult result){if(token!=generation_)return;proposal_=result.data.at("proposals").at(0);polygon_.clear();current().repaint=true;message_="폴리곤 미리보기 · Space로 반영";});
 }
 void Application::review(Scope scope,bool hold,int member) {
-    if(!guard()||frames_.empty())return;
+    if(frames_.empty())return;
+    // Space during the autosave or another job is kept, not dropped (2026-10-08 user report). If the job was this scene's
+    // own confirmation, the second press means "move on", as it would from the prompt.
+    if(busy()&&!pending()){
+        queued_=[this,scope,hold,member,scene=scene_]{if(scene_!=scene)return;if(nextAsk_){nextAsk_=false;advance();}else review(scope,hold,member);};
+        message_=busyLabel_+" 중 · 끝나면 바로 "+(hold?"보류합니다":"확인합니다");return;}
+    if(!guard())return;
     if(dirtySlot()>=0){save([this,scope,hold,member]{review(scope,hold,member);},dirtySlot());return;}
     Json keys=Json::array();
     if(scope==Scope::Camera)keys.push_back(frames_.at(member>=0?member:camera_).annotation.at("key"));
     else for(auto& frame:frames_)if(frame.member.value("selected",true)&&(!hold||!frame.member.value("reviewed",false)))keys.push_back(frame.annotation.at("key"));
     if(keys.empty())return;
-    const bool advance=scope==Scope::Scene||hold;
+    const bool moveOn=scope==Scope::Scene||hold;
     // The engine refuses when it holds a different number of balls than this screen shows, as after an automatic draft.
     Json seen=Json::object();for(const auto& frame:frames_)seen[frame.annotation.at("key").get<std::string>()]=frame.annotation["boxes"].size();
     const auto engine=engine_;Json payload={{"keys",keys},{"seen",seen},{"status",hold?"hold":"reviewed"},{"expected_revision",catalog_["summary"]["revision"]}};
     launch(hold?"보류 상태 저장":"확인 저장",[engine,payload]{
         try{return JobResult{engine->nativeAction("review",payload),{}};}
         catch(const Conflict&){return JobResult{{{"conflict",true},{"catalog",engine->nativeCatalog()}},{}};}
-    },[this,advance,hold,keys,scope](JobResult result){
+    },[this,moveOn,hold,keys,scope](JobResult result){
         if(result.data.contains("conflict")){updateCatalog(result.data["catalog"]);loadScene(scene_,editor_,camera_,"저장된 라벨이 화면과 달라 다시 불러왔습니다. 확인한 뒤 다시 누르세요.");return;}
         updateSummary(result.data.at("summary"));
         for(auto& f:frames_)if(std::find(keys.begin(),keys.end(),f.annotation["key"])!=keys.end()){f.annotation["reviewed"]=!hold;f.annotation["review_status"]=hold?"hold":"reviewed";}
         message_=hold?"보류로 표시했습니다":"확인했습니다";
         // A hold moves on at once; a confirmation stops at a prompt, and a second Space moves on (2026-10-08 user request).
-        if(hold&&advance)nextUnreviewed();else if(scope==Scope::Scene)nextAsk_=true;});
+        if(hold&&moveOn)advance();else if(scope==Scope::Scene)nextAsk_=true;});
 }
 // Held images are skipped; they are revisited through the list filter.
 int Application::nextUnreviewedIndex() const {
@@ -410,7 +424,23 @@ void Application::back(){
     if(history_.empty()||!guard())return;
     const int previous=history_.back();history_.pop_back();backing_=true;navigate(previous);
 }
+// The scene to move on to after a confirm or hold: the very next scene that holds a review target, reviewed or not. After
+// a correction in the middle this goes on to the next frame, not past the last confirmed one (2026-10-08 user request).
+// Past the end, the next unreviewed scene anywhere.
+int Application::advanceIndex() const {
+    const int count=int(catalog_["scenes"].size());
+    for(int index=scene_+1;index<count;++index)for(const auto& member:catalog_["scenes"][index]["members"])if(member.value("selected",true))return index;
+    return nextUnreviewedIndex();
+}
+void Application::advance(){
+    if(busy()){queued_=[this,scene=scene_]{if(scene_==scene)advance();};message_=busyLabel_+" 중 · 끝나면 다음 장면으로 넘어갑니다";return;}
+    const int index=advanceIndex();
+    if(index<0){editor_=false;message_="검수 대상을 모두 확인했습니다. 분할 단계로 넘어가세요.";return;}
+    if(index==scene_){message_="남은 미검수 이미지는 이 장면뿐입니다.";return;}
+    loadScene(index);
+}
 void Application::nextUnreviewed(){
+    if(busy()){queued_=[this,scene=scene_]{if(scene_==scene)nextUnreviewed();};message_=busyLabel_+" 중 · 끝나면 다음 미검수 장면으로 넘어갑니다";return;}
     const int index=nextUnreviewedIndex();
     if(index<0){editor_=false;message_="검수 대상을 모두 확인했습니다. 분할 단계로 넘어가세요.";return;}
     if(index==scene_){message_="남은 미검수 이미지는 이 장면뿐입니다.";return;}
@@ -425,6 +455,8 @@ void Application::tick(){
             if(!frames_.empty()&&current().dirty){try{preserveRecovery();message_="저장 실패 · 변경은 메모리와 recovery 폴더에 보관했습니다.";}catch(...) {}}
         }
     }
+    // The key pressed during the job: done now, or dropped when the job failed.
+    if(queued_){if(!error_.empty())queued_=nullptr;else if(!busy()){auto action=std::move(queued_);queued_=nullptr;action();}}
     pumpThumbs();prefetch();
     if(ready()&&!busy()&&!pending()&&dirtySlot()>=0&&Clock::now()-changed_>std::chrono::milliseconds(450)&&error_.empty())save({},dirtySlot());
     const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running"||colorStatus_.value("status","")=="running"||circleStatus_.value("status","")=="running";
@@ -512,7 +544,7 @@ void Application::selectForCapture(int camera,int rank){if(frames_.empty()||came
 // One step per call while the app is idle. Returns false when every step has passed; throws on a failed expectation.
 bool Application::selfCheckStep(int step) {
     auto expect=[](bool condition,const char* what){if(!condition)throw std::runtime_error(std::string("self-test: ")+what);};
-    static int checkedScene=-1;static Json before;static BallRef was;
+    static int checkedScene=-1,advanced=-1;static Json before;static BallRef was;
     auto& io=ImGui::GetIO();
     const auto first=[this]{return sorted(frames_.at(0)).front();};
     const auto moved=[this]{return camera_!=was.camera||selected_!=was.index;};
@@ -527,7 +559,10 @@ bool Application::selfCheckStep(int step) {
     case 3:select(0,first());return true;
     case 4:{const auto& box=current().annotation["boxes"][selected_];const auto old=detectionBox(before),now=detectionBox(box);
         expect(now.y==old.y-1&&now.height==old.height+1&&now.x==old.x&&now.width==old.width,"top edge did not grow by one pixel");
-        expect(box.at("bbox")==before.at("bbox")&&box.value("segmentation",Json())==before.value("segmentation",Json()),"box correction changed the mask");
+        // The edited box defines the ball: the circle inscribed in it, and the mask as that disc, whose bounds are the bbox.
+        const auto c=box.value("circle",Json::array({0,0,0}));const auto inside=decodeMask(box.at("segmentation"),current().image.cols,current().image.rows);const auto bounds=cv::boundingRect(inside);
+        expect(box.value("circle_source","")=="box"&&std::abs(c[0].get<double>()-(now.x+now.width/2))<1e-3&&std::abs(c[1].get<double>()-(now.y+now.height/2))<1e-3&&std::abs(c[2].get<double>()-std::min(now.width,now.height)/2)<1e-3,"box correction did not inscribe the circle");
+        expect(box.at("bbox")==Json({bounds.x,bounds.y,bounds.width,bounds.height})&&std::abs(cv::countNonZero(inside)-3.14159*c[2].get<double>()*c[2].get<double>())<=std::max(8.0,.1*cv::countNonZero(inside)),"box correction did not fill the inscribed disc");
         expect(current().member.value("status","")=="editing","an edited image must leave the confirmed state");nudge(0,false);return true;}
     case 5:{expect(detectionBox(current().annotation["boxes"][selected_])==detectionBox(before),"shrinking did not restore the box");
         const Json boxes=current().annotation["boxes"];
@@ -554,10 +589,12 @@ bool Application::selfCheckStep(int step) {
     case 14:was={camera_,selected_};io.AddKeyEvent(ImGuiKey_Tab,true);return true;
     case 15:io.AddKeyEvent(ImGuiKey_Tab,false);expect(moved()&&!io.WantTextInput,"Tab put the keyboard into a widget, which turns the shortcuts off");return true;
     case 16:review(Scope::Scene,false);return true;
-    case 17:{expect(nextAsk_&&scene_==checkedScene,"confirm did not stop at the move-on prompt");nextAsk_=false;nextUnreviewed();return true;}   // the second Space
+    case 17:{expect(nextAsk_&&scene_==checkedScene,"confirm did not stop at the move-on prompt");nextAsk_=false;advanced=advanceIndex();advance();return true;}   // the second Space
     case 18:{for(const auto& member:catalog_["scenes"][checkedScene]["members"])expect(!member.value("selected",true)||member.value("reviewed",false),"scene confirm left an image unconfirmed");
-        expect(scene_!=checkedScene&&!editor_,"the second Space did not advance to the next unreviewed scene");
-        expect(aheadHits_>0,"the next unreviewed scene was not fetched ahead");return false;}
+        expect(advanced>checkedScene&&scene_==advanced&&!editor_,"the second Space did not advance to the very next scene");
+        expect(aheadHits_>0,"the next unreviewed scene was not fetched ahead");return true;}
+    case 19:{changed();save({},dirtySlot());review(Scope::Scene,false);expect(busy()&&queued_!=nullptr,"a confirm during a save was dropped");return true;}   // Space while saving
+    case 20:{expect(!queued_&&nextAsk_,"the queued confirm did not run after the save");nextAsk_=false;return false;}
     }
     return false;
 }
@@ -741,6 +778,7 @@ void Application::statusBar() {
     theme::write(draw,{origin.x+width-14-theme::extent(source,theme::caption).x,origin.y+7},theme::text3,source,theme::caption);
 }
 void Application::draw(){
+    deleteDoomed();   // the previous frame has been rendered; the textures it showed can go now
     const auto viewport=ImGui::GetMainViewport();ImGui::SetNextWindowPos(viewport->WorkPos);ImGui::SetNextWindowSize(viewport->WorkSize);
     ImGui::Begin("Boccia Labeler",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{0,0});

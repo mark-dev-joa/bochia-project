@@ -50,6 +50,7 @@ public:
     void showViewForCapture(int mode) { view_ = std::clamp(mode, 0, viewCount - 1); for (auto& frame : frames_) frame.repaint = true; }
     void proposeForCapture();                        // a polygon proposal around the selected ball, to picture the preview
     void confirmForCapture() { review(Scope::Scene, false); }   // confirms the scene, so the prompt can be pictured
+    void moveOnForCapture() { later_ = [this] { nextAsk_ = false; advance(); }; }   // the second Space, as the key does it
     bool selfCheckStep(int step);                    // scripted logic checks for the hidden smoke run
     bool stageCheckStep(int step);                   // the same for split and export; needs a fully confirmed project
     const std::string& error() const { return error_; }
@@ -79,6 +80,9 @@ private:
     std::future<JobResult> task_, ahead_;
     std::function<void(JobResult)> completion_;
     std::function<void()> later_;                                // UI actions run after the frame is drawn
+    std::function<void()> queued_;                               // a Space pressed while a job ran: done as soon as the job ends
+    std::vector<GLuint> doomed_;                                 // textures of replaced frames: deleted at the start of the next frame,
+                                                                 // since a draw list built this frame may still show them
     std::vector<SceneRow> rows_;
     std::unordered_map<std::string, GLuint> thumbs_;
     std::vector<std::pair<std::string, bool>> thumbWanted_;
@@ -134,6 +138,7 @@ private:
     void cycle(int step);
     void nudge(int edge, bool expand);
     void releaseFrames();
+    void deleteDoomed();                             // frees the textures releaseFrames() set aside
     FrameView& current();
     bool pending() const;
     bool guard();
@@ -143,6 +148,8 @@ private:
     int dirtySlot() const;                                        // a camera of the scene with unsaved edits, or -1
     void review(Scope scope, bool hold, int member = -1);
     void nextUnreviewed();
+    int advanceIndex() const;                        // the scene after this one with a review target, else the next unreviewed
+    void advance();                                  // after a confirm or hold: that scene; queued while a job runs
     void back();
     int nextUnreviewedIndex() const;
     std::filesystem::path preferencesPath() const;

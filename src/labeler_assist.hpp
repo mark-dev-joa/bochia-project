@@ -38,6 +38,7 @@ CircleFit refineCircle(const cv::Mat& image, const cv::Mat& mask, int band = 3, 
 inline constexpr double defaultCircleMargin = .5;
 bool refineBallBox(Json& box, const cv::Mat& image, double margin = defaultCircleMargin);
 cv::Mat discMask(double x, double y, double r, int width, int height);   // the pixels whose centres lie inside the circle
+void inscribeCircle(Json& box, int width, int height);   // the circle inscribed in an edited box, and the mask as that disc
 // masked, not occluded, not drawn or corrected by hand, and (unless remeasure) not refined yet
 bool refinable(const Json& box, bool remeasure = false);
 // Local annotation proposals: EfficientSAM clicks, circles and frame matching. All outputs are proposals.

@@ -212,7 +212,12 @@ void assistTests() {
     Json occludedBox = refinedBox; occludedBox["occluded"] = true; occludedBox.erase("circle");
     Json drawn = refinedBox; drawn["source"] = "manual_polygon"; drawn.erase("circle");
     Json nudged = refinedBox; nudged.erase("circle");   // a detection_bbox without a circle is a correction a person made
-    check(!refinable(occludedBox) && !refinable(drawn) && !refinable(nudged), "occluded, hand-drawn and hand-corrected balls must not be refined");
+    Json inscribed = refinedBox; inscribed["circle_source"] = "box";   // the circle inscribed in an edited box is one too
+    check(!refinable(occludedBox) && !refinable(drawn) && !refinable(nudged) && !refinable(inscribed, true), "occluded, hand-drawn and hand-corrected balls must not be refined");
+    check(validateBoxes(Json::array({inscribed}), 320, 240)[0].value("circle_source", "") == "box", "validation must keep the inscribed circle's origin");
+    Json edited2 = refinedBox; edited2["detection_bbox"] = {100, 100, 40, 40}; inscribeCircle(edited2, 320, 240);
+    const cv::Mat inscribedDisc = decodeMaskChecked(edited2["segmentation"], 320, 240);
+    check(edited2["circle"] == Json({120, 120, 20}) && edited2["circle_source"] == "box" && edited2["bbox"] == Json({100, 100, 40, 40}) && std::abs(cv::countNonZero(inscribedDisc) - 3.14159 * 400) < 40, "the inscribed circle and disc must follow the edited box");
     const Json edited = maskAnnotation(shrunk, kept, "manual_brush");
     check(!edited.contains("circle") && !edited.contains("detection_bbox"), "a new outline must drop the measured circle");
     check(validateBoxes(Json::array({{{"bbox", {1, 1, 3, 3}}, {"circle", {1, 2}}}}), 8, 6)[0].contains("circle") == false, "a malformed circle must be dropped");

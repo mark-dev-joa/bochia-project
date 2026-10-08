@@ -198,8 +198,9 @@ CircleFit refineCircle(const cv::Mat& image, const cv::Mat& mask, int band, doub
 }
 bool refinable(const Json& box, bool remeasure) {
     const auto source = box.value("source", "manual");
-    // A box corrected by hand (detection_bbox without a measured circle) is a decision a person made; it stays.
-    const bool handCorrected = box.contains("detection_bbox") && !box.contains("circle");
+    // A box corrected by hand (detection_bbox without a measured circle, or a circle inscribed in an edited box) is a
+    // decision a person made; it stays.
+    const bool handCorrected = (box.contains("detection_bbox") && !box.contains("circle")) || box.value("circle_source", "") == "box";
     return box.contains("segmentation") && !box.value("occluded", false) && (remeasure || !box.contains("circle")) && !handCorrected
         && source != "manual" && source != "manual_brush" && source != "manual_polygon";
 }
@@ -230,6 +231,20 @@ bool refineBallBox(Json& box, const cv::Mat& image, double margin) {
     box["circle"] = {round4(fit.x), round4(fit.y), round4(fit.r)};
     return true;
 }
+// A box a person edited defines the ball: its inscribed circle, and the mask as the pixels inside that circle, so the
+// outline, the fill and the measured circle all follow the box. circle_source "box" keeps a later measuring pass off it.
+void inscribeCircle(Json& box, int width, int height) {
+    const auto b = detectionBox(box);
+    const double r = std::min(b.width, b.height) / 2, x = b.x + b.width / 2, y = b.y + b.height / 2;
+    const cv::Mat disc = discMask(x, y, r, width, height);
+    if (cv::countNonZero(disc) == 0) return;
+    auto round4 = [](double value) { return std::nearbyint(value * 10000) / 10000; };
+    const cv::Rect bounds = cv::boundingRect(disc);
+    box["segmentation"] = encodeMask(disc); box["bbox"] = {bounds.x, bounds.y, bounds.width, bounds.height};
+    if (box.contains("area")) box["area"] = cv::countNonZero(disc);
+    if (box.contains("contours")) box["contours"] = maskContours(disc);
+    box["circle"] = {round4(x), round4(y), round4(r)}; box["circle_source"] = "box";
+}
 Json validateBoxes(const Json& boxes, int width, int height) {
     if (!boxes.is_array() || boxes.size() > 500) throw std::runtime_error("공 박스 목록이 올바르지 않습니다.");
     static const char* sources[] = {"manual", "manual_brush", "efficientsam", "circle", "tracking", "manual_polygon", "auto_sam", "auto_tracking", "auto_geometry"};
@@ -246,6 +261,7 @@ Json validateBoxes(const Json& boxes, int width, int height) {
         if (box.contains("detection_bbox")) item["detection_bbox"] = validateBoxes(Json::array({{{"bbox", box["detection_bbox"]}}}), width, height)[0]["bbox"];   // independent of the mask
         if (box.contains("circle") && box["circle"].is_array() && box["circle"].size() == 3 && finiteNumber(box["circle"][0]) && finiteNumber(box["circle"][1]) && finiteNumber(box["circle"][2]) && box["circle"][2].get<double>() > 0)
             item["circle"] = {box["circle"][0].get<double>(), box["circle"][1].get<double>(), box["circle"][2].get<double>()};   // the ball measured from the image
+        if (box.value("circle_source", "") == "box") item["circle_source"] = "box";   // the circle inscribed in a box a person edited
         const Json color = box.value("color", Json("unknown"));
         if (!color.is_string() || (color != "unknown" && std::find(std::begin(ballColors), std::end(ballColors), color.get<std::string>()) == std::end(ballColors))) throw std::runtime_error("공 색상 속성이 올바르지 않습니다.");
         if (color != "unknown") item["color"] = color;
