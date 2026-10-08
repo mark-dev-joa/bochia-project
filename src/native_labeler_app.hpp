@@ -209,7 +209,9 @@ private:
     void topBar();
     void shortcutsPopup(ImVec2 below);
     bool collapsedStrip(const char* id, bool& open, bool pointsRight, float height);
-    void errorBar();
+    void errorOverlay();                             // the error as a floating notice below the top bar; it never moves the page
+    std::chrono::steady_clock::time_point errorShown_{};
+    std::string errorShownText_;
     void statusBar();
     void rebuildRows();
     void stepRow(int step);

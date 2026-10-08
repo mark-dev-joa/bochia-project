@@ -1095,17 +1095,27 @@ bool Application::collapsedStrip(const char* id, bool& open, bool pointsRight, f
     if(clicked)open=true;
     return clicked;
 }
-void Application::errorBar() {
-    const float width=ImGui::GetContentRegionAvail().x;const ImVec2 origin=ImGui::GetCursorScreenPos();
-    ImGui::Dummy({width,36});const ImVec2 after=ImGui::GetCursorScreenPos();auto draw=ImGui::GetWindowDrawList();
-    draw->AddRectFilled(origin,{origin.x+width,origin.y+36},theme::rgb(0xff8a4c,30));
-    theme::warning(draw,{origin.x+22,origin.y+18},13,theme::warn);
-    theme::write(draw,{origin.x+38,origin.y+10},theme::warn,error_);
-    ImGui::SetCursorScreenPos({origin.x+width-196,origin.y+5});
-    if(ImGui::Button("닫기",{60,26}))error_.clear();
-    ImGui::SameLine(0,8);
-    if(ImGui::Button("다시 연결",{110,26})){if(!busy()&&(frames_.empty()||!current().dirty))connect();else message_="현재 변경을 저장하거나 recovery 파일을 보관한 뒤 다시 실행하세요.";}
-    ImGui::SetCursorScreenPos(after);
+// The error floats below the top bar instead of taking a row: a row pushed the whole page down and up again, so clicks
+// landed on the wrong thing (2026-10-09 user report). Once the data is connected it goes by itself after eight seconds.
+void Application::errorOverlay() {
+    if(error_.empty()){errorShownText_.clear();return;}
+    if(error_!=errorShownText_){errorShownText_=error_;errorShown_=Clock::now();}
+    if(ready()&&Clock::now()-errorShown_>std::chrono::seconds(8)){error_.clear();errorShownText_.clear();return;}
+    const auto viewport=ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({viewport->WorkPos.x+viewport->WorkSize.x/2,viewport->WorkPos.y+48},ImGuiCond_Always,{.5f,0});
+    ImGui::SetNextWindowSizeConstraints({0,0},{viewport->WorkSize.x-40,FLT_MAX});
+    ImGui::PushStyleColor(ImGuiCol_WindowBg,ImGui::ColorConvertU32ToFloat4(theme::rgb(0x2a1d16,245)));ImGui::PushStyleColor(ImGuiCol_Border,ImGui::ColorConvertU32ToFloat4(theme::warn));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,8);ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,1);ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{14,6});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,4});
+    if(ImGui::Begin("##error",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoFocusOnAppearing|ImGuiWindowFlags_NoNav)){
+        const ImVec2 at=ImGui::GetCursorScreenPos();
+        theme::warning(ImGui::GetWindowDrawList(),{at.x+6,at.y+13},13,theme::warn);
+        ImGui::Dummy({18,26});ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::warn),"%s",error_.c_str());ImGui::SameLine();
+        if(ImGui::Button("닫기",{60,26}))error_.clear();
+        if(!ready()){ImGui::SameLine();if(ImGui::Button("다시 연결",{110,26})){if(!busy()&&(frames_.empty()||!current().dirty))connect();else message_="현재 변경을 저장하거나 recovery 파일을 보관한 뒤 다시 실행하세요.";}}
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(4);ImGui::PopStyleColor(2);
 }
 void Application::statusBar() {
     const float width=ImGui::GetContentRegionAvail().x;const ImVec2 origin=ImGui::GetCursorScreenPos();
@@ -1121,7 +1131,6 @@ void Application::draw(){
     ImGui::Begin("Boccia Labeler",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{0,0});
     topBar();
-    if(!error_.empty())errorBar();
     const float body=ImGui::GetContentRegionAvail().y-28;
     if(!ready()){
         ImGui::BeginChild("Loading",{0,body});
@@ -1144,6 +1153,7 @@ void Application::draw(){
         ImGui::EndChild();ImGui::PopStyleColor();ImGui::PopStyleVar(2);
     }
     statusBar();
+    errorOverlay();
     confirmGrowth();
     confirmColors();
     confirmCircles();
