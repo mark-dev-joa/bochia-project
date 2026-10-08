@@ -393,4 +393,46 @@ Json nativeAction(Project& project, const std::string& action, const Json& paylo
     }
     throw std::runtime_error("지원하지 않는 네이티브 작업입니다.");
 }
+Json assistance(const Project& project, BallAssist& assist, const std::string& method, const Json& payload) {
+    const std::string recording = payload.at("recording"), camera = payload.at("camera");
+    const int index = payload.at("index").get<int>();
+    const Json frame = project.frame(recording, camera, index);
+    const int width = frame["width"], height = frame["height"];
+    if (method == "polygon") return {{"key", frame["key"]}, {"proposals", Json::array({polygonProposal(payload.at("points"), width, height)})}};
+    const cv::Mat image = project.catalog.read(recording, camera, index);
+    if (method == "segment") {
+        Json box;
+        try { box = assist.segment(image, project.catalog.signature + "/" + frame["key"].get<std::string>(), payload.at("points"), payload.value("radius", Json(14)), payload.value("box", Json())); }
+        catch (const std::runtime_error&) { throw; }
+        catch (const std::exception& error) { throw std::runtime_error(std::string("분할 실행에 실패했습니다: ") + std::string(error.what()).substr(0, 240)); }
+        return {{"key", frame["key"]}, {"proposals", Json::array({box})}};
+    }
+    if (method == "circles") {
+        const Json region = payload.value("region", Json({0, 0, width, height}));
+        const Json roi = validateBoxes(Json::array({{{"bbox", region}}}), width, height)[0]["bbox"];
+        const double x = roi[0], y = roi[1], w = roi[2], h = roi[3];
+        const int left = int(std::floor(x)), top = int(std::floor(y)), right = int(std::ceil(x + w)), bottom = int(std::ceil(y + h));
+        Json proposals = BallAssist::circles(image(cv::Rect(left, top, right - left, bottom - top)), payload.value("minimum", Json(6)), payload.value("maximum", Json(45)));
+        Json kept = Json::array();
+        for (auto& box : proposals) {
+            box["bbox"][0] = box["bbox"][0].get<int>() + left; box["bbox"][1] = box["bbox"][1].get<int>() + top;
+            bool taken = false;
+            for (const auto& existing : frame["boxes"]) if (overlap(box["bbox"], existing["bbox"]) > .4) taken = true;
+            if (!taken) kept.push_back(box);
+        }
+        return {{"key", frame["key"]}, {"proposals", kept}};
+    }
+    if (method == "propagate") {
+        Json prior;
+        {
+            std::lock_guard guard(project.lock);
+            for (const auto& [key, item] : project.state["frames"].items())
+                if (item["recording"] == recording && item["camera"] == camera && item["index"].get<int>() < index && !item["boxes"].empty() && (prior.is_null() || item["index"].get<int>() > prior["index"].get<int>())) prior = item;
+            if (prior.is_null()) throw std::runtime_error("이 카메라의 이전 프레임에 저장한 공이 없습니다. 먼저 한 프레임을 라벨링하세요.");
+        }
+        const cv::Mat old = project.catalog.read(recording, camera, prior["index"].get<int>());
+        return {{"key", frame["key"]}, {"previous_index", prior["index"]}, {"proposals", BallAssist::propagate(old, image, prior["boxes"], frame["boxes"])}};
+    }
+    throw std::runtime_error("지원하지 않는 보조 도구입니다.");
+}
 }

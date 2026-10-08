@@ -20,4 +20,7 @@ Json startColorFill(Project& project);       // fills colours in the background;
 Json nativeCatalog(const Project& project);
 std::pair<Json, Json> groupPlan(const Project& project, const Json& groups);   // splits per recording, target counts
 Json nativeAction(Project& project, const std::string& action, const Json& payload);
+class BallAssist;
+// The proposal tools of one frame: segment, circles, propagate and polygon. Nothing here writes labels.
+Json assistance(const Project& project, BallAssist& assist, const std::string& method, const Json& payload);
 }

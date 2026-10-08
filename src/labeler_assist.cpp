@@ -4,6 +4,7 @@
 #include <cmath>
 #include <format>
 #include <stdexcept>
+#include <utility>
 
 namespace boccia::labeler {
 namespace {
@@ -122,5 +123,136 @@ Json validateBoxes(const Json& boxes, int width, int height) {
         validated.push_back(std::move(item));
     }
     return validated;
+}
+BallAssist::BallAssist(std::filesystem::path dir, std::unique_ptr<SamBackend> backend) : modelDir(std::move(dir)), backend_(std::move(backend)) {}
+Json BallAssist::status() const {
+    const bool files = samModelFilesExist(modelDir);
+    return {{"ready", files || backend_ != nullptr}, {"model", "EfficientSAM-Ti"}, {"device", "CPU"}, {"license", "Apache-2.0"}, {"model_files", files}, {"runtime", true}};
+}
+Json BallAssist::segment(const cv::Mat& image, const std::string& key, const Json& points, const Json& radiusValue, const Json& seedBox) {
+    const int height = image.rows, width = image.cols;
+    const double radius = boundedNumber(radiusValue, 3, 300, "예상 공 반지름");
+    if (!points.is_array() || points.empty() || points.size() > 32) throw std::runtime_error("분할 클릭은 1~32개여야 합니다.");
+    std::vector<cv::Point2d> coords; std::vector<int> labels;
+    for (const auto& point : points) {
+        if (!point.is_object() || !point.contains("label") || !point["label"].is_number_integer() || (point["label"] != 0 && point["label"] != 1))
+            throw std::runtime_error("포함/제외 클릭 형식이 올바르지 않습니다.");
+        coords.emplace_back(boundedNumber(point.value("x", Json()), 0, width - 1, "클릭 X"), boundedNumber(point.value("y", Json()), 0, height - 1, "클릭 Y"));
+        labels.push_back(point["label"].get<int>());
+    }
+    if (labels[0] != 1) throw std::runtime_error("첫 클릭은 공 내부의 포함 클릭이어야 합니다.");
+    // A local crop gives the model enough pixels for the small distant balls.
+    const double cx = coords[0].x, cy = coords[0].y;
+    const int half = int(std::max(32.0, radius * 3.5));
+    const int left = std::max(0, int(cx) - half), top = std::max(0, int(cy) - half);
+    const int right = std::min(width, int(cx) + half + 1), bottom = std::min(height, int(cy) + half + 1);
+    for (const auto& point : coords) if (!(left <= point.x && point.x < right && top <= point.y && point.y < bottom))
+        throw std::runtime_error("추가 클릭은 첫 공 주변에서 해주세요. 새 공은 현재 제안을 추가/취소한 뒤 클릭하세요.");
+    const cv::Mat crop = image(cv::Rect(left, top, right - left, bottom - top));
+    std::vector<cv::Point2f> prompts; std::vector<float> promptLabels;
+    for (size_t i = 0; i < coords.size(); ++i) { prompts.emplace_back(float(coords[i].x - left), float(coords[i].y - top)); promptLabels.push_back(float(labels[i])); }
+    if (!seedBox.is_null()) {
+        if (!seedBox.is_array() || seedBox.size() != 4) throw std::runtime_error("자동 분할의 시작 박스가 올바르지 않습니다.");
+        double box[4];
+        for (int i = 0; i < 4; ++i) box[i] = boundedNumber(seedBox[size_t(i)], 0, std::max(width, height), "시작 박스");
+        const double x = box[0], y = box[1], w = box[2], h = box[3];
+        if (w < 1 || h < 1 || x + w > width || y + h > height) throw std::runtime_error("자동 분할의 시작 박스는 이미지 안에 있어야 합니다.");
+        prompts.emplace_back(float(x - left), float(y - top)); promptLabels.push_back(2);                                                        // EfficientSAM box corners,
+        prompts.emplace_back(float(std::min(double(width - 1), x + w) - left), float(std::min(double(height - 1), y + h) - top)); promptLabels.push_back(3);   // plus the positive center
+    }
+    const std::string cacheKey = key + "|" + std::to_string(left) + "," + std::to_string(top) + "," + std::to_string(right) + "," + std::to_string(bottom);
+    SamOutput output;
+    {
+        std::lock_guard guard(lock_);
+        if (!backend_) {
+            if (!samModelFilesExist(modelDir)) throw std::runtime_error("분할 모델이 준비되지 않았습니다. models/efficientsam 폴더에 efficientsam_ti_encoder.onnx와 efficientsam_ti_decoder.onnx를 두세요.");
+            backend_ = openSamModel(modelDir);
+        }
+        if (!cache_ || cache_->first != cacheKey) cache_ = std::make_pair(cacheKey, backend_->encode(crop));
+        output = backend_->decode(cache_->second, prompts, promptLabels, crop.size());
+    }
+    struct Candidate { float iou; cv::Mat mask; cv::Rect bounds; int area; };
+    std::vector<Candidate> candidates;
+    for (size_t i = 0; i < output.logits.size() && i < output.ious.size(); ++i) {
+        cv::Mat positive = output.logits[i] >= 0, components;
+        positive.convertTo(positive, CV_8UC1, 1.0 / 255);
+        cv::connectedComponents(positive, components, 8, CV_32S);
+        const int anchor = components.at<int>(int(cy) - top, int(cx) - left);
+        if (anchor == 0) continue;
+        cv::Mat mask = components == anchor;
+        mask.convertTo(mask, CV_8UC1, 1.0 / 255);
+        bool consistent = true;
+        for (size_t p = 0; p < coords.size(); ++p) if ((mask.at<uchar>(int(coords[p].y) - top, int(coords[p].x) - left) != 0) != (labels[p] != 0)) consistent = false;
+        if (!consistent) continue;
+        const cv::Rect bounds = cv::boundingRect(mask);
+        const int area = cv::countNonZero(mask);
+        if (area < 4 || area > mask.total() * .7 || std::max(bounds.width, bounds.height) > 2 * half * .95) continue;
+        candidates.push_back({output.ious[i], mask, bounds, area});
+    }
+    if (candidates.empty()) throw std::runtime_error("공 영역을 분리하지 못했습니다. 공 중심을 다시 클릭하거나 반지름을 조정하고, Shift+클릭으로 주변을 제외하세요.");
+    const auto& best = *std::max_element(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) { return a.iou < b.iou; });
+    cv::Mat full(height, width, CV_8UC1, cv::Scalar(0));
+    best.mask.copyTo(full(cv::Rect(left, top, right - left, bottom - top)));
+    return {{"bbox", {left + best.bounds.x, top + best.bounds.y, best.bounds.width, best.bounds.height}}, {"occluded", false}, {"segmentation", encodeMask(full)},
+            {"contours", maskContours(full)}, {"source", "efficientsam"}, {"quality", std::nearbyint(double(best.iou) * 10000) / 10000}, {"area", best.area}};
+}
+Json BallAssist::circles(const cv::Mat& image, const Json& minimumValue, const Json& maximumValue, const Json& existing) {
+    const int minimum = int(boundedNumber(minimumValue, 2, 300, "최소 반지름"));
+    const int maximum = int(boundedNumber(maximumValue, minimum, 300, "최대 반지름"));
+    const int height = image.rows, width = image.cols;
+    cv::Mat gray; cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+    cv::createCLAHE(2, {8, 8})->apply(gray, gray);
+    cv::GaussianBlur(gray, gray, {5, 5}, 1);
+    std::vector<cv::Vec3f> found;
+    cv::HoughCircles(gray, found, cv::HOUGH_GRADIENT, 1.2, minimum * 2, 90, 22, minimum, maximum);
+    Json proposals = Json::array();
+    for (const auto& circle : found) {
+        const double cx = circle[0], cy = circle[1], radius = circle[2];
+        const int left = std::max(0, int(std::floor(cx - radius))), top = std::max(0, int(std::floor(cy - radius)));
+        const int right = std::min(width, int(std::ceil(cx + radius))), bottom = std::min(height, int(std::ceil(cy + radius)));
+        const Json bbox = {left, top, right - left, bottom - top};
+        bool taken = false;
+        for (const auto& box : existing) if (overlap(bbox, box["bbox"]) > .4) taken = true;
+        if (taken) continue;
+        proposals.push_back({{"bbox", bbox}, {"occluded", false}, {"source", "circle"}});
+        if (proposals.size() >= 100) break;
+    }
+    return proposals;
+}
+namespace {
+// Python arithmetic on the stored box: an integer box moved by whole pixels stays integer, a float box stays float,
+// and min()/max() hand back whichever operand wins, so the proposal reads exactly as the Python engine's.
+Json plus(const Json& a, int b) { return a.is_number_integer() ? Json(a.get<long long>() + b) : Json(a.get<double>() + b); }
+Json minus(int a, const Json& b) { return b.is_number_integer() ? Json(a - b.get<long long>()) : Json(a - b.get<double>()); }
+Json pyMin(const Json& a, const Json& b) { return a.get<double>() <= b.get<double>() ? a : b; }
+Json pyMax(const Json& a, const Json& b) { return a.get<double>() >= b.get<double>() ? a : b; }
+}
+Json BallAssist::propagate(const cv::Mat& previous, const cv::Mat& image, const Json& boxes, const Json& existing, int search) {
+    if (previous.size() != image.size() || previous.channels() != image.channels()) throw std::runtime_error("이전 프레임과 이미지 크기가 다릅니다.");
+    const int height = image.rows, width = image.cols;
+    cv::Mat old, now; cv::cvtColor(previous, old, cv::COLOR_BGR2GRAY); cv::cvtColor(image, now, cv::COLOR_BGR2GRAY);
+    Json proposals = Json::array();
+    for (const auto& box : boxes) {
+        const double x = box["bbox"][0], y = box["bbox"][1], w = box["bbox"][2], h = box["bbox"][3];
+        const int left = std::max(0, int(std::floor(x)) - 3), top = std::max(0, int(std::floor(y)) - 3);
+        const int right = std::min(width, int(std::ceil(x + w)) + 3), bottom = std::min(height, int(std::ceil(y + h)) + 3);
+        if (right - left < 2 || bottom - top < 2) continue;
+        const cv::Mat patch = old(cv::Rect(left, top, right - left, bottom - top));
+        cv::Scalar mean, deviation; cv::meanStdDev(patch, mean, deviation);
+        if (deviation[0] < 3) continue;
+        const int sx = std::max(0, left - search), sy = std::max(0, top - search), ex = std::min(width, right + search), ey = std::min(height, bottom + search);
+        cv::Mat response; cv::matchTemplate(now(cv::Rect(sx, sy, ex - sx, ey - sy)), patch, response, cv::TM_CCOEFF_NORMED);
+        double low, quality; cv::Point lowAt, location; cv::minMaxLoc(response, &low, &quality, &lowAt, &location);
+        if (quality < .7) continue;
+        const int dx = sx + location.x - left, dy = sy + location.y - top;
+        const Json bbox = {pyMax(0, pyMin(minus(width, box["bbox"][2]), plus(box["bbox"][0], dx))), pyMax(0, pyMin(minus(height, box["bbox"][3]), plus(box["bbox"][1], dy))), box["bbox"][2], box["bbox"][3]};
+        bool taken = false;
+        for (const auto& item : existing) if (overlap(bbox, item["bbox"]) > .4) taken = true;
+        for (const auto& item : proposals) if (overlap(bbox, item["bbox"]) > .4) taken = true;
+        if (taken) continue;
+        // A mask from another frame would be inaccurate; only propose the box.
+        proposals.push_back({{"bbox", bbox}, {"occluded", box.value("occluded", false)}, {"source", "tracking"}, {"quality", std::nearbyint(quality * 10000) / 10000}});
+    }
+    return proposals;
 }
 }

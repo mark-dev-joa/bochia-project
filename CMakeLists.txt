@@ -159,17 +159,24 @@ add_custom_command(TARGET native_labeler_tests POST_BUILD
 add_test(NAME native_labeler_data_contracts COMMAND native_labeler_tests)
 
 # The labeler engine: the recording catalog, label store, review rules, export and EfficientSAM, built into the app.
-add_library(labeler_engine STATIC src/labeler_util.cpp src/labeler_catalog.cpp src/labeler_assist.cpp src/labeler_store.cpp src/labeler_native.cpp src/labeler_export.cpp)
+set(ONNXRUNTIME_ROOT "${DEPENDENCY_ROOT}/onnxruntime" CACHE PATH "ONNX Runtime (CPU) with include/ and lib/")
+add_library(onnxruntime SHARED IMPORTED)
+set_target_properties(onnxruntime PROPERTIES
+  IMPORTED_LOCATION "${ONNXRUNTIME_ROOT}/lib/onnxruntime.dll"
+  IMPORTED_IMPLIB "${ONNXRUNTIME_ROOT}/lib/onnxruntime.lib"
+  INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_ROOT}/include")
+add_library(labeler_engine STATIC src/labeler_util.cpp src/labeler_catalog.cpp src/labeler_assist.cpp src/labeler_sam.cpp src/labeler_store.cpp src/labeler_native.cpp src/labeler_export.cpp)
 target_include_directories(labeler_engine PUBLIC src ${OpenCV_INCLUDE_DIRS} "${DEPENDENCY_ROOT}/nlohmann/include")
-target_link_libraries(labeler_engine PUBLIC native_labeler_model ${OpenCV_LIBS} libzstd_static bcrypt)
+target_link_libraries(labeler_engine PUBLIC native_labeler_model ${OpenCV_LIBS} libzstd_static bcrypt onnxruntime)
 target_compile_definitions(labeler_engine PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 add_executable(labeler_engine_tests tests/labeler_engine_tests.cpp)
 target_link_libraries(labeler_engine_tests PRIVATE labeler_engine)
-target_compile_definitions(labeler_engine_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_definitions(labeler_engine_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN BOCCIA_TEST_ROOT="${CMAKE_SOURCE_DIR}")
 if(MSVC)
   target_compile_options(labeler_engine PRIVATE /utf-8 /W4)
   target_compile_options(labeler_engine_tests PRIVATE /utf-8 /W4)
 endif()
 add_custom_command(TARGET labeler_engine_tests POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:opencv_world>" "$<TARGET_FILE_DIR:labeler_engine_tests>")
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:opencv_world>" "$<TARGET_FILE_DIR:labeler_engine_tests>"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:onnxruntime>" "$<TARGET_FILE_DIR:labeler_engine_tests>")
 add_test(NAME labeler_engine COMMAND labeler_engine_tests)

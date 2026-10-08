@@ -593,6 +593,93 @@ void exportTests() {
     }
     std::cout << "PASS: export of coco, detection coco, yolo, crops, manifest, failures, history and selection subsets\n";
 }
+
+// Stands in for EfficientSAM: a disc of radius 10 at the crop centre, as the Python test's Encoder/Decoder do.
+struct FakeSam : SamBackend {
+    int calls = 0;
+    std::vector<float> encode(const cv::Mat& crop) override {
+        ++calls;
+        check(crop.at<cv::Vec3b>(0, 0) == cv::Vec3b(10, 40, 200) && crop.rows == 99 && crop.cols == 99, "the crop must be the image region around the first click");
+        return std::vector<float>(256 * 64 * 64, 0.f);
+    }
+    SamOutput decode(const std::vector<float>&, const std::vector<cv::Point2f>&, const std::vector<float>&, cv::Size size) override {
+        SamOutput out;
+        for (int i = 0; i < 3; ++i) { cv::Mat logits(size, CV_32F, cv::Scalar(-5)); cv::circle(logits, {size.width / 2, size.height / 2}, 10, cv::Scalar(5), -1); out.logits.push_back(logits); }
+        out.ious = {.9f, .8f, .7f};
+        return out;
+    }
+};
+void samTests() {
+    // test_prompt_crop_rgb_conversion_cache_and_negative_click, with a stand-in model
+    auto fake = std::make_unique<FakeSam>(); FakeSam* model = fake.get();
+    BallAssist assist(fs::path("missing"), std::move(fake));
+    check(assist.status()["ready"] == true && assist.status()["model_files"] == false && assist.status()["model"] == "EfficientSAM-Ti", "status with an injected model wrong");
+    cv::Mat image(140, 180, CV_8UC3, cv::Scalar(10, 40, 200));
+    const Json positive = {{"x", 90}, {"y", 70}, {"label", 1}};
+    const Json first = assist.segment(image, "same-frame", Json::array({positive}), 14);
+    const Json second = assist.segment(image, "same-frame", Json::array({positive, {{"x", 112}, {"y", 70}, {"label", 0}}}), 14);
+    check(model->calls == 1, "the crop embedding must be cached");
+    check(first["bbox"] == second["bbox"] && first["source"] == "efficientsam" && first["quality"] == 0.9 && first["area"] > 280 && first["area"] < 340 && !first["contours"].empty() && first["occluded"] == false, "segment result wrong: " + first.dump());
+    check(first["bbox"] == Json::array({80, 60, 21, 21}), "the disc at the crop centre must land on the click: " + first["bbox"].dump());
+    check(validateBoxes(Json::array({first}), 180, 140)[0]["segmentation"] == first["segmentation"], "segment mask and box disagree");
+    check(fails([&] { assist.segment(image, "same-frame", Json::array({positive, {{"x", 90}, {"y", 70}, {"label", 0}}}), 14); }, "분리하지"), "contradicting clicks accepted");
+    check(fails([&] { assist.segment(image, "same-frame", Json::array({{{"x", -1}, {"y", 0}, {"label", 1}}}), 14); }, "클릭 X"), "click outside accepted");
+    check(fails([&] { assist.segment(image, "same-frame", Json::array({positive}), std::nan("")); }, "반지름"), "nan radius accepted");
+    check(fails([&] { assist.segment(image, "same-frame", Json::array({{{"x", 90}, {"y", 70}, {"label", 0}}}), 14); }, "첫 클릭"), "negative first click accepted");
+    check(fails([&] { assist.segment(image, "same-frame", Json::array({positive, {{"x", 170}, {"y", 70}, {"label", 0}}}), 14); }, "첫 공 주변"), "far click accepted");
+    check(fails([&] { assist.segment(image, "same-frame", Json::array({positive, {{"x", 91}, {"y", 70}, {"label", true}}}), 14); }, "형식") && fails([&] { assist.segment(image, "same-frame", Json::array(), 14); }, "1~32개"), "bad click lists accepted");
+    check(fails([&] { assist.segment(image, "same-frame", Json::array({positive}), 14, Json::array({1, 2, 3})); }, "시작 박스") && fails([&] { assist.segment(image, "same-frame", Json::array({positive}), 14, Json::array({170, 60, 20, 20})); }, "이미지 안에"), "bad seed boxes accepted");
+    const Json boxed = assist.segment(image, "same-frame", Json::array({positive}), 14, Json::array({80, 60, 21, 21}));
+    check(boxed["bbox"] == first["bbox"] && model->calls == 1, "box prompt must reuse the embedding");
+    assist.segment(image, "other-frame", Json::array({positive}), 14);
+    check(model->calls == 2, "another frame must encode again");
+    // test_assist_proposals_do_not_mutate_or_cross_cameras, the parts without a model
+    BallAssist none(fs::path("missing-model"));
+    check(none.status()["ready"] == false && none.status()["runtime"] == true, "missing model reported ready");
+    check(fails([&] { none.segment(cv::Mat(80, 80, CV_8UC3, cv::Scalar(0)), "test", Json::array({{{"x", 40}, {"y", 40}, {"label", 1}}}), 14); }, "준비되지"), "segment without a model did not explain");
+    // test_circle_candidates_and_moving_box_matching
+    cv::Mat scene(180, 240, CV_8UC3, cv::Scalar(0, 0, 0));
+    cv::circle(scene, {80, 90}, 14, cv::Scalar(80, 130, 240), -1); cv::circle(scene, {80, 90}, 14, cv::Scalar(240, 240, 240), 2); cv::line(scene, {75, 85}, {83, 95}, cv::Scalar(40, 40, 40), 2);
+    const Json boxes = BallAssist::circles(scene, 10, 18);
+    bool found = false;   // "near" is a Windows macro
+    for (const auto& box : boxes) found = found || (std::abs(box["bbox"][0].get<double>() - 65) < 6 && std::abs(box["bbox"][1].get<double>() - 75) < 6);
+    check(found && boxes[0]["source"] == "circle" && boxes[0]["occluded"] == false, "circle candidate missing: " + boxes.dump());
+    const cv::Mat shift = (cv::Mat_<float>(2, 3) << 1, 0, 12, 0, 1, -7);
+    cv::Mat moved; cv::warpAffine(scene, moved, shift, {240, 180});
+    const Json previousBox = {{"bbox", {65, 75, 31, 31}}, {"occluded", true}, {"segmentation", {{"old", "mask"}}}};
+    const Json propagated = BallAssist::propagate(scene, moved, Json::array({previousBox}));
+    check(propagated.size() == 1 && propagated[0]["bbox"] == Json::array({77, 68, 31, 31}) && !propagated[0].contains("segmentation") && propagated[0]["occluded"] == true && propagated[0]["source"] == "tracking" && propagated[0]["quality"] > .9, "propagated box wrong: " + propagated.dump());
+    check(BallAssist::propagate(scene, moved, Json::array({previousBox}), propagated).empty(), "a propagated box must not duplicate an existing one");
+    check(BallAssist::propagate(scene, cv::Mat(180, 240, CV_8UC3, cv::Scalar(0, 0, 0)), Json::array({previousBox})).empty(), "a vanished ball was tracked");
+    check(fails([&] { BallAssist::propagate(scene, cv::Mat(100, 100, CV_8UC3), Json::array()); }, "크기가 다릅니다"), "mismatched frames accepted");
+    check(fails([&] { BallAssist::circles(scene, 1, 18); }, "최소 반지름") && fails([&] { BallAssist::circles(scene, 10, 5); }, "최대 반지름"), "bad radii accepted");
+    // assistance() on the fixture: nothing is written, cameras are not crossed
+    Fixture fixture; Catalog catalog(fixture.source); Project project(catalog, fixture.project, fixture.exports);
+    saveFrame(project, fixture, 0, "camera-1", 0);
+    const Json payload = {{"recording", fixture.ids[0]}, {"camera", "camera-0"}, {"index", 1}};
+    check(fails([&] { assistance(project, none, "propagate", payload); }, "이전 프레임"), "propagate crossed cameras");
+    saveFrame(project, fixture, 0, "camera-0", 0);
+    const Json before = project.state;
+    const Json tracked = assistance(project, none, "propagate", payload);
+    check(tracked["previous_index"] == 0 && tracked["key"] == fixture.ids[0] + "/camera-0/1" && tracked["proposals"].is_array() && project.state == before, "propagate response wrong: " + tracked.dump());   // the 8x6 frames are a flat ramp, so nothing matches
+    Json region = payload; region["region"] = {2, 1, 5, 5};
+    const Json rounds = assistance(project, none, "circles", region);
+    check(rounds["key"] == fixture.ids[0] + "/camera-0/1" && rounds["proposals"].is_array() && project.state == before, "circles response wrong");
+    check(fails([&] { Json bad = payload; bad["region"] = {5, 5, 9, 9}; assistance(project, none, "circles", bad); }, "박스는 이미지 안에"), "a region outside the image accepted");
+    Json polygon = payload; polygon["points"] = Json::parse("[[2,1],[4,1],[4,4],[2,4]]");
+    check(assistance(project, none, "polygon", polygon)["proposals"][0]["bbox"] == Json::array({2, 1, 3, 4}) && project.state == before, "polygon via assistance wrong");
+    check(fails([&] { Json request = payload; request["points"] = Json::array({{{"x", 3}, {"y", 2}, {"label", 1}}}); assistance(project, none, "segment", request); }, "준비되지") && fails([&] { assistance(project, none, "magic", payload); }, "지원하지 않는 보조"), "assistance errors wrong");
+    // The real model, when its files are in the repository: a bright disc on a dark floor must come back as one mask.
+    const fs::path models = fs::path(BOCCIA_TEST_ROOT) / "data/models/efficientsam";
+    if (samModelFilesExist(models)) {
+        BallAssist real(models);
+        cv::Mat floor(240, 320, CV_8UC3, cv::Scalar(40, 45, 50)); cv::circle(floor, {160, 120}, 20, cv::Scalar(230, 230, 230), -1);
+        const Json ball = real.segment(floor, "disc", Json::array({{{"x", 160}, {"y", 120}, {"label", 1}}}), 20);
+        check(ball["area"] > 900 && ball["area"] < 1700 && ball["bbox"][0] > 130 && ball["bbox"][0] < 150 && ball["quality"] > .5, "EfficientSAM did not find the disc: " + ball.dump());   // pi * 20^2 = 1257
+        std::cout << "PASS: EfficientSAM-Ti through ONNX Runtime segments a disc\n";
+    } else std::cout << "SKIP: no EfficientSAM model files at " << utf8(models) << "\n";
+    std::cout << "PASS: SAM prompts, crop cache, click rules, circles, tracking and the assistance dispatcher\n";
+}
 }
 
 int main(int argc, char** argv) try {
@@ -648,11 +735,41 @@ int main(int argc, char** argv) try {
         std::cout << "history " << exportHistory(project).size() << "\n";
         return 0;
     }
+    if (argc >= 4 && std::string(argv[1]) == "--assist") {
+        // Parity with the Python engine on real frames: the same lines as scratch parity_assist.py prints.
+        Catalog catalog(fromUtf8(argv[2]));
+        const auto projectPath = fromUtf8(argv[3]);
+        Project project(catalog, projectPath, projectPath.parent_path() / "parity-exports");
+        BallAssist assist(fs::path(BOCCIA_TEST_ROOT) / "data/models/efficientsam");
+        for (int i = 4; i < argc; ++i) {
+            const std::string spec = argv[i]; const auto first = spec.find('/'), second = spec.find('/', first + 1);
+            const std::string recording = spec.substr(0, first), camera = spec.substr(first + 1, second - first - 1); const int index = std::stoi(spec.substr(second + 1));
+            const Json frame = project.frame(recording, camera, index);
+            const cv::Mat image = project.catalog.read(recording, camera, index);
+            int n = 0;
+            for (const auto& box : frame["boxes"]) {
+                const Json& b = box["bbox"];
+                const double cx = b[0].get<double>() + b[2].get<double>() / 2, cy = b[1].get<double>() + b[3].get<double>() / 2, radius = std::max(b[2].get<double>(), b[3].get<double>()) / 2;
+                for (int withBox = 0; withBox < 2; ++withBox) {
+                    const Json result = assist.segment(image, spec, Json::array({{{"x", cx}, {"y", cy}, {"label", 1}}}), radius, withBox ? b : Json());
+                    std::cout << "segment " << spec << " " << n << " " << withBox << " " << result["bbox"].dump() << " " << result["area"] << " " << result["quality"].dump() << " " << sha256Hex(result["segmentation"]["counts"].dump()) << "\n";
+                }
+                ++n;
+            }
+            const Json circles = BallAssist::circles(image, 6, 45);
+            Json head = Json::array(); for (size_t c = 0; c < circles.size() && c < 3; ++c) head.push_back(circles[c]);
+            std::cout << "circles " << spec << " " << circles.size() << " " << head.dump() << "\n";
+            if (size_t(index + 1) < project.catalog.camera(recording, camera).frames.size())
+                std::cout << "propagate " << spec << " " << BallAssist::propagate(image, project.catalog.read(recording, camera, index + 1), frame["boxes"]).dump() << "\n";
+        }
+        return 0;
+    }
     utilTests();
     catalogTests();
     assistTests();
     storeTests();
     nativeTests();
     exportTests();
+    samTests();
     return 0;
 } catch (const std::exception& error) { std::cerr << "FAIL: " << error.what() << "\n"; return 1; }
