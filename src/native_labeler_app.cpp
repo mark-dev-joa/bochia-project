@@ -283,25 +283,29 @@ void Application::confirmCircles(){
     ImGui::SetNextWindowPos({viewport->WorkPos.x+viewport->WorkSize.x/2,viewport->WorkPos.y+viewport->WorkSize.y/2},ImGuiCond_Appearing,{.5f,.5f});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{22,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,10});
     if(ImGui::BeginPopupModal("##refine-circles",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
+        const int drafts=catalog_.value("circleable",0),all=catalog_.value("circleable_all",0);
         ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted("공 둘레를 영상에서 다시 재기");ImGui::PopFont();
-        ImGui::Text("공 %s개의 가장자리를 Canny로 찾아 원을 맞추고, 그 원으로 검출 박스를 정합니다.",grouped(catalog_.value("circleable",0)).c_str());
-        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"마스크는 그대로 두고 박스와 원만 바뀝니다. 가려진 공, 손으로 그린 윤곽, 원이 맞지 않는 공은 건너뜁니다. 그동안 계속 작업할 수 있습니다.");ImGui::PopFont();
+        ImGui::Text("공의 가장자리를 Canny로 찾아 원을 맞추고, 그 원으로 마스크와 검출 박스를 정합니다.");
+        ImGui::Text("아직 확인하지 않은 이미지의 공 %s개 · 확인한 이미지까지 포함하면 %s개",grouped(drafts).c_str(),grouped(all).c_str());
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"확인 상태는 그대로 둡니다. 가려진 공, 손으로 그린 윤곽, 직접 보정한 박스, 원이 맞지 않는 공은 건너뜁니다. 그동안 계속 작업할 수 있습니다.");ImGui::PopFont();
         ImGui::Dummy({0,4});
         bool close=false;
         ImGui::PushFont(theme::bold,theme::px(theme::base));
-        if(theme::primaryButton("다듬기  Enter",{140,34})||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{refineCircles();};close=true;}
+        if(theme::primaryButton("초안만 다듬기  Enter",{180,34})||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{refineCircles(false);};close=true;}
         ImGui::PopFont();ImGui::SameLine();
+        if(ImGui::Button("확인한 것까지 다듬기",{180,34})){later_=[this]{refineCircles(true);};close=true;}
+        ImGui::SameLine();
         if(ImGui::Button("취소  Esc",{110,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
         if(close){circleAsk_=false;ImGui::CloseCurrentPopup();}
         ImGui::EndPopup();
     }
     ImGui::PopStyleVar(2);
 }
-void Application::refineCircles(){
+void Application::refineCircles(bool includeReviewed){
     if(!guard())return;
-    if(!frames_.empty()&&current().dirty){save([this]{refineCircles();});return;}
-    const auto engine=engine_;
-    launch("둘레 다듬기 시작",[engine]{return JobResult{engine->nativeAction("refine-circles",Json::object()),{}};},[this](JobResult result){circleStatus_=result.data;message_="공 둘레를 다시 재는 중입니다. 끝나면 알려 드립니다.";});
+    if(!frames_.empty()&&current().dirty){save([this,includeReviewed]{refineCircles(includeReviewed);});return;}
+    const auto engine=engine_;const Json payload={{"include_reviewed",includeReviewed}};
+    launch("둘레 다듬기 시작",[engine,payload]{return JobResult{engine->nativeAction("refine-circles",payload),{}};},[this](JobResult result){circleStatus_=result.data;message_="공 둘레를 다시 재는 중입니다. 끝나면 알려 드립니다.";});
 }
 void Application::fillColors(){
     if(!guard())return;
@@ -440,9 +444,10 @@ void Application::repaint(FrameView& f){
         auto mask=decodeMask(boxes[i]["segmentation"],f.image.cols,f.image.rows);
         cv::findContours(mask.clone(),f.contours[i],cv::RETR_EXTERNAL,cv::CHAIN_APPROX_SIMPLE);
         std::vector<cv::Point> edge;for(const auto& contour:f.contours[i])edge.insert(edge.end(),contour.begin(),contour.end());
-        // The circle measured from the image, when the ball has one; otherwise a fit to the mask's outline.
+        // The circle shown is the one measured from the image (Canny + RANSAC): the stored one for a refined ball, measured
+        // on the spot for the others, and only when the image gives no trustworthy circle a fit to the mask's outline.
         if(boxes[i].contains("circle")){const auto& c=boxes[i]["circle"];f.circles[i]={c[0].get<double>()-.5,c[1].get<double>()-.5,c[2].get<double>()};}
-        else f.circles[i]=fitCircle(edge);
+        else{const CircleFit fit=refineCircle(f.image,mask);f.circles[i]=fit.ok?Circle{fit.x-.5,fit.y-.5,fit.r}:fitCircle(edge);}
         if(active&&replacement_==i&&!proposal_.is_null())continue;
         overlay.setTo(active&&editor_&&i==selected_?cv::Scalar(255,216,74,13):cv::Scalar(46,230,208,51),mask);
     }

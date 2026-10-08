@@ -207,7 +207,8 @@ void assistTests() {
     check(kept["circle"] == refinedBox["circle"] && kept.contains("detection_bbox"), "validation must keep the circle");
     Json occludedBox = refinedBox; occludedBox["occluded"] = true; occludedBox.erase("circle");
     Json drawn = refinedBox; drawn["source"] = "manual_polygon"; drawn.erase("circle");
-    check(!refinable(occludedBox) && !refinable(drawn), "occluded and hand-drawn balls must not be refined");
+    Json nudged = refinedBox; nudged.erase("circle");   // a detection_bbox without a circle is a correction a person made
+    check(!refinable(occludedBox) && !refinable(drawn) && !refinable(nudged), "occluded, hand-drawn and hand-corrected balls must not be refined");
     const Json edited = maskAnnotation(shrunk, kept, "manual_brush");
     check(!edited.contains("circle") && !edited.contains("detection_bbox"), "a new outline must drop the measured circle");
     check(validateBoxes(Json::array({{{"bbox", {1, 1, 3, 3}}, {"circle", {1, 2}}}}), 8, 6)[0].contains("circle") == false, "a malformed circle must be dropped");
@@ -494,7 +495,9 @@ void nativeTests() {
         Json hidden = draft; hidden["occluded"] = true;
         const std::string key5 = fifth.ids[0] + "/camera-0/0";
         project5.state["frames"][key5] = {{"recording", fifth.ids[0]}, {"camera", "camera-0"}, {"index", 0}, {"width", 120}, {"height", 100}, {"boxes", {draft, drawn, hidden}}, {"reviewed", false}, {"human_touched", false}};
-        check(nativeCatalog(project5)["circleable"] == 1 && circleRefineStatus(project5)["status"] == "idle", "circleable count wrong");
+        const std::string key6 = fifth.ids[0] + "/camera-0/1";   // the same ball on an image a person confirmed
+        project5.state["frames"][key6] = {{"recording", fifth.ids[0]}, {"camera", "camera-0"}, {"index", 1}, {"width", 120}, {"height", 100}, {"boxes", {draft}}, {"reviewed", true}, {"review_status", "reviewed"}, {"human_touched", true}};
+        check(nativeCatalog(project5)["circleable"] == 1 && nativeCatalog(project5)["circleable_all"] == 2 && circleRefineStatus(project5)["status"] == "idle", "circleable counts wrong");
         const Json started = nativeAction(project5, "refine-circles", Json::object());
         check(started["status"] == "running" && started["total"] == 1, "circle refinement did not start: " + started.dump());
         for (int i = 0; i < 500 && circleRefineStatus(project5)["status"] == "running"; ++i) Sleep(10);
@@ -503,7 +506,11 @@ void nativeTests() {
         const Json& boxes5 = project5.state["frames"][key5]["boxes"];
         check(boxes5[0].contains("circle") && std::abs(boxes5[0]["circle"][2].get<double>() - 20) < .3 && std::abs(boxes5[0]["detection_bbox"][0].get<double>() - 40.5) < .3 && std::abs(boxes5[0]["bbox"][0].get<double>() - 40.5) <= .5 && std::abs(boxes5[0]["bbox"][2].get<double>() - 40) <= 1 && boxes5[0]["segmentation"] != draft["segmentation"] && boxes5[0]["source"] == "auto_sam", "the drafted ball must get the measured disc and box: " + boxes5[0].dump().substr(0, 160));
         check(!boxes5[1].contains("circle") && !boxes5[2].contains("circle"), "hand-drawn and occluded balls were refined");
-        check(project5.state["revision"] == 0 && project5.state["auto_revision"] == 1 && project5.state["circle_refine"]["balls"] == 1 && nativeCatalog(project5)["circleable"] == 0 && !project5.state.contains("native_split"), "circle refinement record wrong");
+        check(project5.state["revision"] == 0 && project5.state["auto_revision"] == 1 && project5.state["circle_refine"]["balls"] == 1 && nativeCatalog(project5)["circleable"] == 0 && nativeCatalog(project5)["circleable_all"] == 1, "circle refinement record wrong");
+        check(!project5.state["frames"][key6]["boxes"][0].contains("circle"), "a confirmed image must be left alone by default");
+        nativeAction(project5, "refine-circles", {{"include_reviewed", true}});
+        for (int i = 0; i < 500 && circleRefineStatus(project5)["status"] == "running"; ++i) Sleep(10);
+        check(circleRefineStatus(project5)["balls"] == 1 && project5.state["frames"][key6]["boxes"][0].contains("circle") && project5.state["frames"][key6]["reviewed"] == true && project5.state["circle_refine"]["balls"] == 2 && nativeCatalog(project5)["circleable_all"] == 0, "the confirmed image must be refined on request and stay confirmed");
         check(project5.frame(fifth.ids[0], "camera-0", 0)["boxes"][0]["color"] == "white", "the shown frame must still colour the ball");
     }
     // test_thumbnail_is_a_small_cached_jpeg

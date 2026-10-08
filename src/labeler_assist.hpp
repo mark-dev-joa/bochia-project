@@ -36,7 +36,7 @@ CircleFit refineCircle(const cv::Mat& image, const cv::Mat& mask, int band = 3, 
 // box untouched, when the fit is not trusted.
 bool refineBallBox(Json& box, const cv::Mat& image);
 cv::Mat discMask(double x, double y, double r, int width, int height);   // the pixels whose centres lie inside the circle
-bool refinable(const Json& box);   // masked, not occluded, not drawn by hand, and not refined yet
+bool refinable(const Json& box);   // masked, not occluded, not drawn or corrected by hand, and not refined yet
 // Local annotation proposals: EfficientSAM clicks, circles and frame matching. All outputs are proposals.
 class BallAssist {
 public:

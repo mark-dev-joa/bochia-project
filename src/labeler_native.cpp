@@ -234,17 +234,21 @@ Json startColorFill(Project& project) {
     });
     return project.colorJob;
 }
-int circleable(const Project& project) {
+int circleable(const Project& project, bool includeReviewed) {
     int count = 0;
-    for (const auto& [key, frame] : project.state["frames"].items()) for (const auto& box : frame["boxes"]) if (refinable(box)) ++count;
+    for (const auto& [key, frame] : project.state["frames"].items()) {
+        if (!includeReviewed && humanWork(frame)) continue;
+        for (const auto& box : frame["boxes"]) if (refinable(box)) ++count;
+    }
     return count;
 }
 Json circleRefineStatus(const Project& project) { std::lock_guard guard(project.lock); return project.circleJob; }
-Json startCircleRefine(Project& project) {
+Json startCircleRefine(Project& project, bool includeReviewed) {
     std::lock_guard guard(project.lock);
     if (project.circleJob.value("status", "") == "running") throw std::runtime_error("이미 둘레를 다듬는 중입니다.");
     std::vector<std::pair<std::string, Json>> targets;
     for (const auto& [key, frame] : project.state["frames"].items()) {
+        if (!includeReviewed && humanWork(frame)) continue;   // by default a person's confirmed images stay as they were seen
         bool wanted = false;
         for (const auto& box : frame["boxes"]) if (refinable(box)) wanted = true;
         if (wanted) targets.emplace_back(key, frame);
@@ -321,7 +325,7 @@ Json nativeCatalog(const Project& project) {
             {"target_images", count}, {"reviewed_target_images", reviewed}, {"split_confirmed", valid}, {"groups", groups},
             {"stats", recordingStats(project)}, {"growable", growable(project)}, {"mask_growth", project.state.value("mask_growth", Json())},
             {"colorable", colorable(project)}, {"color_fill", project.state.value("color_fill", Json())},
-            {"circleable", circleable(project)}, {"circle_refine", project.state.value("circle_refine", Json())},
+            {"circleable", circleable(project)}, {"circleable_all", circleable(project, true)}, {"circle_refine", project.state.value("circle_refine", Json())},
             // The data version: set only while the confirmed split still matches the labels.
             {"fingerprint", valid ? project.state["native_split"]["fingerprint"] : Json()}};
 }
@@ -436,7 +440,7 @@ Json nativeAction(Project& project, const std::string& action, const Json& paylo
         return {{"summary", summary}, {"split_confirmed", true}, {"fingerprint", project.state["native_split"]["fingerprint"]}};
     }
     if (action == "fill-colors") return startColorFill(project);
-    if (action == "refine-circles") return startCircleRefine(project);
+    if (action == "refine-circles") return startCircleRefine(project, payload.value("include_reviewed", false));
     if (action == "grow-masks") {
         // The automatic draft stops short of the ball edge by about a pixel (measured 2026-10-08), the same way on
         // every ball; one pass moves every draft mask outward. Images a person has saved or confirmed are left alone.

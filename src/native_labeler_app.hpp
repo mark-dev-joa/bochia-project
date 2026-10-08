@@ -150,7 +150,7 @@ private:
     void confirmColors();                            // the dialog behind colorAsk_
     void fillColors();
     void confirmCircles();                           // the dialog behind circleAsk_
-    void refineCircles();
+    void refineCircles(bool includeReviewed);
     void segment(cv::Point2d point, bool negative);
     void segmentBox(cv::Rect2d box);
     void polygonProposal();

@@ -198,7 +198,9 @@ CircleFit refineCircle(const cv::Mat& image, const cv::Mat& mask, int band, doub
 }
 bool refinable(const Json& box) {
     const auto source = box.value("source", "manual");
-    return box.contains("segmentation") && !box.value("occluded", false) && !box.contains("circle") && source != "manual" && source != "manual_brush" && source != "manual_polygon";
+    // A box corrected by hand (detection_bbox without a measured circle) is a decision a person made; it stays.
+    return box.contains("segmentation") && !box.value("occluded", false) && !box.contains("circle") && !box.contains("detection_bbox")
+        && source != "manual" && source != "manual_brush" && source != "manual_polygon";
 }
 cv::Mat discMask(double x, double y, double r, int width, int height) {
     cv::Mat disc(height, width, CV_8UC1, cv::Scalar(0));
