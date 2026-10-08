@@ -511,6 +511,13 @@ void nativeTests() {
         nativeAction(project5, "refine-circles", {{"include_reviewed", true}});
         for (int i = 0; i < 500 && circleRefineStatus(project5)["status"] == "running"; ++i) Sleep(10);
         check(circleRefineStatus(project5)["balls"] == 1 && project5.state["frames"][key6]["boxes"][0].contains("circle") && project5.state["frames"][key6]["reviewed"] == true && project5.state["circle_refine"]["balls"] == 2 && nativeCatalog(project5)["circleable_all"] == 0, "the confirmed image must be refined on request and stay confirmed");
+        // A frame shown on screen is measured on the spot, and a confirmation stores what was shown.
+        const std::string key7 = fifth.ids[0] + "/camera-0/2";
+        project5.state["frames"][key7] = {{"recording", fifth.ids[0]}, {"camera", "camera-0"}, {"index", 2}, {"width", 120}, {"height", 100}, {"boxes", {draft, drawn}}, {"reviewed", false}, {"human_touched", false}};
+        const Json shown7 = project5.frame(fifth.ids[0], "camera-0", 2);
+        check(shown7["boxes"][0].contains("circle") && shown7["boxes"][0]["detection_bbox"].is_array() && shown7["boxes"][0]["segmentation"] != draft["segmentation"] && !shown7["boxes"][1].contains("circle") && !project5.state["frames"][key7]["boxes"][0].contains("circle"), "a shown ball must be measured on the spot and nothing stored yet");
+        nativeAction(project5, "review", {{"keys", {key7}}, {"status", "reviewed"}, {"expected_revision", project5.state["revision"]}});
+        check(project5.state["frames"][key7]["boxes"][0].contains("circle") && project5.state["frames"][key7]["boxes"].size() == 2 && project5.state["frames"][key7]["boxes"][1]["source"] == "manual_polygon", "confirming must store the measured ball and keep the hand-drawn one");
         check(project5.frame(fifth.ids[0], "camera-0", 0)["boxes"][0]["color"] == "white", "the shown frame must still colour the ball");
     }
     // test_thumbnail_is_a_small_cached_jpeg

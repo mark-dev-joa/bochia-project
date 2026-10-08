@@ -168,6 +168,12 @@ Json Project::frame(const std::string& recording, const std::string& camera, int
         const auto colour = ballColor(image, decodeMaskChecked(box["segmentation"], width, height));
         if (colour != "unknown") box["color"] = colour;
     }
+    // A ball not yet measured from the image is measured now (2026-10-08 user request: the box on screen is the circle's
+    // box), so what the screen shows is what a save or a confirmation stores. Hand-drawn or hand-corrected balls stay.
+    for (auto& box : annotation["boxes"]) if (refinable(box)) {
+        if (image.empty()) image = catalog.read(recording, camera, index);
+        refineBallBox(box, image);
+    }
     for (auto& box : annotation["boxes"]) if (box.contains("segmentation")) box["contours"] = maskContours(decodeMaskChecked(box["segmentation"], width, height));
     Json result = {{"key", key}, {"recording", recording}, {"camera", camera}, {"index", index}, {"width", width}, {"height", height},
                    {"host_ns", info.hasHostNs ? std::to_string(info.hostNs) : std::to_string(index)}, {"revision", revision}};

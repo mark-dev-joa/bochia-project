@@ -23,7 +23,7 @@ std::filesystem::path Application::preferencesPath() const { return config_.proj
 void Application::rememberPosition() const {
     if(frames_.empty())return;
     const auto& scene=catalog_["scenes"][scene_];
-    Json state={{"recording",scene["recording"]},{"index",scene["index"]},{"camera",frames_[camera_].member["camera"]},{"editor",editor_},{"brightness",brightness_},{"representatives",representatives_},{"filter",filter_},{"masks",masks_},{"boxes",boxes_},{"circles",circles_},{"panels",{listOpen_,sideOpen_,summaryOpen_}}};
+    Json state={{"recording",scene["recording"]},{"index",scene["index"]},{"camera",frames_[camera_].member["camera"]},{"editor",editor_},{"brightness",brightness_},{"representatives",representatives_},{"filter",filter_},{"masks",masks_},{"boxes",boxes_},{"circles",circles_},{"view",view_},{"panels",{listOpen_,sideOpen_,summaryOpen_}}};
     auto path=preferencesPath();std::filesystem::create_directories(path.parent_path());
     auto temporary=path;temporary+=L"."+std::to_wstring(Clock::now().time_since_epoch().count())+L".tmp";std::ofstream stream(temporary,std::ios::binary);stream<<state.dump(2);stream.close();
     if(!stream)throw std::runtime_error("작업 위치 저장 실패");
@@ -33,7 +33,7 @@ void Application::restorePosition() {
     int index=0,camera=0;bool editor=false;
     if(config_.rememberUi){try {
         std::ifstream input(preferencesPath(),std::ios::binary);auto state=Json::parse(input);
-        brightness_=std::clamp(state.value("brightness",1.65f),.5f,3.f);representatives_=state.value("representatives",true);filter_=std::clamp(state.value("filter",0),0,3);masks_=state.value("masks",true);boxes_=state.value("boxes",true);circles_=state.value("circles",true);
+        brightness_=std::clamp(state.value("brightness",1.65f),.5f,3.f);representatives_=state.value("representatives",true);filter_=std::clamp(state.value("filter",0),0,3);masks_=state.value("masks",true);boxes_=state.value("boxes",true);circles_=state.value("circles",true);view_=std::clamp(state.value("view",0),0,viewCount-1);
         if(state.contains("panels")&&state["panels"].is_array()&&state["panels"].size()==3){listOpen_=state["panels"][0];sideOpen_=state["panels"][1];summaryOpen_=state["panels"][2];}
         for(int i=0;i<int(catalog_["scenes"].size());++i){auto& scene=catalog_["scenes"][i];if(scene["recording"]==state.at("recording")&&scene["index"]==state.at("index")){
             index=i;editor=state.value("editor",false);for(int c=0;c<int(scene["members"].size());++c)if(scene["members"][c]["camera"]==state.at("camera"))camera=c;break;
@@ -283,18 +283,14 @@ void Application::confirmCircles(){
     ImGui::SetNextWindowPos({viewport->WorkPos.x+viewport->WorkSize.x/2,viewport->WorkPos.y+viewport->WorkSize.y/2},ImGuiCond_Appearing,{.5f,.5f});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{22,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,10});
     if(ImGui::BeginPopupModal("##refine-circles",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
-        const int drafts=catalog_.value("circleable",0),all=catalog_.value("circleable_all",0);
         ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted("공 둘레를 영상에서 다시 재기");ImGui::PopFont();
-        ImGui::Text("공의 가장자리를 Canny로 찾아 원을 맞추고, 그 원으로 마스크와 검출 박스를 정합니다.");
-        ImGui::Text("아직 확인하지 않은 이미지의 공 %s개 · 확인한 이미지까지 포함하면 %s개",grouped(drafts).c_str(),grouped(all).c_str());
-        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"확인 상태는 그대로 둡니다. 가려진 공, 손으로 그린 윤곽, 직접 보정한 박스, 원이 맞지 않는 공은 건너뜁니다. 그동안 계속 작업할 수 있습니다.");ImGui::PopFont();
+        ImGui::Text("공 %s개의 가장자리를 Canny로 찾아 원을 맞추고, 그 원으로 마스크와 검출 박스를 정합니다.",grouped(catalog_.value("circleable_all",0)).c_str());
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"확인한 이미지의 공도 포함하며 확인 상태는 그대로입니다. 공을 지우거나 더하지 않습니다. 가려진 공, 손으로 그린 윤곽, 직접 보정한 박스, 원이 맞지 않는 공은 건너뜁니다. 그동안 계속 작업할 수 있습니다.");ImGui::PopFont();
         ImGui::Dummy({0,4});
         bool close=false;
         ImGui::PushFont(theme::bold,theme::px(theme::base));
-        if(theme::primaryButton("초안만 다듬기  Enter",{180,34})||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{refineCircles(false);};close=true;}
+        if(theme::primaryButton("다듬기  Enter",{140,34})||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{refineCircles(true);};close=true;}
         ImGui::PopFont();ImGui::SameLine();
-        if(ImGui::Button("확인한 것까지 다듬기",{180,34})){later_=[this]{refineCircles(true);};close=true;}
-        ImGui::SameLine();
         if(ImGui::Button("취소  Esc",{110,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
         if(close){circleAsk_=false;ImGui::CloseCurrentPopup();}
         ImGui::EndPopup();
@@ -434,8 +430,27 @@ void Application::uploadTexture(GLuint& texture,const cv::Mat& pixels,bool rgba)
     glTexImage2D(GL_TEXTURE_2D,0,rgba?GL_RGBA:GL_RGB,pixels.cols,pixels.rows,0,rgba?GL_RGBA:GL_BGR,GL_UNSIGNED_BYTE,pixels.data);
 }
 // Rebuilds the display image, the mask fill overlay and the cached contours of one frame.
+const char* const Application::viewNames[Application::viewCount]={"원본","대비","흑백","에지","그래디언트","에지 겹침"};
+namespace {
+// The edges the circle refinement works from: a 3x3 blur and Canny 20/60.
+cv::Mat cannyEdges(const cv::Mat& bgr){cv::Mat gray,edges;cv::cvtColor(bgr,gray,cv::COLOR_BGR2GRAY);cv::GaussianBlur(gray,gray,{3,3},0);cv::Canny(gray,edges,20,60,3,true);return edges;}
+}
+// The frame as the chosen view mode shows it. The brightness gain applies to the original and the gray view.
+cv::Mat Application::displayImage(const FrameView& f) const {
+    const double gain=f.member.value("kind","")=="컬러"?brightness_:1.12;
+    cv::Mat display;
+    switch(view_){
+    case 1:{cv::Mat lab;cv::cvtColor(f.image,lab,cv::COLOR_BGR2Lab);std::vector<cv::Mat> channels;cv::split(lab,channels);cv::createCLAHE(3,{8,8})->apply(channels[0],channels[0]);cv::merge(channels,lab);cv::cvtColor(lab,display,cv::COLOR_Lab2BGR);break;}   // contrast
+    case 2:{cv::Mat gray;cv::cvtColor(f.image,gray,cv::COLOR_BGR2GRAY);gray.convertTo(gray,CV_8UC1,gain);cv::cvtColor(gray,display,cv::COLOR_GRAY2BGR);break;}   // gray
+    case 3:cv::cvtColor(cannyEdges(f.image),display,cv::COLOR_GRAY2BGR);break;   // edges
+    case 4:{cv::Mat gray,gx,gy,magnitude;cv::cvtColor(f.image,gray,cv::COLOR_BGR2GRAY);cv::GaussianBlur(gray,gray,{3,3},0);cv::Sobel(gray,gx,CV_32F,1,0,3);cv::Sobel(gray,gy,CV_32F,0,1,3);cv::magnitude(gx,gy,magnitude);cv::normalize(magnitude,magnitude,0,255,cv::NORM_MINMAX);magnitude.convertTo(gray,CV_8UC1);cv::cvtColor(gray,display,cv::COLOR_GRAY2BGR);break;}   // gradient
+    case 5:{f.image.convertTo(display,CV_8UC3,gain);display.setTo(cv::Scalar(255,0,255),cannyEdges(f.image));break;}   // original with the edges on top
+    default:f.image.convertTo(display,CV_8UC3,gain);break;
+    }
+    return display;
+}
 void Application::repaint(FrameView& f){
-    cv::Mat display;f.image.convertTo(display,CV_8UC3,f.member.value("kind","")=="컬러"?brightness_:1.12);uploadTexture(f.texture,display);
+    cv::Mat display=displayImage(f);uploadTexture(f.texture,display);
     cv::Mat overlay(f.image.size(),CV_8UC4,cv::Scalar(0,0,0,0));
     const bool active=!frames_.empty()&&&f==&current();
     const auto& boxes=f.annotation["boxes"];f.contours.assign(boxes.size(),{});f.circles.assign(boxes.size(),{});
@@ -593,6 +608,7 @@ void Application::keys() {
     if(pressed(ImGuiKey_M)){masks_=!masks_;}
     if(pressed(ImGuiKey_X))boxes_=!boxes_;
     if(pressed(ImGuiKey_C))circles_=!circles_;
+    if(pressed(ImGuiKey_I)){view_=(view_+1)%viewCount;for(auto& view:frames_)view.repaint=true;}
     if(!editor_||pending()||busy())return;
     if(pressed(ImGuiKey_V))tool_=Tool::Select;
     if(pressed(ImGuiKey_S))tool_=Tool::Ai;
@@ -649,7 +665,7 @@ void Application::shortcutsPopup(ImVec2 below) {
     static const char* const rows[][2]={{"E","세 장 확인하고 다음 미검수 장면"},{"Shift+E","크게 보는 카메라 한 장만 확인"},{"Q","보류"},{"N","다음 미검수 장면"},
         {"A / D","이전 / 다음 장면"},{"Backspace","이전에 보던 장면으로"},{"1 / 2 / 3","그 카메라를 크게"},{"Tab / Shift+Tab","다음 / 이전 공"},
         {"방향키","선택한 공의 그 방향 경계를 1픽셀 바깥으로"},{"Shift+방향키","1픽셀 안으로"},{"V / S / B / P / R","선택 / AI 분할 / 브러시 / 폴리곤 / 박스"},
-        {"왼쪽 / 오른쪽 클릭","더하기 / 빼기"},{"[ / ]","브러시 굵기"},{"Enter / Esc","윤곽 반영 / 취소, 선택 해제, 세 장 보기"},{"M / X / C","마스크 채움 / 박스 / 원 표시"},
+        {"왼쪽 / 오른쪽 클릭","더하기 / 빼기"},{"[ / ]","브러시 굵기"},{"Enter / Esc","윤곽 반영 / 취소, 선택 해제, 세 장 보기"},{"M / X / C","마스크 채움 / 박스 / 원 표시"},{"I","보기: 원본 / 대비 / 흑백 / 에지 / 그래디언트 / 에지 겹침"},
         {"F / Z","화면 맞춤 / 선택한 공으로"},{"O / Delete","일부 가림 / 공 삭제"},{"Ctrl+Z / Ctrl+S","되돌리기 / 저장"},{"휠 / 가운데 끌기","확대 / 이동"}};
     ImGui::SetNextWindowPos({below.x,below.y+4},ImGuiCond_Always,{1,0});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{16,12});

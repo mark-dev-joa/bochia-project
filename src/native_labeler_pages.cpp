@@ -267,12 +267,12 @@ void Application::preparePage() {
         SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "공 둘레 (Canny 원)");
         const auto refine = catalog_.value("circle_refine", Json());
         const bool refining = circleStatus_.value("status", "") == "running";
-        const int remaining = catalog_.value("circleable_all", 0), drafts = catalog_.value("circleable", 0);
+        const int remaining = catalog_.value("circleable_all", 0);
         if (refining) {
             box.text("재는 중 · " + grouped(circleStatus_.value("done", 0)) + " / " + grouped(circleStatus_.value("total", 0)) + "장", theme::text);
             progressBar(draw, {box.left(), box.y}, box.inner(), circleStatus_.value("done", 0), circleStatus_.value("total", 0), theme::accent); box.y += 14;
         } else {
-            box.text(remaining ? "아직 안 잰 공 " + grouped(remaining) + "개 · 초안 " + grouped(drafts) + "개" : "모든 공의 둘레를 쟀습니다", theme::text);
+            box.text(remaining ? "아직 안 잰 공 " + grouped(remaining) + "개" : "모든 공의 둘레를 쟀습니다", theme::text);
             ImGui::PushFont(nullptr, theme::px(theme::caption));
             ImGui::SetCursorScreenPos({box.left(), box.y});
             if (ImGui::Button("원으로 박스 다듬기", {box.inner(), 30}) && remaining) circleAsk_ = true;

@@ -48,6 +48,7 @@ public:
     void askRemoveForCapture(int camera, int rank);  // opens the delete dialog for that ball
     void foldForCapture() { listOpen_ = sideOpen_ = summaryOpen_ = false; }
     void showShortcutsForCapture() { shortcutsWanted_ = true; }
+    void showViewForCapture(int mode) { view_ = std::clamp(mode, 0, viewCount - 1); for (auto& frame : frames_) frame.repaint = true; }
     bool selfCheckStep(int step);                    // scripted logic checks for the hidden smoke run
     bool stageCheckStep(int step);                   // the same for split and export; needs a fully confirmed project
     const std::string& error() const { return error_; }
@@ -102,6 +103,10 @@ private:
          colorAsk_ = false,                                      // the fill-colours dialog is open
          circleAsk_ = false;                                     // the refine-circles dialog is open
     float brightness_ = 1.65f, brushSize_ = 6, radius_ = 16;
+    int view_ = 0;                                               // how the frames are shown: original, contrast, gray, edges, gradient, edge overlay
+    static constexpr int viewCount = 6;
+    static const char* const viewNames[viewCount];
+    cv::Mat displayImage(const FrameView& frame) const;
     Json proposal_;
     cv::Mat brushMask_;
     int replacement_ = -1;

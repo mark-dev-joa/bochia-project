@@ -338,6 +338,15 @@ void Application::sceneBar(ImVec2 pos, float width) {
     option("원", circles_);
     option("박스", boxes_);
     option("마스크 채움", masks_);
+    // How the frames are shown: the original, or an intermediate of the image processing (I cycles).
+    right -= 122;
+    ImGui::SetCursorScreenPos({right, pos.y + 8}); ImGui::SetNextItemWidth(108);
+    ImGui::PushFont(nullptr, theme::px(theme::caption));
+    ImGui::PushItemFlag(ImGuiItemFlags_NoTabStop, true);
+    if (ImGui::Combo("##view", &view_, viewNames, viewCount)) for (auto& view : frames_) view.repaint = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("보기 모드 (I)");
+    ImGui::PopItemFlag();
+    ImGui::PopFont();
     draw->PushClipRect({x, pos.y}, {right - 10, pos.y + 40}, true);   // narrow windows cut the summary instead of running under the toggles
     theme::write(draw, {x, pos.y + 13}, theme::text3, meta, theme::caption);
     draw->PopClipRect();

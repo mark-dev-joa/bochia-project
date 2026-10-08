@@ -49,7 +49,9 @@ bool nudgeEdge(Json& box, int edge, bool expand, int width, int height) {
     const double delta = expand ? 1 : -1;
     switch (edge) { case 0: top -= delta; break; case 1: bottom += delta; break; case 2: left -= delta; break; case 3: right += delta; break; default: return false; }
     if (left < 0 || top < 0 || right > width || bottom > height || right - left < 1 || bottom - top < 1) return false;
-    box["detection_bbox"] = {left, top, right - left, bottom - top}; return true;
+    // Four decimals, as the store keeps them: a measured box is fractional, and a step out and back must land exactly.
+    auto round4 = [](double value) { return std::nearbyint(value * 10000) / 10000; };
+    box["detection_bbox"] = {round4(left), round4(top), round4(right - left), round4(bottom - top)}; return true;
 }
 Json annotationPayload(const Json& frame, int revision) {
     return {{"recording", frame.at("recording")}, {"camera", frame.at("camera")}, {"index", frame.at("index")},
