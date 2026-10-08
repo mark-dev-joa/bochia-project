@@ -137,17 +137,39 @@ Json Project::mutate(int expectedRevision, const std::function<void(Json&)>& cal
     state = std::move(replacement);
     return summary();
 }
+Json Project::mutateAutomatic(const std::function<void(Json&)>& callback) {
+    std::lock_guard guard(lock);
+    Json replacement = state;
+    callback(replacement);
+    replacement["auto_revision"] = replacement.value("auto_revision", 0) + 1;
+    write(replacement);
+    state = std::move(replacement);
+    return summary();
+}
 Json Project::frame(const std::string& recording, const std::string& camera, int index) const {
     const auto& info = catalog.frameInfo(recording, camera, index);
+    const auto& stream = catalog.camera(recording, camera);
     int width = info.width, height = info.height;
-    if (info.isImage()) { const cv::Mat image = catalog.read(recording, camera, index); width = image.cols; height = image.rows; }
+    cv::Mat image;
+    if (info.isImage()) { image = catalog.read(recording, camera, index); width = image.cols; height = image.rows; }
     const std::string key = recording + "/" + camera + "/" + std::to_string(index);
-    std::lock_guard guard(lock);
-    Json annotation = state["frames"].contains(key) ? state["frames"][key] : Json{{"boxes", Json::array()}, {"reviewed", false}};
+    Json annotation, decisions; int revision = 0;
+    {
+        std::lock_guard guard(lock);
+        annotation = state["frames"].contains(key) ? state["frames"][key] : Json{{"boxes", Json::array()}, {"reviewed", false}};
+        decisions = selection.view(state["frames"])["frames"];
+        revision = state["revision"];
+    }
+    // The colour camera says which ball it is: a masked ball without a colour gets one from its pixels whenever the
+    // frame is shown, and keeps it once the frame is saved or confirmed.
+    if (stream.kind == "컬러") for (auto& box : annotation["boxes"]) if (box.contains("segmentation") && box.value("color", "unknown") == "unknown") {
+        if (image.empty()) image = catalog.read(recording, camera, index);
+        const auto colour = ballColor(image, decodeMaskChecked(box["segmentation"], width, height));
+        if (colour != "unknown") box["color"] = colour;
+    }
     for (auto& box : annotation["boxes"]) if (box.contains("segmentation")) box["contours"] = maskContours(decodeMaskChecked(box["segmentation"], width, height));
-    const Json decisions = selection.view(state["frames"])["frames"];
     Json result = {{"key", key}, {"recording", recording}, {"camera", camera}, {"index", index}, {"width", width}, {"height", height},
-                   {"host_ns", info.hasHostNs ? std::to_string(info.hostNs) : std::to_string(index)}, {"revision", state["revision"]}};
+                   {"host_ns", info.hasHostNs ? std::to_string(info.hostNs) : std::to_string(index)}, {"revision", revision}};
     for (auto& [name, value] : annotation.items()) result[name] = std::move(value);
     result["selection"] = decisions.contains(key) ? decisions[key] : Json{{"selected", true}, {"reason", "unfiltered"}, {"representative", key}};
     return result;

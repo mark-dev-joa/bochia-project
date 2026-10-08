@@ -39,7 +39,7 @@ public:
     void draw();
     bool ready() const { return catalog_.is_object() && !frames_.empty(); }
     bool busy() const { return task_.valid(); }
-    bool settled() const { return !busy() && !thumbTask_.valid() && thumbWanted_.empty(); }
+    bool settled() const { return !busy() && !thumbTask_.valid() && thumbWanted_.empty() && colorStatus_.value("status", "") != "running"; }
     bool idle() const;                               // settled and nothing waiting to be saved; an open proposal does not count
     void showEditor(int camera = 0);
     void showPage(int page);

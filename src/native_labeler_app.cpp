@@ -67,7 +67,13 @@ void Application::connect() {
         JobResult result{{{"catalog",engine->nativeCatalog()},{"auto",engine->autoStatus()},{"assist",engine->assistStatus()}}, {}};
         result.engine=std::move(engine);
         return result;
-    }, [this](JobResult result){ engine_=std::move(result.engine); updateCatalog(result.data.at("catalog")); autoStatus_=result.data.at("auto"); message_="기존 촬영과 라벨 연결 완료"; restorePosition(); });
+    }, [this](JobResult result){
+        engine_=std::move(result.engine); updateCatalog(result.data.at("catalog")); autoStatus_=result.data.at("auto"); message_="기존 촬영과 라벨 연결 완료";
+        // The colour camera's balls get their colours by themselves: drafts and older labels without one are filled in the background.
+        const int colorable=catalog_.value("colorable",0);
+        if(colorable>0){try{colorStatus_=engine_->nativeAction("fill-colors",Json::object());message_="컬러 공 "+grouped(colorable)+"개의 색상을 채우는 중";}catch(const std::exception& error){message_=error.what();}}
+        restorePosition();
+    });
 }
 void Application::updateCatalog(Json value) {
     catalog_=std::move(value);rowsDirty_=true;aheadDirty_=true;targetScenes_=-1;
@@ -257,7 +263,7 @@ void Application::confirmColors(){
     if(ImGui::BeginPopupModal("##fill-colors",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
         ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted("컬러 공 색상 채우기");ImGui::PopFont();
         ImGui::Text("컬러 카메라의 공 %s개에 빨강·파랑·흰색·검정을 자동으로 넣습니다.",grouped(catalog_.value("colorable",0)).c_str());
-        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"이미 색상이 있는 공은 그대로 둡니다. 이미지를 모두 읽으므로 몇 분 걸리고, 그동안 계속 작업할 수 있습니다.");ImGui::PopFont();
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"앱을 시작할 때도 자동으로 채웁니다. 이미 색상이 있는 공은 그대로 두고, 그동안 계속 작업할 수 있습니다.");ImGui::PopFont();
         ImGui::Dummy({0,4});
         bool close=false;
         ImGui::PushFont(theme::bold,theme::px(theme::base));

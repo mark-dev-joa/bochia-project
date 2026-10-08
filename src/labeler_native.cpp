@@ -4,12 +4,14 @@
 #include "labeler_util.hpp"
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <ctime>
 #include <fstream>
 #include <map>
 #include <set>
 #include <stdexcept>
+#include <vector>
 
 namespace boccia::labeler {
 namespace fs = std::filesystem;
@@ -190,21 +192,32 @@ Json startColorFill(Project& project) {
     if (project.colorWorker.joinable()) project.colorWorker.join();   // the previous run has finished; its thread is still a member
     project.colorWorker = std::jthread([&project, targets = std::move(targets)](std::stop_token stop) {
         try {
-            // The colours are decided outside the lock and written in one revision at the end; a ball that got a colour
-            // meanwhile, or an image whose balls changed, is left alone.
-            std::map<std::string, Json> results;
-            int number = 0;
-            for (const auto& [key, frame] : targets) {
-                if (stop.stop_requested()) { std::lock_guard guard(project.lock); project.colorJob["status"] = "stopped"; return; }
-                const cv::Mat image = project.catalog.read(frame["recording"], frame["camera"], frame["index"]);
-                Json colors = Json::array();
-                for (const auto& box : frame["boxes"])
-                    colors.push_back(box.contains("segmentation") && box.value("color", "unknown") == "unknown" ? Json(ballColor(image, decodeMaskChecked(box["segmentation"], frame["width"], frame["height"]))) : Json());
-                results[key] = std::move(colors);
-                std::lock_guard guard(project.lock); project.colorJob["done"] = ++number;
-            }
+            // The colours are decided outside the lock, several images at a time, and written at the end on the automatic
+            // revision so a person's save never conflicts; a ball that got a colour meanwhile, or an image whose balls
+            // changed, is left alone.
+            std::map<std::string, Json> results; std::mutex resultsLock;
+            std::atomic<size_t> next{0}; std::atomic<int> done{0};
+            std::mutex failureLock; std::string failure;
+            const int workers = std::max(1, std::min(4, int(std::thread::hardware_concurrency()) / 2));
+            std::vector<std::thread> pool;
+            for (int w = 0; w < workers; ++w) pool.emplace_back([&] {
+                try {
+                    for (size_t i = next++; i < targets.size() && !stop.stop_requested(); i = next++) {
+                        const auto& [key, frame] = targets[i];
+                        const cv::Mat image = project.catalog.read(frame["recording"], frame["camera"], frame["index"]);
+                        Json colors = Json::array();
+                        for (const auto& box : frame["boxes"])
+                            colors.push_back(box.contains("segmentation") && box.value("color", "unknown") == "unknown" ? Json(ballColor(image, decodeMaskChecked(box["segmentation"], frame["width"], frame["height"]))) : Json());
+                        { std::lock_guard guard(resultsLock); results[key] = std::move(colors); }
+                        { std::lock_guard guard(project.lock); project.colorJob["done"] = ++done; }
+                    }
+                } catch (const std::exception& error) { std::lock_guard guard(failureLock); if (failure.empty()) failure = error.what(); }
+            });
+            for (auto& thread : pool) thread.join();
+            if (!failure.empty()) throw std::runtime_error(failure);
+            if (stop.stop_requested()) { std::lock_guard guard(project.lock); project.colorJob["status"] = "stopped"; return; }
             std::lock_guard guard(project.lock);
-            project.mutate(project.state["revision"].get<int>(), [&](Json& state) {
+            project.mutateAutomatic([&](Json& state) {
                 for (const auto& [key, colors] : results) {
                     if (!state["frames"].contains(key) || state["frames"][key]["boxes"].size() != colors.size()) continue;
                     Json& boxes = state["frames"][key]["boxes"];
@@ -398,14 +411,24 @@ Json assistance(const Project& project, BallAssist& assist, const std::string& m
     const int index = payload.at("index").get<int>();
     const Json frame = project.frame(recording, camera, index);
     const int width = frame["width"], height = frame["height"];
-    if (method == "polygon") return {{"key", frame["key"]}, {"proposals", Json::array({polygonProposal(payload.at("points"), width, height)})}};
+    const bool colourCamera = project.catalog.camera(recording, camera).kind == "컬러";
+    // A proposal on the colour camera already names the ball's colour, so a new ball needs no pick from the list.
+    auto coloured = [&](Json box, const cv::Mat& pixels) {
+        if (colourCamera && box.contains("segmentation")) { const auto colour = ballColor(pixels, decodeMaskChecked(box["segmentation"], width, height)); if (colour != "unknown") box["color"] = colour; }
+        return box;
+    };
+    if (method == "polygon") {
+        Json box = polygonProposal(payload.at("points"), width, height);
+        if (colourCamera) box = coloured(box, project.catalog.read(recording, camera, index));
+        return {{"key", frame["key"]}, {"proposals", Json::array({box})}};
+    }
     const cv::Mat image = project.catalog.read(recording, camera, index);
     if (method == "segment") {
         Json box;
         try { box = assist.segment(image, project.catalog.signature + "/" + frame["key"].get<std::string>(), payload.at("points"), payload.value("radius", Json(14)), payload.value("box", Json())); }
         catch (const std::runtime_error&) { throw; }
         catch (const std::exception& error) { throw std::runtime_error(std::string("분할 실행에 실패했습니다: ") + std::string(error.what()).substr(0, 240)); }
-        return {{"key", frame["key"]}, {"proposals", Json::array({box})}};
+        return {{"key", frame["key"]}, {"proposals", Json::array({coloured(box, image)})}};
     }
     if (method == "circles") {
         const Json region = payload.value("region", Json({0, 0, width, height}));

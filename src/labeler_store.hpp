@@ -43,6 +43,7 @@ public:
     Json summary() const;
     int commitAutomatic(const std::vector<std::pair<std::string, Json>>& entries);   // background drafts, own revision
     Json mutate(int expectedRevision, const std::function<void(Json&)>& callback);  // writes, then returns summary()
+    Json mutateAutomatic(const std::function<void(Json&)>& callback);                 // a background change on auto_revision; never conflicts
     Json frame(const std::string& recording, const std::string& camera, int index) const;   // with transient contours
     Json saveFrame(const Json& payload);
     Json saveSplits(const Json& payload);

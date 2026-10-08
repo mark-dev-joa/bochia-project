@@ -438,9 +438,21 @@ void nativeTests() {
         check(colorFillStatus(project3)["status"] == "complete" && colorFillStatus(project3)["filled"] == 1 && colorFillStatus(project3)["done"] == 1, "colour fill did not complete: " + colorFillStatus(project3).dump());
         const Json boxes = project3.state["frames"][key3]["boxes"];
         check(boxes[0]["color"] == "red" && boxes[1]["color"] == "white", "colours wrong: " + boxes.dump());
-        check(nativeCatalog(project3)["colorable"] == 0 && nativeCatalog(project3)["color_fill"]["balls"] == 1 && project3.state["revision"] == 1 && !project3.state.contains("native_split"), "colour fill record wrong");
+        check(nativeCatalog(project3)["colorable"] == 0 && nativeCatalog(project3)["color_fill"]["balls"] == 1 && project3.state["revision"] == 0 && project3.state["auto_revision"] == 1 && !project3.state.contains("native_split"), "colour fill must record on the automatic revision: " + project3.state.dump().substr(0, 200));
         check(fails([&] { saveFrame(project3, third, 0, "camera-1", 0, true, Json::array({{{"bbox", {2, 1, 3, 4}}, {"color", "red"}}})); }, "모노"), "mono guard lost");
         saveFrame(project3, third, 0, "camera-0", 1, true, Json::array({{{"bbox", {1, 1, 4, 4}}, {"color", "blue"}}}));   // a colour camera takes colours
+        // A shown colour-camera ball carries its colour before anything is stored, and keeps it once the frame is confirmed.
+        const std::string key4 = third.ids[0] + "/camera-0/2", mono4 = third.ids[0] + "/camera-1/2";
+        for (const auto& k : {key4, mono4}) project3.state["frames"][k] = {{"recording", third.ids[0]}, {"camera", k == key4 ? "camera-0" : "camera-1"}, {"index", 2}, {"width", 8}, {"height", 6}, {"boxes", {red}}, {"reviewed", false}, {"human_touched", false}};
+        check(project3.frame(third.ids[0], "camera-0", 2)["boxes"][0]["color"] == "red" && !project3.state["frames"][key4]["boxes"][0].contains("color"), "a shown colour-camera ball must carry its colour without being stored yet");
+        check(!project3.frame(third.ids[0], "camera-1", 2)["boxes"][0].contains("color"), "a mono ball must stay without colour");
+        nativeAction(project3, "review", {{"keys", {key4, mono4}}, {"status", "reviewed"}, {"expected_revision", project3.state["revision"]}});
+        check(project3.state["frames"][key4]["boxes"][0]["color"] == "red" && !project3.state["frames"][mono4]["boxes"][0].contains("color"), "confirming must store the shown colour");
+        BallAssist noModel(fs::path("missing-model"));
+        const Json polygonPayload = {{"recording", third.ids[0]}, {"camera", "camera-0"}, {"index", 1}, {"points", Json::parse("[[1,1],[4,1],[4,4],[1,4]]")}};
+        check(assistance(project3, noModel, "polygon", polygonPayload)["proposals"][0]["color"] == "red", "a polygon on the colour camera must propose the colour");
+        Json monoPayload = polygonPayload; monoPayload["camera"] = "camera-1";
+        check(!assistance(project3, noModel, "polygon", monoPayload)["proposals"][0].contains("color"), "a polygon on a mono camera must not propose a colour");
     }
     // test_thumbnail_is_a_small_cached_jpeg
     const cv::Mat thumb = thumbnail(project, fixture.ids[0], "camera-0", 0, 32);
