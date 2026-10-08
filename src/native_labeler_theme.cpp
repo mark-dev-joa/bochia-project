@@ -102,6 +102,7 @@ void icon(ImDrawList* draw, Icon kind, ImVec2 c, float size, ImU32 color) {
     case Icon::Trash: stroke(-.42f, -.3f, .42f, -.3f); path({at(-.14f, -.3f), at(-.14f, -.48f), at(.14f, -.48f), at(.14f, -.3f)}, false); path({at(-.3f, -.3f), at(-.24f, .48f), at(.24f, .48f), at(.3f, -.3f)}, false); break;
     case Icon::Plus: stroke(0, -.42f, 0, .42f); stroke(-.42f, 0, .42f, 0); break;
     case Icon::Minus: stroke(-.42f, 0, .42f, 0); break;
+    case Icon::Ring: draw->AddCircle(c, size * .4f, color, 0, w); break;
     case Icon::Left: path({at(.16f, -.36f), at(-.2f, 0), at(.16f, .36f)}, false); break;
     case Icon::Right: path({at(-.16f, -.36f), at(.2f, 0), at(-.16f, .36f)}, false); break;
     case Icon::Down: path({at(-.36f, -.16f), at(0, .2f), at(.36f, -.16f)}, false); break;

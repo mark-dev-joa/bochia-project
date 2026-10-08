@@ -503,7 +503,9 @@ Json assistance(const Project& project, BallAssist& assist, const std::string& m
     if (method == "polygon") {
         Json box = polygonProposal(payload.at("points"), width, height);
         const cv::Mat image = project.catalog.read(recording, camera, index);
+        const Json raw = {{"bbox", box["bbox"]}, {"segmentation", box["segmentation"]}, {"area", box.value("area", Json())}};
         refineBallBox(box, image, circleMargin(project));   // a ball drawn by hand is measured like the others (2026-10-08 user request)
+        if (box.contains("circle")) box["raw"] = raw;        // kept beside the fit, so the app can apply the outline as drawn
         if (colourCamera) box = coloured(box, image);
         return {{"key", frame["key"]}, {"proposals", Json::array({box})}};
     }
@@ -539,7 +541,9 @@ Json assistance(const Project& project, BallAssist& assist, const std::string& m
             if (after < std::max(8, before / 10)) throw std::runtime_error("클릭한 공이 옆 공에 거의 다 가려 있습니다. 폴리곤으로 보이는 부분을 그리세요.");
             if (after != before) box = maskAnnotation(mask, box, "efficientsam");
         }
+        const Json raw = {{"bbox", box["bbox"]}, {"segmentation", box["segmentation"]}, {"area", box.value("area", Json())}};
         refineBallBox(box, image, circleMargin(project));   // the box from the image's own edge, with the project's rim margin
+        if (box.contains("circle")) box["raw"] = raw;        // kept beside the fit, so the app can apply the outline as the model gave it
         return {{"key", frame["key"]}, {"proposals", Json::array({coloured(box, image)})}};
     }
     if (method == "circles") {

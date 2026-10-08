@@ -88,6 +88,7 @@ private:
     float occlCoverage_ = .5f, occlCircularity_ = .8f, occlAspect_ = .85f;   // the dialog's thresholds; a blurred whole ball keeps about 60 % of its rim
     bool occlReviewed_ = false; int occlTrial_ = 30;
     bool propagateForce_ = false;                                // the dialog's "also the frames already up to date"
+    bool fitCircle_ = true;                                      // proposals take the circle fit; off keeps the outline as segmented (hand-held balls)
     std::vector<FrameView> missingSamples_;                      // crops of a trial's new balls, shown in the dialog
     int missingCameras_ = 0, missingTrial_ = 30;                 // 0 colour only, 1 all cameras; frames per trial
     float missingCoverage_ = .8f, missingMinRadius_ = 6, missingMaxRadius_ = 45;
@@ -179,6 +180,7 @@ private:
     void cancel();
     void apply();
     bool measure(Json& box);                         // Canny + RANSAC circle on a proposal, box from the circle; false when the fit failed
+    Json chosenProposal() const;                     // the proposal as it will be applied: the fit's version, or the raw outline with the fit off
     void undo();
     void removeSelected();
     void removeBall(int slot, int ball);

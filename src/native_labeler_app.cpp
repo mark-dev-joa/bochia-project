@@ -24,7 +24,7 @@ std::filesystem::path Application::preferencesPath() const { return config_.proj
 void Application::rememberPosition() const {
     if(frames_.empty())return;
     const auto& scene=catalog_["scenes"][scene_];
-    Json state={{"recording",scene["recording"]},{"index",scene["index"]},{"camera",frames_[camera_].member["camera"]},{"editor",editor_},{"brightness",brightness_},{"representatives",representatives_},{"filter",filter_},{"masks",masks_},{"boxes",boxes_},{"circles",circles_},{"outlines",outlines_},{"view",view_},{"panels",{listOpen_,sideOpen_,summaryOpen_}}};
+    Json state={{"recording",scene["recording"]},{"index",scene["index"]},{"camera",frames_[camera_].member["camera"]},{"editor",editor_},{"brightness",brightness_},{"representatives",representatives_},{"filter",filter_},{"masks",masks_},{"boxes",boxes_},{"circles",circles_},{"outlines",outlines_},{"view",view_},{"fit_circle",fitCircle_},{"panels",{listOpen_,sideOpen_,summaryOpen_}}};
     auto path=preferencesPath();std::filesystem::create_directories(path.parent_path());
     auto temporary=path;temporary+=L"."+std::to_wstring(Clock::now().time_since_epoch().count())+L".tmp";std::ofstream stream(temporary,std::ios::binary);stream<<state.dump(2);stream.close();
     if(!stream)throw std::runtime_error("작업 위치 저장 실패");
@@ -34,7 +34,7 @@ void Application::restorePosition() {
     int index=0,camera=0;bool editor=false;
     if(config_.rememberUi){try {
         std::ifstream input(preferencesPath(),std::ios::binary);auto state=Json::parse(input);
-        brightness_=std::clamp(state.value("brightness",1.65f),.5f,3.f);representatives_=state.value("representatives",true);filter_=std::clamp(state.value("filter",0),0,3);masks_=state.value("masks",true);boxes_=state.value("boxes",true);circles_=state.value("circles",true);view_=std::clamp(state.value("view",0),0,viewCount-1);outlines_=state.value("outlines",true);
+        brightness_=std::clamp(state.value("brightness",1.65f),.5f,3.f);representatives_=state.value("representatives",true);filter_=std::clamp(state.value("filter",0),0,3);masks_=state.value("masks",true);boxes_=state.value("boxes",true);circles_=state.value("circles",true);view_=std::clamp(state.value("view",0),0,viewCount-1);outlines_=state.value("outlines",true);fitCircle_=state.value("fit_circle",true);
         if(state.contains("panels")&&state["panels"].is_array()&&state["panels"].size()==3){listOpen_=state["panels"][0];sideOpen_=state["panels"][1];summaryOpen_=state["panels"][2];}
         for(int i=0;i<int(catalog_["scenes"].size());++i){auto& scene=catalog_["scenes"][i];if(scene["recording"]==state.at("recording")&&scene["index"]==state.at("index")){
             index=i;editor=state.value("editor",false);for(int c=0;c<int(scene["members"].size());++c)if(scene["members"][c]["camera"]==state.at("camera"))camera=c;break;
@@ -212,9 +212,16 @@ void Application::save(std::function<void()> next,int slot) {
 void Application::cancel(){++generation_;proposal_=nullptr;brushMask_.release();polygon_.clear();points_=Json::array();replacement_=-1;dragging_=false;if(!frames_.empty())current().repaint=true;}
 // A ball added during review is measured like the others: Canny + RANSAC circle, box from the circle (2026-10-08 user
 // request). A box drawn without a mask starts from the disc inscribed in it, which stays when the fit fails.
+// The proposal as it will be applied: with the circle fit off, the outline as the model or the person gave it, no circle.
+Json Application::chosenProposal() const {
+    Json box=proposal_;if(box.is_null())return box;
+    if(!fitCircle_&&box.contains("raw")){const Json raw=box["raw"];box["bbox"]=raw["bbox"];box["segmentation"]=raw["segmentation"];if(raw.contains("area")&&!raw["area"].is_null())box["area"]=raw["area"];box.erase("circle");box.erase("detection_bbox");box.erase("contours");}
+    box.erase("raw");return box;
+}
 bool Application::measure(Json& box){
     const auto& image=current().image;
     if(!box.contains("segmentation"))inscribeCircle(box,image.cols,image.rows);
+    else if(!fitCircle_)return box.contains("circle");   // the fit is off: the outline stays as segmented (2026-10-08 user request)
     if(box.contains("circle")&&box.value("circle_source","")!="box")return true;   // measured already, by the engine
     if(!refineBallBox(box,image,circleMargin_))return false;
     box.erase("circle_source");return true;
@@ -223,11 +230,12 @@ void Application::apply() {
     if(busy())return;
     if(proposal_.is_null()){if(polygon_.size()>=3)polygonProposal();return;}
     try {
-        auto box=proposal_;
+        auto box=chosenProposal();
         if(!brushMask_.empty())box=maskAnnotation(brushMask_,box,"manual_brush");
         const bool measured=measure(box);
         char note[112];
-        if(measured)std::snprintf(note,sizeof note,"박스는 Canny+RANSAC 원(r %.1f)에서 잡았습니다",box["circle"][2].get<double>());
+        if(!fitCircle_&&!measured)std::snprintf(note,sizeof note,"원 맞춤 없이 분할 윤곽 그대로 반영했습니다");
+        else if(measured)std::snprintf(note,sizeof note,"박스는 Canny+RANSAC 원(r %.1f)에서 잡았습니다",box["circle"][2].get<double>());
         else std::snprintf(note,sizeof note,"원 맞춤이 안 되어 %s로 박스를 잡았습니다",box.contains("circle")?"내접원":"마스크 경계");
         checkpoint();auto& existing=current().annotation["boxes"];
         const bool added=!(replacement_>=0&&replacement_<int(existing.size()));
@@ -831,7 +839,7 @@ void Application::repaint(FrameView& f){
         proposalContours_.clear();
         // Only a brush stroke is filled, so painting gives feedback; AI and polygon proposals show their outline only.
         if(!brushMask_.empty()){overlay.setTo(cv::Scalar(255,90,217,70),brushMask_);cv::findContours(brushMask_.clone(),proposalContours_,cv::RETR_EXTERNAL,cv::CHAIN_APPROX_SIMPLE);}
-        else if(!proposal_.is_null()&&proposal_.contains("segmentation")){auto mask=decodeMask(proposal_["segmentation"],f.image.cols,f.image.rows);cv::findContours(mask,proposalContours_,cv::RETR_EXTERNAL,cv::CHAIN_APPROX_SIMPLE);}
+        else if(!proposal_.is_null()&&proposal_.contains("segmentation")){const Json shown=chosenProposal();auto mask=decodeMask(shown["segmentation"],f.image.cols,f.image.rows);cv::findContours(mask,proposalContours_,cv::RETR_EXTERNAL,cv::CHAIN_APPROX_SIMPLE);}
     }
     uploadTexture(f.overlay,overlay,true);f.repaint=false;
 }
@@ -1058,7 +1066,7 @@ void Application::shortcutsPopup(ImVec2 below) {
         {"A / D","이전 / 다음 장면"},{"Backspace","이전에 보던 장면으로"},{"1 / 2 / 3","그 카메라를 크게"},{"Tab / Shift+Tab","다음 / 이전 공"},
         {"방향키","선택한 공의 그 방향 경계를 1픽셀 바깥으로"},{"Shift+방향키","1픽셀 안으로"},{"V / S / B / P / R","선택 / AI 분할 / 브러시 / 폴리곤 / 박스"},
         {"왼쪽 / 오른쪽 클릭","더하기 / 빼기"},{"[ / ]","브러시 굵기"},{"Space / Esc","윤곽 반영 / 취소, 선택 해제, 세 장 보기"},{"G / M / X / C","윤곽 / 마스크 채움 / 박스 / 원 표시"},{"I","보기: 원본 / 대비 / 흑백 / 에지 / 그래디언트 / 에지 겹침"},
-        {"F / Z","화면 맞춤 / 선택한 공으로"},{"+ / -","확대 / 축소 (휠도 됨)"},{"O / Delete","일부 가림 / 공 삭제 (바로, Ctrl+Z로 되돌림)"},{"Ctrl+Z / Ctrl+S","되돌리기 / 저장"},{"휠 / 가운데 끌기","확대 / 이동"}};
+        {"F / Z","화면 맞춤 / 선택한 공으로"},{"+ / -","확대 / 축소 (휠도 됨)"},{"도구 막대 ○","원 맞춤 켜고 끄기 (끄면 분할 윤곽 그대로)"},{"O / Delete","일부 가림 / 공 삭제 (바로, Ctrl+Z로 되돌림)"},{"Ctrl+Z / Ctrl+S","되돌리기 / 저장"},{"휠 / 가운데 끌기","확대 / 이동"}};
     ImGui::SetNextWindowPos({below.x,below.y+4},ImGuiCond_Always,{1,0});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{16,12});
     if(ImGui::BeginPopup("##shortcuts")){

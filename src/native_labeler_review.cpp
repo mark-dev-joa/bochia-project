@@ -678,7 +678,7 @@ void Application::toolRail(FrameView& frame, ImVec2 pos) {
     const ImU32 glass = theme::rgb(0x15181c, 236);
     struct RailItem { Tool tool; theme::Icon icon; const char* key; };
     static const RailItem tools[] = {{Tool::Select, theme::Icon::Cursor, "V"}, {Tool::Ai, theme::Icon::Spark, "S"}, {Tool::Brush, theme::Icon::Brush, "B"}, {Tool::Polygon, theme::Icon::Polygon, "P"}, {Tool::Box, theme::Icon::Box, "R"}};
-    const float railX = pos.x + 9, railY = pos.y + 10, railHeight = 4 + 5 * 38 + 9 + 38 + 9 + 4 * 38 + 2;
+    const float railX = pos.x + 9, railY = pos.y + 10, railHeight = 4 + 5 * 38 + 9 + 38 + 9 + 38 + 9 + 4 * 38 + 2;
     draw->AddRectFilled({railX, railY}, {railX + 44, railY + railHeight}, glass, 8); draw->AddRect({railX, railY}, {railX + 44, railY + railHeight}, theme::line2, 8);
     float y = railY + 4;
     auto button = [&](const char* id, theme::Icon icon, const char* key, bool on) {
@@ -696,6 +696,11 @@ void Application::toolRail(FrameView& frame, ImVec2 pos) {
         if (button(tools[i].key, tools[i].icon, tools[i].key, tool_ == tools[i].tool) && guard()) tool_ = tools[i].tool;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", toolNames[i]);
     }
+    separator();
+    // Whether a proposal takes the circle fit (on: the ball's full circle) or stays the outline as segmented (off: a ball
+    // whose visible part is no circle, such as one held in a hand). 2026-10-08 user request.
+    if (button("##fit-circle", theme::Icon::Ring, "", fitCircle_)) { fitCircle_ = !fitCircle_; frame.repaint = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip(fitCircle_ ? "원 맞춤 켜짐: 분할 결과를 원에 맞춰 공 전체로 잡음" : "원 맞춤 꺼짐: 분할 윤곽을 그대로 반영");
     separator();
     if (button("##undo", theme::Icon::Undo, "", false)) undo();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("되돌리기 (Ctrl+Z)");
@@ -742,8 +747,9 @@ void Application::canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size) {
 
     // The pending proposal enlarged at the bottom right, to judge the outline before applying (2026-10-08 user request).
     if (!proposal_.is_null() && size.x > 520 && size.y > 420) {
+        const Json shown = chosenProposal();   // the fit's version, or the raw outline with the fit off
         cv::Rect2d r;
-        if (proposal_.contains("bbox")) r = detectionBox(proposal_);
+        if (shown.contains("bbox")) r = detectionBox(shown);
         else if (!brushMask_.empty()) { const auto b = cv::boundingRect(brushMask_); r = {double(b.x), double(b.y), double(b.width), double(b.height)}; }
         if (r.width >= 1 && r.height >= 1) {
             const float side = 220;
@@ -759,12 +765,13 @@ void Application::canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size) {
                 for (const auto& p : contour) points.push_back({p0.x + float((p.x + .5 - region.x) * scale), p0.y + float((p.y + .5 - region.y) * scale)});
                 draw->AddPolyline(points.data(), int(points.size()), theme::proposal, ImDrawFlags_Closed, 2);
             }
-            if (proposal_.contains("circle") && circles_) { const auto& c = proposal_["circle"]; draw->AddCircle({p0.x + float((c[0].get<double>() - region.x) * scale), p0.y + float((c[1].get<double>() - region.y) * scale)}, float(c[2].get<double>() * scale), theme::circle, 0, 1.5f); }
+            if (shown.contains("circle") && circles_) { const auto& c = shown["circle"]; draw->AddCircle({p0.x + float((c[0].get<double>() - region.x) * scale), p0.y + float((c[1].get<double>() - region.y) * scale)}, float(c[2].get<double>() * scale), theme::circle, 0, 1.5f); }
             draw->PopClipRect();
             draw->AddRect(p0, p1, theme::proposal, 0, 0, 1.5f);
             std::string caption = "제안 · " + sizeText(r);
-            if (proposal_.contains("circle")) { char radius[24]; std::snprintf(radius, sizeof radius, " · r %.1f", proposal_["circle"][2].get<double>()); caption += radius; }
-            else if (proposal_.contains("segmentation")) caption += " · 원 맞춤 실패";
+            if (shown.contains("circle")) { char radius[24]; std::snprintf(radius, sizeof radius, " · r %.1f", shown["circle"][2].get<double>()); caption += radius; }
+            else if (!fitCircle_) caption += " · 원 맞춤 끔";
+            else if (shown.contains("segmentation")) caption += " · 원 맞춤 실패";
             if (proposal_.contains("color")) { const auto name = colorName(proposal_.value("color", "unknown")); if (*name) caption += std::string(" · ") + name; }
             theme::write(draw, {p0.x, p1.y + 5}, theme::proposal, caption, theme::caption, theme::bold);
         }
@@ -778,7 +785,7 @@ void Application::canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size) {
             const auto found = std::find(order.begin(), order.end(), replacement_);
             label = found == order.end() ? "새 공 추가" : "공 " + std::to_string(found - order.begin() + 1) + " 윤곽 바꾸기";
         }
-        const float labelWidth = theme::extent(label, theme::caption, theme::bold).x, barWidth = 12 + labelWidth + 12 + 104 + 6 + 88 + 6;
+        const float labelWidth = theme::extent(label, theme::caption, theme::bold).x, barWidth = 12 + labelWidth + 12 + 104 + 6 + 88 + 6 + 92;
         const ImVec2 p{std::clamp(anchor.x - barWidth / 2, pos.x + 64, std::max(pos.x + 64, end.x - barWidth - 10)), std::clamp(anchor.y, pos.y + 56, end.y - 44)};
         draw->AddRectFilled(p, {p.x + barWidth, p.y + 34}, theme::rgb(0x15181c, 245), 8); draw->AddRect(p, {p.x + barWidth, p.y + 34}, theme::proposal, 8);
         theme::write(draw, {p.x + 12, p.y + 9}, theme::proposal, label, theme::caption, theme::bold);
@@ -787,6 +794,9 @@ void Application::canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size) {
         if (theme::primaryButton(proposal_.is_null() ? "닫기  Space" : "반영  Space", {104, 24})) apply();
         ImGui::SetCursorScreenPos({p.x + 24 + labelWidth + 110, p.y + 5});
         if (ImGui::Button("취소  Esc", {88, 24})) cancel();
+        // The circle fit can be left off for a ball whose visible part is no circle, such as one held in a hand (2026-10-08 user request).
+        ImGui::SetCursorScreenPos({p.x + 24 + labelWidth + 110 + 94, p.y + 6});
+        if (theme::checkbox("원 맞춤", &fitCircle_)) frame.repaint = true;
         ImGui::PopStyleVar(); ImGui::PopFont();
     }
 }
