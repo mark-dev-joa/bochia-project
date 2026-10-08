@@ -243,7 +243,8 @@ void Application::paintMarks(FrameView& frame, const std::function<ImVec2(double
     for (int i = 0; i < int(boxes.size()); ++i) {
         if (i == paint.skip || (paint.only >= 0 && i != paint.only)) continue;   // a crop shows its own ball's marks alone (2026-10-08 user request)
         const bool active = i == paint.selected;
-        const ImU32 color = active ? theme::selected : theme::mask;
+        auto tone = [&](ImU32 c) { return paint.faint ? ((c & 0x00FFFFFFu) | (90u << 24)) : c; };   // faint while a ball is being added
+        const ImU32 color = tone(active ? theme::selected : theme::mask);
         if (paint.outlines && i < int(frame.contours.size())) for (const auto& contour : frame.contours[i]) {
             if (contour.size() < 3) continue;
             std::vector<ImVec2> points; points.reserve(contour.size());
@@ -253,8 +254,8 @@ void Application::paintMarks(FrameView& frame, const std::function<ImVec2(double
         if (paint.circles && i < int(frame.circles.size()) && frame.circles[i].r > 0) {   // the ball as a circle, fitted to the mask
             const auto& c = frame.circles[i];
             const float scale = at(1, 0).x - at(0, 0).x;
-            draw->AddCircle(at(c.x + .5, c.y + .5), float(c.r) * scale, theme::circle, 0, 1.5f);
-            draw->AddCircleFilled(at(c.x + .5, c.y + .5), 2, theme::circle);
+            draw->AddCircle(at(c.x + .5, c.y + .5), float(c.r) * scale, tone(theme::circle), 0, 1.5f);
+            draw->AddCircleFilled(at(c.x + .5, c.y + .5), 2, tone(theme::circle));
         }
         const auto r = detectionBox(boxes[i]);
         const bool corrected = boxes[i].contains("detection_bbox"), boxOnly = !boxes[i].contains("segmentation");
@@ -264,8 +265,8 @@ void Application::paintMarks(FrameView& frame, const std::function<ImVec2(double
             dashedRect(draw, at(x, y), at(x + tight[2].get<double>(), y + tight[3].get<double>()), theme::mask);
         }
         if (paint.boxes || active || boxOnly) {   // a measured or corrected box follows the toggle like any other
-            draw->AddRect(at(r.x, r.y), at(r.x + r.width, r.y + r.height), IM_COL32(0, 0, 0, 150), 0, 0, 3);
-            draw->AddRect(at(r.x, r.y), at(r.x + r.width, r.y + r.height), boxOnly && !active ? theme::mask : IM_COL32_WHITE, 0, 0, 1);
+            draw->AddRect(at(r.x, r.y), at(r.x + r.width, r.y + r.height), tone(IM_COL32(0, 0, 0, 150)), 0, 0, 3);
+            draw->AddRect(at(r.x, r.y), at(r.x + r.width, r.y + r.height), tone(boxOnly && !active ? theme::mask : IM_COL32_WHITE), 0, 0, 1);
         }
     }
 }
@@ -563,8 +564,11 @@ void Application::canvas(FrameView& frame, ImVec2 pos, ImVec2 size) {
         for (int y = y0; y <= y1; ++y) draw->AddLine(at(x0, y), at(x1, y), grid);
     }
     const bool proposing = !proposal_.is_null();
-    paintMarks(frame, at, {.fill = false, .boxes = boxes_, .circles = circles_, .outlines = outlines_, .selected = proposing ? -1 : selected_, .skip = proposing ? replacement_ : -1});
-    ballBadges(draw, frame.annotation["boxes"], sorted(frame), at, frame.member.value("kind", "") == "컬러", true, proposing ? replacement_ : -1);
+    // While a ball is being added, the existing balls stay visible but faint and without their badges, which otherwise
+    // cover the place the next ball usually is (2026-10-09 user request).
+    const bool adding = adding_ && selected_ < 0;
+    paintMarks(frame, at, {.fill = false, .boxes = boxes_, .circles = circles_, .outlines = outlines_, .faint = adding, .selected = proposing ? -1 : selected_, .skip = proposing ? replacement_ : -1});
+    if (!adding) ballBadges(draw, frame.annotation["boxes"], sorted(frame), at, frame.member.value("kind", "") == "컬러", true, proposing ? replacement_ : -1);
     if (proposing) {
         for (const auto& contour : proposalContours_) {
             if (contour.size() < 3) continue;

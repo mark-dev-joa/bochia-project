@@ -128,7 +128,7 @@ void Application::loadScene(int index,bool editor,int camera,std::string note) {
         const auto& members=catalog_["scenes"][index]["members"];
         for(size_t i=0;i<result.frames.size()&&i<members.size();++i){result.frames[i].member=members[i];result.frames[i].annotation["review_status"]=members[i].value("status","draft");}
         if(backing_)backing_=false;else if(!frames_.empty()&&scene_!=index){history_.push_back(scene_);if(history_.size()>50)history_.erase(history_.begin());}
-        releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor;stale_=false;aheadDirty_=true;scrollToCurrent_=true;cancel();message_=note.empty()?"원본과 저장 라벨 표시 중":note;};
+        releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor;adding_=false;stale_=false;aheadDirty_=true;scrollToCurrent_=true;cancel();message_=note.empty()?"원본과 저장 라벨 표시 중":note;};
     // A scene fetched ahead is used only if no automatic draft has been written since.
     if(index==aheadScene_&&ahead_.valid()&&aheadAuto_==catalog_["summary"].value("auto_revision",0)){
         const auto fetched=ahead_.share();aheadScene_=-1;++aheadHits_;
@@ -181,12 +181,13 @@ void Application::rememberView(const FrameView& frame){
 void Application::addBallHere(int slot){
     focus(slot);
     if(!editor_||camera_!=slot)return;
-    tool_=Tool::Ai;
+    tool_=Tool::Ai;adding_=true;
     if(slot<int(lastView_.size())&&lastView_[size_t(slot)].scale>0){auto& f=frames_[size_t(slot)];f.scale=lastView_[size_t(slot)].scale;f.offsetX=lastView_[size_t(slot)].offsetX;f.offsetY=lastView_[size_t(slot)].offsetY;}
 }
 // Enlarge the camera, select the ball and zoom to it.
 void Application::select(int camera,int ball) {
     if(frames_.empty()||camera<0||camera>=int(frames_.size())||!guard())return;
+    adding_=false;
     if(current().dirty&&camera!=camera_){save([this,camera,ball]{select(camera,ball);});return;}
     if(camera!=camera_){current().repaint=true;cancel();}
     camera_=camera;editor_=true;selected_=ball<int(current().annotation["boxes"].size())?ball:-1;current().scale=0;current().repaint=true;
@@ -259,6 +260,7 @@ void Application::apply() {
         } else {existing.push_back(box);selected_=int(existing.size())-1;}
         cancel();changed();message_=std::string("윤곽 반영 · ")+note;
         // A found ball, once applied, takes the user back to the three-tile view (2026-10-08 user request).
+        adding_=false;
         if(added){editor_=false;selected_=-1;message_=std::string("새 공 반영 · ")+note+" · 세 장 보기로 돌아왔습니다.";}
     } catch(const std::exception& error){error_=error.what();}
 }

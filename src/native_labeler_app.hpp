@@ -76,7 +76,7 @@ private:
         int cameras = 0;
         std::string thumb;
     };
-    struct Paint { bool fill = true, boxes = false, circles = false, outlines = true; int selected = -1, skip = -1, only = -1; };   // only: marks of that ball alone
+    struct Paint { bool fill = true, boxes = false, circles = false, outlines = true, faint = false; int selected = -1, skip = -1, only = -1; };   // only: marks of that ball alone; faint: dimmed
     using Thumbs = std::vector<std::pair<std::string, cv::Mat>>;
     Configuration config_;
     std::shared_ptr<Engine> engine_;                             // the labels, the recordings and the models, in this process
@@ -234,6 +234,7 @@ private:
     void rememberView(const FrameView& frame);       // from the canvas, every frame
     void addBallHere(int slot);                      // "공 추가" on a crop: the large view at the last zoom, the AI tool ready
     bool errorDemo_ = false; const std::string empty_;
+    bool adding_ = false;                            // "공 추가" in progress: the existing balls' marks are faint and their badges hidden
     void canvasInput(FrameView& frame, ImVec2 pos, ImVec2 size, bool hovered);
     void paintImage(FrameView& frame, ImVec2 a, ImVec2 b, cv::Rect2d region, Paint paint);
     void paintMarks(FrameView& frame, const std::function<ImVec2(double, double)>& at, Paint paint);
