@@ -537,6 +537,7 @@ void Application::focusTile(int slot, ImVec2 pos, ImVec2 size) {
 
 void Application::canvas(FrameView& frame, ImVec2 pos, ImVec2 size) {
     if (frame.image.empty() || size.x < 60 || size.y < 60) return;
+    canvasSize_ = size;
     if (frame.repaint) repaint(frame);
     if (frame.scale <= 0) fit(frame, size, true);
     const ImVec2 end{pos.x + size.x, pos.y + size.y};
@@ -671,7 +672,7 @@ void Application::toolRail(FrameView& frame, ImVec2 pos) {
     const ImU32 glass = theme::rgb(0x15181c, 236);
     struct RailItem { Tool tool; theme::Icon icon; const char* key; };
     static const RailItem tools[] = {{Tool::Select, theme::Icon::Cursor, "V"}, {Tool::Ai, theme::Icon::Spark, "S"}, {Tool::Brush, theme::Icon::Brush, "B"}, {Tool::Polygon, theme::Icon::Polygon, "P"}, {Tool::Box, theme::Icon::Box, "R"}};
-    const float railX = pos.x + 9, railY = pos.y + 10, railHeight = 4 + 5 * 38 + 9 + 38 + 9 + 2 * 38 + 2;
+    const float railX = pos.x + 9, railY = pos.y + 10, railHeight = 4 + 5 * 38 + 9 + 38 + 9 + 4 * 38 + 2;
     draw->AddRectFilled({railX, railY}, {railX + 44, railY + railHeight}, glass, 8); draw->AddRect({railX, railY}, {railX + 44, railY + railHeight}, theme::line2, 8);
     float y = railY + 4;
     auto button = [&](const char* id, theme::Icon icon, const char* key, bool on) {
@@ -697,6 +698,10 @@ void Application::toolRail(FrameView& frame, ImVec2 pos) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("화면 맞춤 (F)");
     if (button("##zoom", theme::Icon::Target, "Z", false)) frame.scale = 0;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("선택한 공으로 (Z)");
+    if (button("##in", theme::Icon::Plus, "+", false)) zoomBy(frame, 1.25f);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("확대 (+)");
+    if (button("##out", theme::Icon::Minus, "-", false)) zoomBy(frame, .8f);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("축소 (-)");
 }
 // Brush size, zoom readout, minimap (only while zoomed in) and the pending-proposal bar float over the canvas.
 void Application::canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size) {

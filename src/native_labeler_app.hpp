@@ -213,6 +213,8 @@ private:
     void tileHeader(int slot, ImVec2 pos, float width, bool compact, const std::string& meta);
     void cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact);
     void canvas(FrameView& frame, ImVec2 pos, ImVec2 size);
+    void zoomBy(FrameView& frame, float factor);     // zooms around the middle of the canvas, for the +/- keys and rail buttons
+    ImVec2 canvasSize_{0, 0};                        // the canvas drawn last, so a key can zoom around its middle
     void canvasInput(FrameView& frame, ImVec2 pos, ImVec2 size, bool hovered);
     void paintImage(FrameView& frame, ImVec2 a, ImVec2 b, cv::Rect2d region, Paint paint);
     void paintMarks(FrameView& frame, const std::function<ImVec2(double, double)>& at, Paint paint);

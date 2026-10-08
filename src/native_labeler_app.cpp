@@ -772,6 +772,13 @@ int Application::target(const FrameView& frame,cv::Point2d point)const {
 }
 int Application::hit(const FrameView& frame,cv::Point2d point)const {for(int i=int(frame.annotation["boxes"].size())-1;i>=0;--i)if(detectionBox(frame.annotation["boxes"][i]).contains(point))return i;return -1;}
 // scale 0 means automatic: zoom to the selected ball, otherwise fit the whole image.
+// Zooms around the middle of the canvas, keeping the image point there in place.
+void Application::zoomBy(FrameView& f,float factor){
+    if(f.scale<=0||canvasSize_.x<=0)return;
+    const float updated=std::clamp(f.scale*factor,.1f,24.f);const ImVec2 pivot{canvasSize_.x/2,canvasSize_.y/2};
+    const float px=(pivot.x-f.offsetX)/f.scale,py=(pivot.y-f.offsetY)/f.scale;
+    f.offsetX=pivot.x-px*updated;f.offsetY=pivot.y-py*updated;f.scale=updated;
+}
 void Application::fit(FrameView& f,ImVec2 size,bool toBall){
     const auto& boxes=f.annotation["boxes"];
     const View view=toBall&&selected_>=0&&selected_<int(boxes.size())?ballView(detectionBox(boxes[selected_]),f.image.cols,f.image.rows,size.x,size.y):fitView(f.image.cols,f.image.rows,size.x,size.y);
@@ -922,6 +929,8 @@ void Application::keys() {
     if(pressed(ImGuiKey_R))tool_=Tool::Box;
     if(pressed(ImGuiKey_F)){selected_=-1;current().scale=0;current().repaint=true;}
     if(pressed(ImGuiKey_Z))current().scale=0;
+    if(editor_&&(pressed(ImGuiKey_Equal)||pressed(ImGuiKey_KeypadAdd)))zoomBy(current(),1.25f);      // + and - zoom the large view (2026-10-08 user request)
+    if(editor_&&(pressed(ImGuiKey_Minus)||pressed(ImGuiKey_KeypadSubtract)))zoomBy(current(),.8f);
     if(pressed(ImGuiKey_LeftBracket))brushSize_=std::max(2.f,brushSize_-1);
     if(pressed(ImGuiKey_RightBracket))brushSize_=std::min(30.f,brushSize_+1);
     auto& objects=current().annotation["boxes"];
@@ -971,7 +980,7 @@ void Application::shortcutsPopup(ImVec2 below) {
         {"A / D","이전 / 다음 장면"},{"Backspace","이전에 보던 장면으로"},{"1 / 2 / 3","그 카메라를 크게"},{"Tab / Shift+Tab","다음 / 이전 공"},
         {"방향키","선택한 공의 그 방향 경계를 1픽셀 바깥으로"},{"Shift+방향키","1픽셀 안으로"},{"V / S / B / P / R","선택 / AI 분할 / 브러시 / 폴리곤 / 박스"},
         {"왼쪽 / 오른쪽 클릭","더하기 / 빼기"},{"[ / ]","브러시 굵기"},{"Space / Esc","윤곽 반영 / 취소, 선택 해제, 세 장 보기"},{"G / M / X / C","윤곽 / 마스크 채움 / 박스 / 원 표시"},{"I","보기: 원본 / 대비 / 흑백 / 에지 / 그래디언트 / 에지 겹침"},
-        {"F / Z","화면 맞춤 / 선택한 공으로"},{"O / Delete","일부 가림 / 공 삭제 (바로, Ctrl+Z로 되돌림)"},{"Ctrl+Z / Ctrl+S","되돌리기 / 저장"},{"휠 / 가운데 끌기","확대 / 이동"}};
+        {"F / Z","화면 맞춤 / 선택한 공으로"},{"+ / -","확대 / 축소 (휠도 됨)"},{"O / Delete","일부 가림 / 공 삭제 (바로, Ctrl+Z로 되돌림)"},{"Ctrl+Z / Ctrl+S","되돌리기 / 저장"},{"휠 / 가운데 끌기","확대 / 이동"}};
     ImGui::SetNextWindowPos({below.x,below.y+4},ImGuiCond_Always,{1,0});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{16,12});
     if(ImGui::BeginPopup("##shortcuts")){
