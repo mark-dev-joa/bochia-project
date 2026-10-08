@@ -159,7 +159,7 @@ add_custom_command(TARGET native_labeler_tests POST_BUILD
 add_test(NAME native_labeler_data_contracts COMMAND native_labeler_tests)
 
 # The labeler engine: the recording catalog, label store, review rules, export and EfficientSAM, built into the app.
-add_library(labeler_engine STATIC src/labeler_util.cpp)
+add_library(labeler_engine STATIC src/labeler_util.cpp src/labeler_catalog.cpp)
 target_include_directories(labeler_engine PUBLIC src ${OpenCV_INCLUDE_DIRS} "${DEPENDENCY_ROOT}/nlohmann/include")
 target_link_libraries(labeler_engine PUBLIC native_labeler_model ${OpenCV_LIBS} libzstd_static bcrypt)
 target_compile_definitions(labeler_engine PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
