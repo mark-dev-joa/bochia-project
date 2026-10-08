@@ -4,6 +4,7 @@
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
 #include <fstream>
+#include <iostream>
 #include <thread>
 #include <iomanip>
 #include <sstream>
@@ -968,6 +969,33 @@ bool Application::selfCheckStep(int step) {
     case 20:{expect(!queued_&&nextAsk_,"the queued confirm did not run after the save");nextAsk_=false;return false;}
     }
     return false;
+}
+// The split and export from the command line: "8:test,9:test,7:val" assigns those recordings by number, the rest train;
+// then the confirmation, the export without crops, and the export folder on stdout. Returns false when done.
+bool Application::batchSplitStep(int step,const std::string& spec){
+    auto fail=[](const std::string& what){throw std::runtime_error("batch-split: "+what);};
+    switch(step){
+    case 0:{
+        std::map<int,std::string> wanted;
+        for(size_t at=0;at<spec.size();){size_t comma=spec.find(',',at);if(comma==std::string::npos)comma=spec.size();const std::string item=spec.substr(at,comma-at);at=comma+1;
+            const size_t colon=item.find(':');if(colon==std::string::npos)fail("use number:split, as in 8:test");
+            const std::string split=item.substr(colon+1);if(split!="train"&&split!="val"&&split!="test")fail("split must be train, val or test: "+split);
+            wanted[std::stoi(item.substr(0,colon))]=split;}
+        for(auto& [id,group]:groups_.items())group=id;   // by recording, no batches: the assignment is explicit
+        for(const auto& recording:catalog_["recordings"]){const auto id=recording.at("id").get<std::string>();const int number=catalog_["stats"].value(id,Json::object()).value("number",0);
+            const auto found=wanted.find(number);assignSplit(id,found==wanted.end()?"train":found->second);}
+        std::cout<<"batch-split: assigned";for(const auto& [id,split]:splits_.items())std::cout<<' '<<catalog_["stats"].value(id,Json::object()).value("number",0)<<':'<<split.get<std::string>();std::cout<<'\n';
+        confirmSplit();return true;}   // not through the split page: opening it would start the engine's own plan and leave the app busy
+    case 1:{if(!splitConfirmed()||dataVersion().size()!=64)fail("the split was not confirmed: "+message_);
+        std::cout<<"batch-split: confirmed, data version "<<dataVersion()<<'\n';crops_=false;startExport();return true;}
+    default:{
+        const auto status=exportStatus_.value("status","");
+        if(status=="running")return true;
+        if(status!="complete")fail("the export did not finish: "+exportStatus_.dump());
+        if(exports_.empty()||exports_[0].value("fingerprint",Json()).is_null()||exports_[0]["fingerprint"]!=dataVersion())return true;   // the history refreshes after the poll
+        std::cout<<"batch-split: exported to "<<exports_[0].value("path","")<<" · images "<<exports_[0].value("images",exports_[0].value("frames",0))<<'\n';
+        return false;}
+    }
 }
 // The same kind of scripted run for the split and export pages. Returns false when every step has passed.
 bool Application::stageCheckStep(int step) {

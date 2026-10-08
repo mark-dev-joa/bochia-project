@@ -60,6 +60,7 @@ public:
     bool selfCheckStep(int step);                    // scripted logic checks for the hidden smoke run
     bool stageCheckStep(int step);                   // the same for split and export; needs a fully confirmed project
     bool missingScriptStep(int step);                // trials of the missing-ball pass, their assembly and the apply of one
+    bool batchSplitStep(int step, const std::string& spec);   // assigns, confirms and exports from the command line
     const std::string& error() const { return errorDemo_ ? empty_ : error_; }   // a pictured error must not end a hidden run
     bool canClose() const;
     void preserveRecovery();
