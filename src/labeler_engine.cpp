@@ -1,29 +1,11 @@
 #include "labeler_engine.hpp"
 #include "labeler_util.hpp"
-#include <fstream>
 #include <stdexcept>
 
 namespace boccia::labeler {
-namespace fs = std::filesystem;
-namespace {
-Json readStatus(const fs::path& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return nullptr;
-    try { return Json::parse(in); } catch (...) { return nullptr; }
-}
-}
 Engine::Engine(EnginePaths given)
-    : paths(std::move(given)), catalog_(paths.source), project_(catalog_, paths.project, paths.exports), assist_(paths.models), autoJob_({{"status", "idle"}}) {
-    // The last automatic run's record lives beside the labels; a run cut off by a crash is reported as interrupted.
-    fs::path statusPath = project_.path.parent_path() / (project_.path.stem().wstring() + L"-auto-status.json");
-    if (!fs::exists(statusPath)) statusPath = project_.path.parent_path() / "auto-status.json";
-    const Json previous = readStatus(statusPath);
-    if (previous.is_object() && previous.value("project_path", "") == utf8(project_.path)) {
-        autoJob_ = previous;
-        if (autoJob_.value("status", "") == "running") { autoJob_["status"] = "interrupted"; autoJob_["message"] = "중단된 작업입니다. 자동 초안을 다시 시작하면 미처리 프레임부터 이어갑니다."; }
-    }
-}
-Engine::~Engine() = default;
+    : paths(std::move(given)), catalog_(paths.source), project_(catalog_, paths.project, paths.exports), assist_(paths.models), auto_(project_, paths.root, paths.models) {}
+Engine::~Engine() { auto_.stop(); }
 Json Engine::catalog() const { return {{"recordings", catalog_.metadata()}, {"source", utf8(catalog_.source)}, {"project_path", utf8(project_.path)}, {"summary", project_.summary()}}; }
 Json Engine::nativeCatalog() const { return boccia::labeler::nativeCatalog(project_); }
 Json Engine::frame(const std::string& recording, const std::string& camera, int index) const { return project_.frame(recording, camera, index); }
@@ -41,7 +23,7 @@ Json Engine::assistStatus() const { return assist_.status(); }
 Json Engine::exportStatus() const { std::lock_guard guard(project_.lock); return project_.job; }
 Json Engine::exports() const { return {{"exports", exportHistory(project_)}}; }
 Json Engine::colorFillStatus() const { return boccia::labeler::colorFillStatus(project_); }
-Json Engine::autoStatus() const { std::lock_guard guard(project_.lock); return {{"job", autoJob_}, {"summary", project_.summary()}}; }
-Json Engine::autoStart() { throw std::runtime_error("자동 초안은 이 빌드에 아직 들어 있지 않습니다."); }
-Json Engine::autoStop() { std::lock_guard guard(project_.lock); return autoJob_; }
+Json Engine::autoStatus() const { return {{"job", auto_.status()}, {"summary", project_.summary()}}; }
+Json Engine::autoStart() { return auto_.start(); }
+Json Engine::autoStop() { return auto_.stop(); }
 }

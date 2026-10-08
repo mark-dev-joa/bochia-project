@@ -2,6 +2,7 @@
 // name, so a behaviour the two engines must share has the same check on both sides.
 #include "labeler_catalog.hpp"
 #include "labeler_assist.hpp"
+#include "labeler_auto.hpp"
 #include "labeler_store.hpp"
 #include "labeler_export.hpp"
 #include "labeler_native.hpp"
@@ -14,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <atomic>
 #include <chrono>
 #include <numeric>
 #include <set>
@@ -780,6 +782,87 @@ void selectionTests() {
     check(exported["images"] == 1 && readJson(fromUtf8(exported["path"]) / "manifest.json")["frame_selection"]["selected"] == 5, "the export must follow the filter and record it");
     std::cout << "PASS: representative frames, box matching, scene and ball comparison, mask changes and the built sidecar\n";
 }
+
+// The Seeds and Assist stand-ins of test_complete_auto_job_resume_and_mask_tracking.
+struct FakeSeeds : SeedSource {
+    std::string method() const override { return "test_stereo"; }
+    std::pair<std::vector<Seed>, std::string> get(const std::string&, const std::string&, int, const cv::Mat&) override { return {{{3.5, 3.0, 1.5}}, "test_stereo"}; }
+};
+struct FakeSegmenter : Segmenter {
+    std::atomic<int>* calls;
+    explicit FakeSegmenter(std::atomic<int>* counter) : calls(counter) {}
+    Json segment(const cv::Mat&, const std::string&, const Json&, const Json&, const Json&) override {
+        ++*calls;
+        cv::Mat mask(6, 8, CV_8UC1, cv::Scalar(0)); mask(cv::Rect(2, 1, 3, 4)).setTo(1);
+        return {{"bbox", {2, 1, 3, 4}}, {"occluded", false}, {"segmentation", encodeMask(mask)}, {"area", 12}};
+    }
+};
+void autoTests() {
+    // test_tracking_mask_translation_and_scale_matches_bbox
+    cv::Mat mask(60, 80, CV_8UC1, cv::Scalar(0)); mask(cv::Rect(30, 20, 11, 11)).setTo(1);
+    const Json box = transferMask({{"segmentation", encodeMask(mask)}}, {35, 25, 5}, {45, 28, 5}, {80, 60});
+    check(box["bbox"] == Json::array({40, 23, 11, 11}) && box["source"] == "auto_tracking" && box["occluded"] == false, "transferred mask wrong: " + box["bbox"].dump());
+    validateBoxes(Json::array({box}), 80, 60);
+    const Json scaled = transferMask({{"segmentation", encodeMask(mask)}}, {35, 25, 5}, {35, 25, 10}, {80, 60});
+    check(scaled["bbox"][2] == 22 && scaled["bbox"][3] == 22, "a doubled radius must double the mask");
+    check(fails([&] { transferMask({{"segmentation", encodeMask(mask)}}, {35, 25, 5}, {500, 500, 5}, {80, 60}); }, "원본 밖"), "a mask moved out of the image accepted");
+    check(seedBbox({3.5, 3.0, 1.5}, 8, 6) == Json::array({2, 1, 3, 4}) && seedBbox({0.5, 0.5, 2}, 8, 6) == Json::array({0, 0, 3, 3}), "seed box wrong");
+    cv::Mat scene(60, 80, CV_8UC3, cv::Scalar(40, 40, 40)); cv::circle(scene, {35, 25}, 6, cv::Scalar(200, 200, 200), -1);
+    const cv::Mat patch = appearance(scene, {35, 25, 6});
+    check(patch.rows == 40 && patch.cols == 40 && patch.type() == CV_32FC3 && similar(patch, patch), "appearance patch wrong");
+    cv::Mat other(60, 80, CV_8UC3, cv::Scalar(40, 40, 40)); cv::rectangle(other, {28, 18}, {42, 32}, cv::Scalar(200, 20, 20), -1);
+    check(!similar(patch, appearance(other, {35, 25, 6})), "different looks must not be similar");
+    // test_complete_auto_job_resume_and_mask_tracking
+    Fixture fixture; Catalog catalog(fixture.source); Project project(catalog, fixture.project, fixture.exports);
+    saveFrame(project, fixture, 0, "camera-0", 0);
+    const Json manual = project.state["frames"][fixture.ids[0] + "/camera-0/0"];
+    std::atomic<int> segmentations{0};
+    AutoLabelJob job(project, fixture.temp.path / "no-root", fixture.temp.path / "no-models");
+    check(job.status()["status"] == "idle" && !job.ready(), "a job without models must not be ready");
+    check(fails([&] { job.start(); }, "모델을 먼저 설치"), "a job without models started");
+    Json started = job.start([] { return std::make_unique<FakeSeeds>(); }, [&] { return std::make_unique<FakeSegmenter>(&segmentations); });
+    check(started["status"] == "running" && started["total"] == 18 && started["project_path"] == utf8(project.path) && started["run_id"].get<std::string>().size() == 24, "job did not start: " + started.dump());
+    for (int i = 0; i < 1000 && job.status()["status"] == "running"; ++i) Sleep(10);
+    Json result = job.status();
+    check(result["status"] == "complete", "job did not complete: " + result.dump());
+    check(result["done"] == 18 && result["written"] == 17 && result["preserved"] == 1 && result["tracked_masks"] > 0 && result["sam_masks"] > 0 && result["seed_method"] == "test_stereo" && result["workers"] >= 1 && result["boxes"] == 17, "job counts wrong: " + result.dump());
+    check(project.state["revision"] == 1 && project.state["auto_revision"] >= 1 && project.state["frames"][fixture.ids[0] + "/camera-0/0"] == manual, "the manual frame must stay and the manual revision must not move");
+    int automatic = 0;
+    for (const auto& [key, item] : project.state["frames"].items()) if (item.contains("automatic")) {
+        ++automatic;
+        check(item["reviewed"] == false && item["human_touched"] == false && item["automatic"]["seed_method"] == "test_stereo" && item["automatic"]["seed_count"] == 1 && item["automatic"]["needs_attention"] == false && item["automatic"]["run_id"] == result["run_id"], "automatic frame fields wrong: " + item.dump());
+        validateBoxes(item["boxes"], 8, 6);
+        check(item["boxes"].size() == 1 && (item["boxes"][0]["source"] == "auto_sam" || item["boxes"][0]["source"] == "auto_tracking"), "automatic box wrong");
+    }
+    check(automatic == 17 && fs::exists(job.statusPath) && readJson(job.statusPath)["status"] == "complete", "automatic frames or the status file missing");
+    { AutoLabelJob reopened(project, fixture.temp.path / "no-root", fixture.temp.path / "no-models"); check(reopened.status()["status"] == "complete" && reopened.status()["written"] == 17, "the status file must come back on restart"); }
+    const int before = segmentations;
+    job.start([] { return std::make_unique<FakeSeeds>(); }, [&] { return std::make_unique<FakeSegmenter>(&segmentations); });
+    for (int i = 0; i < 1000 && job.status()["status"] == "running"; ++i) Sleep(10);
+    result = job.status();
+    check(result["status"] == "complete" && result["written"] == 0 && result["preserved"] == 18 && segmentations == before, "a second run must preserve everything without reading or segmenting");
+    // the colour camera gets colours; a mono camera does not
+    {
+        Fixture third;
+        cv::Mat ballMask(6, 8, CV_8UC1, cv::Scalar(0)); ballMask(cv::Rect(2, 1, 3, 4)).setTo(1);
+        cv::Mat image(6, 8, CV_8UC3, cv::Scalar(30, 40, 50)); image.setTo(cv::Scalar(8, 12, 32), ballMask);
+        third.colourCamera("capture-a", "camera-0", image);
+        Catalog catalog3(third.source); Project project3(catalog3, third.project, third.exports);
+        AutoLabelJob job3(project3, third.temp.path / "no-root", third.temp.path / "no-models");
+        std::atomic<int> count{0};
+        job3.start([] { return std::make_unique<FakeSeeds>(); }, [&] { return std::make_unique<FakeSegmenter>(&count); });
+        for (int i = 0; i < 1000 && job3.status()["status"] == "running"; ++i) Sleep(10);
+        check(job3.status()["status"] == "complete", "colour job failed: " + job3.status().dump());
+        check(project3.state["frames"][third.ids[0] + "/camera-0/0"]["boxes"][0]["color"] == "red" && !project3.state["frames"][third.ids[0] + "/camera-1/0"]["boxes"][0].contains("color"), "colour camera drafts must carry the ball colour");
+    }
+    // SeedCache: without the cache files every frame falls back to circle candidates
+    SeedCache cache(catalog, fixture.temp.path / "no-root");
+    check(cache.method() == "circle_candidates" && cache.covered() == 0, "an empty seed cache must fall back");
+    cv::Mat floor(240, 320, CV_8UC3, cv::Scalar(40, 45, 50)); cv::circle(floor, {160, 120}, 20, cv::Scalar(230, 230, 230), -1);
+    const auto [seeds, method] = cache.get(fixture.ids[0], "camera-0", 0, floor);
+    check(method == "circle_candidates" && !seeds.empty() && std::abs(seeds[0].x - 160) < 4 && std::abs(seeds[0].y - 120) < 4 && std::abs(seeds[0].radius - 20) < 4, "circle seeds wrong");
+    std::cout << "PASS: mask transfer, appearance, automatic draft run with resume, colours and seed fallback\n";
+}
 }
 
 int main(int argc, char** argv) try {
@@ -875,6 +958,13 @@ int main(int argc, char** argv) try {
         std::cout << "selected " << result["selected"] << " excluded " << result["excluded"] << " seconds " << result["elapsed_seconds"] << "\n";
         return 0;
     }
+    if (argc >= 3 && std::string(argv[1]) == "--seeds") {
+        // Parity with labeler_auto.SeedCache on the real recordings and the repository's detection caches.
+        Catalog catalog(fromUtf8(argv[2]));
+        SeedCache cache(catalog, fs::path(BOCCIA_TEST_ROOT));
+        std::cout << "seeds covered " << cache.covered() << " keys " << cache.seeded() << " total " << cache.seedCount() << " " << cache.method() << "\n";
+        return 0;
+    }
     utilTests();
     catalogTests();
     assistTests();
@@ -883,5 +973,6 @@ int main(int argc, char** argv) try {
     exportTests();
     samTests();
     selectionTests();
+    autoTests();
     return 0;
 } catch (const std::exception& error) { std::cerr << "FAIL: " << error.what() << "\n"; return 1; }

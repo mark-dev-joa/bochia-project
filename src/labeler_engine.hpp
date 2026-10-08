@@ -3,6 +3,7 @@
 // background jobs. Every method answers with the JSON the Python HTTP engine used to send, so the screens did
 // not change when the engine moved in.
 #include "labeler_assist.hpp"
+#include "labeler_auto.hpp"
 #include "labeler_native.hpp"
 #include <memory>
 
@@ -41,6 +42,6 @@ private:
     Catalog catalog_;
     Project project_;
     BallAssist assist_;
-    Json autoJob_;
+    AutoLabelJob auto_;
 };
 }
