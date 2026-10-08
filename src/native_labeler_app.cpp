@@ -23,7 +23,7 @@ std::filesystem::path Application::preferencesPath() const { return config_.proj
 void Application::rememberPosition() const {
     if(frames_.empty())return;
     const auto& scene=catalog_["scenes"][scene_];
-    Json state={{"recording",scene["recording"]},{"index",scene["index"]},{"camera",frames_[camera_].member["camera"]},{"editor",editor_},{"brightness",brightness_},{"representatives",representatives_},{"filter",filter_},{"masks",masks_},{"boxes",boxes_}};
+    Json state={{"recording",scene["recording"]},{"index",scene["index"]},{"camera",frames_[camera_].member["camera"]},{"editor",editor_},{"brightness",brightness_},{"representatives",representatives_},{"filter",filter_},{"masks",masks_},{"boxes",boxes_},{"panels",{listOpen_,sideOpen_,summaryOpen_}}};
     auto path=preferencesPath();std::filesystem::create_directories(path.parent_path());
     auto temporary=path;temporary+=L"."+std::to_wstring(Clock::now().time_since_epoch().count())+L".tmp";std::ofstream stream(temporary,std::ios::binary);stream<<state.dump(2);stream.close();
     if(!stream)throw std::runtime_error("작업 위치 저장 실패");
@@ -34,6 +34,7 @@ void Application::restorePosition() {
     if(config_.rememberUi){try {
         std::ifstream input(preferencesPath(),std::ios::binary);auto state=Json::parse(input);
         brightness_=std::clamp(state.value("brightness",1.65f),.5f,3.f);representatives_=state.value("representatives",true);filter_=std::clamp(state.value("filter",0),0,3);masks_=state.value("masks",true);boxes_=state.value("boxes",true);
+        if(state.contains("panels")&&state["panels"].is_array()&&state["panels"].size()==3){listOpen_=state["panels"][0];sideOpen_=state["panels"][1];summaryOpen_=state["panels"][2];}
         for(int i=0;i<int(catalog_["scenes"].size());++i){auto& scene=catalog_["scenes"][i];if(scene["recording"]==state.at("recording")&&scene["index"]==state.at("index")){
             index=i;editor=state.value("editor",false);for(int c=0;c<int(scene["members"].size());++c)if(scene["members"][c]["camera"]==state.at("camera"))camera=c;break;
         }}
@@ -133,6 +134,7 @@ void Application::loadScene(int index,bool editor,int camera,std::string note) {
         // The catalog may have moved on since the images were requested, above all for a scene fetched ahead.
         const auto& members=catalog_["scenes"][index]["members"];
         for(size_t i=0;i<result.frames.size()&&i<members.size();++i){result.frames[i].member=members[i];result.frames[i].annotation["review_status"]=members[i].value("status","draft");}
+        if(backing_)backing_=false;else if(!frames_.empty()&&scene_!=index){history_.push_back(scene_);if(history_.size()>50)history_.erase(history_.begin());}
         releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor;stale_=false;aheadDirty_=true;scrollToCurrent_=true;cancel();message_=note.empty()?"원본과 저장 라벨 표시 중":note;};
     // A scene fetched ahead is used only if no automatic draft has been written since.
     if(index==aheadScene_&&ahead_.valid()&&aheadAuto_==catalog_["summary"].value("auto_revision",0)){
@@ -308,6 +310,11 @@ int Application::nextUnreviewedIndex() const {
     const int count=int(catalog_["scenes"].size());
     for(int offset=1;offset<=count;++offset){const int index=(scene_+offset)%count;for(const auto& member:catalog_["scenes"][index]["members"])if(member.value("selected",true)&&!member.value("reviewed",false)&&member.value("status","")!="hold")return index;}
     return -1;
+}
+// Returns to the scene shown before this one, which E and N may have skipped far away from.
+void Application::back(){
+    if(history_.empty()||!guard())return;
+    const int previous=history_.back();history_.pop_back();backing_=true;navigate(previous);
 }
 void Application::nextUnreviewed(){
     const int index=nextUnreviewedIndex();
@@ -485,6 +492,7 @@ void Application::keys() {
     if(pressed(ImGuiKey_E))review(io.KeyShift&&editor_?Scope::Camera:Scope::Scene,false);
     if(pressed(ImGuiKey_Q))review(editor_?Scope::Camera:Scope::Scene,true);
     if(pressed(ImGuiKey_N)&&guard())nextUnreviewed();
+    if(pressed(ImGuiKey_Backspace))back();
     if(pressed(ImGuiKey_A))stepRow(-1);
     if(pressed(ImGuiKey_D))stepRow(1);
     if(pressed(ImGuiKey_1))focus(0);
@@ -510,43 +518,76 @@ void Application::keys() {
     if(pressed(ImGuiKey_O)){checkpoint();objects[selected_]["occluded"]=!objects[selected_].value("occluded",false);changed();}
     if(pressed(ImGuiKey_Delete))removeSelected();
 }
+// Name, page tabs, progress, save state and the shortcut list. Plain tabs with an underline, like any desktop tool.
 void Application::topBar() {
-    const float width=ImGui::GetContentRegionAvail().x,height=48;const ImVec2 origin=ImGui::GetCursorScreenPos();
+    const float width=ImGui::GetContentRegionAvail().x,height=44;const ImVec2 origin=ImGui::GetCursorScreenPos();
     ImGui::Dummy({width,height});const ImVec2 after=ImGui::GetCursorScreenPos();auto draw=ImGui::GetWindowDrawList();
+    draw->AddRectFilled(origin,{origin.x+width,origin.y+height},theme::bg1);
     draw->AddLine({origin.x,origin.y+height-.5f},{origin.x+width,origin.y+height-.5f},theme::line);
-    draw->AddCircle({origin.x+21,origin.y+24},7,theme::accent,0,1.5f);draw->AddCircleFilled({origin.x+21,origin.y+24},3.5f,theme::accent);
-    theme::write(draw,{origin.x+36,origin.y+14},theme::text,"Boccia Labeler",15,theme::bold);
-    const float brand=36+theme::extent("Boccia Labeler",15,theme::bold).x+14;
-    draw->AddLine({origin.x+brand,origin.y+15},{origin.x+brand,origin.y+33},theme::line);
-    theme::write(draw,{origin.x+brand+14,origin.y+15},theme::text2,"보치아 공 라벨 프로젝트");
+    theme::write(draw,{origin.x+16,origin.y+13},theme::text,"Boccia Labeler",14,theme::bold);
+    float x=origin.x+16+theme::extent("Boccia Labeler",14,theme::bold).x+28;
     static const char* names[]={"데이터 준비","검수","분할","내보내기"};
-    float total=0,widths[4];
-    for(int i=0;i<4;++i){widths[i]=12+18+7+theme::extent(names[i]).x+12;total+=widths[i]+(i?30:0);}
-    float x=origin.x+(width-total)/2;
     for(int i=0;i<4;++i){
-        if(i){draw->AddLine({x+6,origin.y+24},{x+24,origin.y+24},theme::line2);x+=30;}
-        const bool on=int(page_)==i,done=i<int(page_);
-        ImGui::SetCursorScreenPos({x,origin.y+9});ImGui::PushID(i);
-        if(ImGui::InvisibleButton("##step",{widths[i],30})&&!on)openPage(Page(i));
+        const float tab=theme::extent(names[i]).x+24;const bool on=int(page_)==i;
+        ImGui::SetCursorScreenPos({x,origin.y});ImGui::PushID(i);
+        if(ImGui::InvisibleButton("##tab",{tab,height})&&!on)openPage(Page(i));
         const bool hovered=ImGui::IsItemHovered();ImGui::PopID();
-        if(on||hovered)draw->AddRectFilled({x,origin.y+9},{x+widths[i],origin.y+39},on?theme::accentSoft:theme::bg2,6);
-        const ImVec2 badge{x+12+9,origin.y+24};
-        if(on)draw->AddCircleFilled(badge,9,theme::accent);else if(done)draw->AddCircleFilled(badge,9,theme::okSoft);else draw->AddCircle(badge,8.5f,theme::line2);
-        if(done)theme::check(draw,badge,9,theme::ok);
-        else{const std::string number=std::to_string(i+1);theme::write(draw,{badge.x-theme::extent(number,11,theme::bold).x/2,badge.y-7},on?theme::ink:theme::text2,number,11,theme::bold);}
-        theme::write(draw,{x+12+18+7,origin.y+15},on?theme::text:theme::text2,names[i]);
-        x+=widths[i];
+        theme::write(draw,{x+12,origin.y+13},on||hovered?theme::text:theme::text2,names[i]);
+        if(on)draw->AddRectFilled({x+8,origin.y+height-2},{x+tab-8,origin.y+height},theme::accent);
+        x+=tab;
     }
     const int target=catalog_.is_object()?catalog_.value("target_images",0):0,done=catalog_.is_object()?catalog_.value("reviewed_target_images",0):0;
-    const std::string count=grouped(done)+" / "+grouped(target);
-    const std::string saved=busy()?busyLabel_:!frames_.empty()&&current().dirty?"저장 대기":"자동 저장됨";
     float right=origin.x+width-14;
-    right-=theme::extent(saved,theme::caption).x;theme::write(draw,{right,origin.y+16},busy()?theme::hold:theme::text3,saved,theme::caption);
-    right-=18+120;draw->AddRectFilled({right,origin.y+22},{right+120,origin.y+26},theme::bg4,2);
-    if(target&&done)draw->AddRectFilled({right,origin.y+22},{right+std::max(2.f,120.f*done/target),origin.y+26},theme::ok,2);
-    right-=10+theme::extent(count,theme::caption,theme::mono).x;theme::write(draw,{right,origin.y+16},theme::text,count,theme::caption,theme::mono);
-    right-=8+theme::extent("확인한 이미지",theme::caption).x;theme::write(draw,{right,origin.y+16},theme::text2,"확인한 이미지",theme::caption);
+    ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,{10,5});
+    const float help=theme::extent("단축키",theme::caption).x+20;right-=help;
+    ImGui::SetCursorScreenPos({right,origin.y+9});
+    if(ImGui::Button("단축키",{help,26})||shortcutsWanted_){ImGui::OpenPopup("##shortcuts");shortcutsWanted_=false;}
+    shortcutsPopup({right+help,origin.y+height});
+    ImGui::PopStyleVar();ImGui::PopFont();
+    const bool dirty=!frames_.empty()&&current().dirty;
+    const std::string saved=busy()?busyLabel_:dirty?"저장 대기":"저장됨";
+    right-=20+theme::extent(saved,theme::caption).x;theme::write(draw,{right,origin.y+14},busy()||dirty?theme::hold:theme::text3,saved,theme::caption);
+    draw->AddCircleFilled({right-9,origin.y+22},3,busy()||dirty?theme::hold:theme::ok);
+    const std::string count="검수 "+grouped(done)+" / "+grouped(target);
+    right-=34+120;draw->AddRectFilled({right,origin.y+20},{right+120,origin.y+24},theme::bg4,2);
+    if(target&&done)draw->AddRectFilled({right,origin.y+20},{right+std::max(2.f,120.f*done/target),origin.y+24},theme::ok,2);
+    right-=10+theme::extent(count,theme::caption,theme::mono).x;theme::write(draw,{right,origin.y+14},theme::text,count,theme::caption,theme::mono);
     ImGui::SetCursorScreenPos(after);
+}
+// The key list lives here instead of in hint lines all over the screens.
+void Application::shortcutsPopup(ImVec2 below) {
+    static const char* const rows[][2]={{"E","세 장 확인하고 다음 미검수 장면"},{"Shift+E","크게 보는 카메라 한 장만 확인"},{"Q","보류"},{"N","다음 미검수 장면"},
+        {"A / D","이전 / 다음 장면"},{"Backspace","이전에 보던 장면으로"},{"1 / 2 / 3","그 카메라를 크게"},{"Tab / Shift+Tab","다음 / 이전 공"},
+        {"방향키","선택한 공의 그 방향 경계를 1픽셀 바깥으로"},{"Shift+방향키","1픽셀 안으로"},{"V / S / B / P / R","선택 / AI 분할 / 브러시 / 폴리곤 / 박스"},
+        {"왼쪽 / 오른쪽 클릭","더하기 / 빼기"},{"[ / ]","브러시 굵기"},{"Enter / Esc","윤곽 반영 / 취소, 선택 해제, 세 장 보기"},{"M / X","마스크 채움 / 박스 표시"},
+        {"F / Z","화면 맞춤 / 선택한 공으로"},{"O / Delete","일부 가림 / 공 삭제"},{"Ctrl+Z / Ctrl+S","되돌리기 / 저장"},{"휠 / 가운데 끌기","확대 / 이동"}};
+    ImGui::SetNextWindowPos({below.x,below.y+4},ImGuiCond_Always,{1,0});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{16,12});
+    if(ImGui::BeginPopup("##shortcuts")){
+        auto draw=ImGui::GetWindowDrawList();const ImVec2 origin=ImGui::GetCursorScreenPos();
+        float keyWidth=0;for(const auto& row:rows)keyWidth=std::max(keyWidth,theme::extent(row[0],theme::caption,theme::mono).x);
+        float y=origin.y;
+        for(const auto& row:rows){
+            theme::write(draw,{origin.x,y},theme::text,row[0],theme::caption,theme::mono);
+            theme::write(draw,{origin.x+keyWidth+18,y},theme::text2,row[1],theme::caption);
+            y+=22;
+        }
+        ImGui::Dummy({keyWidth+18+300,y-origin.y});
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar();
+}
+// A folded panel: a thin strip whose button opens it again. Returns true when clicked.
+bool Application::collapsedStrip(const char* id, bool& open, bool pointsRight, float height) {
+    const ImVec2 origin=ImGui::GetCursorScreenPos();auto draw=ImGui::GetWindowDrawList();
+    ImGui::Dummy({26,height});
+    draw->AddLine({pointsRight?origin.x+25.5f:origin.x+.5f,origin.y},{pointsRight?origin.x+25.5f:origin.x+.5f,origin.y+height},theme::line);
+    ImGui::SetCursorScreenPos({origin.x+2,origin.y+8});
+    const bool clicked=ImGui::InvisibleButton(id,{22,26});
+    if(ImGui::IsItemHovered())draw->AddRectFilled({origin.x+2,origin.y+8},{origin.x+24,origin.y+34},theme::bg3,4);
+    theme::icon(draw,pointsRight?theme::Icon::Right:theme::Icon::Left,{origin.x+13,origin.y+21},11,theme::text2);
+    if(clicked)open=true;
+    return clicked;
 }
 void Application::errorBar() {
     const float width=ImGui::GetContentRegionAvail().x;const ImVec2 origin=ImGui::GetCursorScreenPos();
@@ -581,12 +622,12 @@ void Application::draw(){
         ImGui::EndChild();
     }
     else if(page_==Page::Review){
-        const float width=ImGui::GetContentRegionAvail().x,list=width<1500?232.f:300.f,side=width<1500?296.f:344.f;
-        ImGui::BeginChild("QueuePane",{list,body});queue();ImGui::EndChild();ImGui::SameLine(0,0);
+        const float width=ImGui::GetContentRegionAvail().x,list=listOpen_?(width<1500?232.f:300.f):26.f,side=sideOpen_?(width<1500?296.f:344.f):26.f;
+        ImGui::BeginChild("QueuePane",{list,body});if(listOpen_)queue();else collapsedStrip("##openList",listOpen_,true,body);ImGui::EndChild();ImGui::SameLine(0,0);
         ImGui::PushStyleColor(ImGuiCol_ChildBg,theme::bg0);
         ImGui::BeginChild("ReviewPane",{width-list-side,body},0,ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);reviewPane();ImGui::EndChild();
         ImGui::PopStyleColor();ImGui::SameLine(0,0);
-        ImGui::BeginChild("SidePane",{side,body});sidePanel();ImGui::EndChild();
+        ImGui::BeginChild("SidePane",{side,body});if(sideOpen_)sidePanel();else collapsedStrip("##openSide",sideOpen_,false,body);ImGui::EndChild();
         keys();
     }
     else{

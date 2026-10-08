@@ -124,7 +124,11 @@ void Application::queue() {
     theme::write(draw, {origin.x + 12, origin.y + 10}, theme::text, "장면 목록", theme::base, theme::bold);
     int total = 0; for (const auto& row : rows_) total += !row.header;
     const std::string count = "장면 " + grouped(total) + "개";
-    theme::write(draw, {origin.x + width - 13 - theme::extent(count, theme::caption).x, origin.y + 12}, theme::text3, count, theme::caption);
+    theme::write(draw, {origin.x + width - 40 - theme::extent(count, theme::caption).x, origin.y + 12}, theme::text3, count, theme::caption);
+    ImGui::SetCursorScreenPos({origin.x + width - 34, origin.y + 8});
+    if (ImGui::InvisibleButton("##fold", {22, 26})) listOpen_ = false;
+    if (ImGui::IsItemHovered()) { draw->AddRectFilled({origin.x + width - 34, origin.y + 8}, {origin.x + width - 12, origin.y + 34}, theme::bg3, 4); ImGui::SetTooltip("목록 접기"); }
+    theme::icon(draw, theme::Icon::Left, {origin.x + width - 23, origin.y + 21}, 11, theme::text2);
     static const char* filters[] = {"전체", "미검수", "보류", "확인됨"};
     ImGui::SetCursorScreenPos({origin.x + 12, origin.y + 38});
     if (theme::segmented("##filter", filters, 4, &filter_, nullptr, 24, width - 25)) { rowsDirty_ = true; scrollToCurrent_ = true; }
@@ -157,13 +161,13 @@ void Application::queue() {
                 const bool clicked = ImGui::InvisibleButton("##row", {rowWidth, height}), hovered = ImGui::IsItemHovered();
                 ImGui::PopID();
                 const bool here = row.scene == scene_;
-                if (here) { list->AddRectFilled(p, {p.x + rowWidth, p.y + height}, theme::accentSoft); list->AddRectFilled(p, {p.x + 3, p.y + height}, theme::accent); }
+                if (here) { list->AddRectFilled(p, {p.x + rowWidth, p.y + height}, theme::rgb(0x5b9dff, 64)); list->AddRect({p.x + .5f, p.y + .5f}, {p.x + rowWidth - .5f, p.y + height - .5f}, theme::rgb(0x5b9dff, 150)); list->AddRectFilled(p, {p.x + 4, p.y + height}, theme::accent); }
                 else if (hovered) list->AddRectFilled(p, {p.x + rowWidth, p.y + height}, theme::bg2);
                 const ImVec2 a{p.x + 12, p.y + 4.5f}, b{a.x + 60, a.y + 45};
                 if (const GLuint id = thumb(row.thumb, row.color)) list->AddImageRounded(ImTextureRef(ImTextureID(id)), a, b, {0, 0}, {1, 1}, IM_COL32_WHITE, 3);
                 else list->AddRectFilled(a, b, theme::bg3, 3);
                 const std::string frame = "프레임 " + padded(row.index, 4);
-                theme::write(list, {p.x + 82, p.y + 9}, theme::text, frame, theme::sub);
+                theme::write(list, {p.x + 82, p.y + 9}, theme::text, frame, theme::sub, here ? theme::bold : nullptr);
                 char seconds[24]; std::snprintf(seconds, sizeof seconds, "%.2f초", row.seconds);
                 if (rowWidth > 260) theme::write(list, {p.x + 88 + theme::extent(frame, theme::sub).x, p.y + 11}, theme::text3, seconds, 11);
                 float x = p.x + 82;
@@ -244,7 +248,7 @@ void Application::reviewPane() {
     ImGui::Dummy(avail);
     const float x = origin.x + 12, width = avail.x - 24;
     sceneBar({x, origin.y + 10}, width);
-    const float top = origin.y + 58, height = avail.y - 58 - 8 - 34 - 6;
+    const float top = origin.y + 58, height = avail.y - 58 - 10;
     const auto spans = tileSpans(editor_ ? camera_ : -1, width);
     for (int slot = 0; slot < 3; ++slot) {
         const ImVec2 pos{x + spans[slot].x, top}, size{spans[slot].width, height};
@@ -255,13 +259,17 @@ void Application::reviewPane() {
         else smallTile(slot, pos, size);
         ImGui::PopID();
     }
-    hintBar({x, origin.y + avail.y - 40}, width);
 }
 void Application::sceneBar(ImVec2 pos, float width) {
     auto draw = ImGui::GetWindowDrawList();
     const auto& scene = catalog_["scenes"][scene_];
     const std::string recording = "촬영 " + padded(scene.value("recording_number", 0), 2), frame = "프레임 " + padded(scene.value("index", 0), 4);
     float x = pos.x + 2;
+    ImGui::SetCursorScreenPos({x, pos.y + 7});
+    if (ImGui::InvisibleButton("##back", {26, 26}) && !history_.empty()) later_ = [this] { back(); };
+    if (ImGui::IsItemHovered() && !history_.empty()) { draw->AddRectFilled({x, pos.y + 7}, {x + 26, pos.y + 33}, theme::bg3, 5); ImGui::SetTooltip("이전에 보던 장면으로 (Backspace)"); }
+    theme::icon(draw, theme::Icon::Left, {x + 13, pos.y + 20}, 12, history_.empty() ? theme::line2 : theme::text2);
+    x += 34;
     theme::write(draw, {x, pos.y + 10}, theme::text3, recording, theme::title); x += theme::extent(recording, theme::title).x + 8;
     theme::icon(draw, theme::Icon::Right, {x + 5, pos.y + 21}, 11, theme::text3); x += 18;
     theme::write(draw, {x, pos.y + 10}, theme::text, frame, theme::title, theme::bold); x += theme::extent(frame, theme::title, theme::bold).x + 12;
@@ -277,34 +285,17 @@ void Application::sceneBar(ImVec2 pos, float width) {
     ImGui::PopFont();
     right -= 100 + theme::extent("표시 밝기", theme::caption).x;
     theme::write(draw, {right, pos.y + 12}, theme::text3, "표시 밝기", theme::caption);
-    auto pill = [&](const char* label, const char* key, bool& value) {
-        const float w = 10 + theme::extent(label, theme::caption).x + 8 + 20 + 8;
-        right -= w + 8;
-        ImGui::SetCursorScreenPos({right, pos.y + 6});
-        if (ImGui::InvisibleButton(label, {w, 28})) value = !value;
-        draw->AddRectFilled({right, pos.y + 6}, {right + w, pos.y + 34}, value ? theme::bg3 : theme::bg1, 6);
-        draw->AddRect({right, pos.y + 6}, {right + w, pos.y + 34}, value ? theme::line2 : theme::line, 6);
-        theme::write(draw, {right + 10, pos.y + 12}, value ? theme::text : theme::text2, label, theme::caption);
-        theme::keycapAt(draw, {right + w - 28, pos.y + 11}, key);
+    auto option = [&](const char* label, bool& value) {
+        const float w = 21 + theme::extent(label, theme::caption).x;
+        right -= w + 16;
+        ImGui::SetCursorScreenPos({right, pos.y + 11});
+        theme::checkbox(label, &value);
     };
-    right -= 8;
-    pill("박스", "X", boxes_);
-    pill("마스크 채움", "M", masks_);
+    right -= 6;
+    option("박스", boxes_);
+    option("마스크 채움", masks_);
     draw->PushClipRect({x, pos.y}, {right - 10, pos.y + 40}, true);   // narrow windows cut the summary instead of running under the toggles
     theme::write(draw, {x, pos.y + 13}, theme::text3, meta, theme::caption);
-    draw->PopClipRect();
-}
-void Application::hintBar(ImVec2 pos, float width) {
-    auto draw = ImGui::GetWindowDrawList();
-    draw->PushClipRect(pos, {pos.x + width, pos.y + 34}, true);
-    float x = pos.x + 4;
-    auto item = [&](std::initializer_list<const char*> keys, const char* label) {
-        for (const char* key : keys) x += theme::keycapAt(draw, {x, pos.y + 8}, key) + 4;
-        theme::write(draw, {x + 2, pos.y + 9}, theme::text3, label, theme::caption);
-        x += theme::extent(label, theme::caption).x + 20;
-    };
-    if (!editor_) { item({"클릭"}, "그 카메라를 크게 열고 편집"); item({"Tab"}, "공을 하나씩 확대"); item({"E"}, "세 장 확인하고 다음 장면"); item({"Q"}, "보류"); item({"A", "D"}, "이전·다음 장면"); }
-    else { item({"Esc"}, "세 장 보기로"); item({"1", "2", "3"}, "카메라 전환"); item({"Tab"}, "다음 공"); item({"방향키"}, "박스 경계를 바깥으로 1픽셀"); item({"Shift"}, "안으로"); item({"Del"}, "공 삭제"); item({"E"}, "확인하고 다음 장면"); }
     draw->PopClipRect();
 }
 void Application::emptyTile(ImVec2 pos, ImVec2 size) {
@@ -397,22 +388,16 @@ void Application::cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact) {
             const bool asked = ImGui::InvisibleButton("##remove", {22, 22});
             removing = ImGui::IsItemHovered();
             if (asked) pendingRemove_ = {slot, order[i]};
-            if (hovered || removing) {
-                draw->AddRectFilled({b.x - 26, a.y + 4}, {b.x - 4, a.y + 26}, theme::rgb(0x0d0f12, removing ? 230 : 170), 5);
-                theme::icon(draw, theme::Icon::Trash, {b.x - 15, a.y + 15}, 12, removing ? theme::warn : theme::text);
-                if (removing) ImGui::SetTooltip("이 공 삭제");
-            }
+            draw->AddRectFilled({b.x - 26, a.y + 4}, {b.x - 4, a.y + 26}, theme::rgb(0x0d0f12, removing ? 235 : 150), 5);
+            theme::icon(draw, theme::Icon::Trash, {b.x - 15, a.y + 15}, 12, removing ? theme::warn : hovered ? theme::text : theme::text2);
+            if (removing) ImGui::SetTooltip("이 공 삭제");
         }
         ImGui::PopID();
         if (i >= int(order.size())) {
             dashedRect(draw, a, b, hovered ? theme::text3 : theme::line2);
             const bool roomy = cell > 120;
             theme::icon(draw, theme::Icon::Plus, {a.x + cell / 2, a.y + cell / 2 - (roomy ? 18 : 0)}, 14, theme::text3);
-            if (roomy) {
-                const char* first = "빠진 공 추가"; const char* second = "영상에서 공을 클릭";
-                theme::write(draw, {a.x + (cell - theme::extent(first, theme::caption).x) / 2, a.y + cell / 2}, theme::text3, first, theme::caption);
-                theme::write(draw, {a.x + (cell - theme::extent(second, theme::caption).x) / 2, a.y + cell / 2 + 18}, theme::text3, second, theme::caption);
-            }
+            if (roomy) theme::write(draw, {a.x + (cell - theme::extent("공 추가", theme::caption).x) / 2, a.y + cell / 2}, theme::text3, "공 추가", theme::caption);
             if (clicked) later_ = [this, slot] { focus(slot); if (editor_ && camera_ == slot) tool_ = Tool::Ai; };
             continue;
         }
@@ -615,27 +600,24 @@ void Application::canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size) {
         return clicked;
     };
     auto separator = [&] { draw->AddLine({railX + 10, y + 3}, {railX + 34, y + 3}, theme::line2); y += 9; };
-    for (const auto& item : tools) if (button(item.key, item.icon, item.key, tool_ == item.tool) && guard()) tool_ = item.tool;
+    static const char* const toolNames[] = {"선택 (V)", "AI 분할 (S)", "브러시 (B)", "폴리곤 (P)", "박스 (R)"};
+    for (int i = 0; i < 5; ++i) {
+        if (button(tools[i].key, tools[i].icon, tools[i].key, tool_ == tools[i].tool) && guard()) tool_ = tools[i].tool;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", toolNames[i]);
+    }
     separator();
     if (button("##undo", theme::Icon::Undo, "", false)) undo();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("되돌리기 (Ctrl+Z)");
     separator();
     if (button("##fit", theme::Icon::Fit, "F", false)) { selected_ = -1; frame.scale = 0; frame.repaint = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("화면 맞춤 (F)");
     if (button("##zoom", theme::Icon::Target, "Z", false)) frame.scale = 0;
-
-    char brush[96]; std::snprintf(brush, sizeof brush, "왼쪽 버튼으로 칠하기 · 오른쪽 버튼으로 지우기 · [ ] 굵기 %.0fpx", brushSize_);
-    const char* name = tool_ == Tool::Select ? "선택" : tool_ == Tool::Ai ? "AI 분할" : tool_ == Tool::Brush ? "브러시" : tool_ == Tool::Polygon ? "폴리곤" : "박스";
-    const char* hint = tool_ == Tool::Select ? "공을 클릭 · 빈 곳을 끌면 화면 이동 · 방향키로 박스 경계 1픽셀"
-        : tool_ == Tool::Ai ? "왼쪽 클릭 포함 · 오른쪽 클릭 제외 · 끌어서 박스 지정 · Enter 반영"
-        : tool_ == Tool::Brush ? brush : tool_ == Tool::Polygon ? "둘레를 따라 클릭 · 오른쪽 클릭으로 마지막 점 취소 · Enter 닫기" : "끌어서 사각형 · 마스크 없이 박스만 저장";
-    const float nameWidth = theme::extent(name, theme::caption, theme::bold).x, hintWidth = theme::extent(hint, theme::caption).x;
-    const float stripWidth = std::min(12 + nameWidth + 10 + hintWidth + 12, size.x - 66 - 200);
-    if (stripWidth > 120) {
-        const ImVec2 p{pos.x + 64, pos.y + 10};
-        draw->AddRectFilled(p, {p.x + stripWidth, p.y + 36}, glass, 8); draw->AddRect(p, {p.x + stripWidth, p.y + 36}, theme::line2, 8);
-        draw->PushClipRect(p, {p.x + stripWidth - 8, p.y + 36}, true);
-        theme::write(draw, {p.x + 12, p.y + 10}, theme::text, name, theme::caption, theme::bold);
-        theme::write(draw, {p.x + 22 + nameWidth, p.y + 10}, theme::text2, hint, theme::caption);
-        draw->PopClipRect();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("선택한 공으로 (Z)");
+    if (tool_ == Tool::Brush) {   // the only tool with a setting
+        char brush[32]; std::snprintf(brush, sizeof brush, "굵기 %.0fpx", brushSize_);
+        const ImVec2 p{pos.x + 64, pos.y + 10};const float w = theme::extent(brush, theme::caption).x + 20;
+        draw->AddRectFilled(p, {p.x + w, p.y + 28}, glass, 6); draw->AddRect(p, {p.x + w, p.y + 28}, theme::line2, 6);
+        theme::write(draw, {p.x + 10, p.y + 6}, theme::text2, brush, theme::caption);
     }
     char percent[32], ratio[64];
     std::snprintf(percent, sizeof percent, "%.0f%%", frame.scale * 100); std::snprintf(ratio, sizeof ratio, "원본 1픽셀 = 화면 %.1f픽셀", frame.scale);
@@ -687,7 +669,7 @@ void Application::sidePanel() {
     const ImVec2 origin = ImGui::GetCursorScreenPos(), avail = ImGui::GetContentRegionAvail();
     ImGui::Dummy(avail);
     draw->AddLine({origin.x + .5f, origin.y}, {origin.x + .5f, origin.y + avail.y}, theme::line);
-    const float actions = 134, pad = 14, width = avail.x - 2 * pad;
+    const float actions = 112, pad = 14, width = avail.x - 2 * pad;
 
     ImGui::SetCursorScreenPos({origin.x + 1, origin.y});
     ImGui::BeginChild("SideScroll", {avail.x - 1, avail.y - actions});
@@ -698,7 +680,11 @@ void Application::sidePanel() {
     int total = 0; for (const auto& frame : frames_) total += int(frame.annotation["boxes"].size());
     theme::write(list, {x, base.y + y}, theme::text2, "이 장면의 공", theme::caption, theme::bold);
     const std::string count = std::to_string(total) + "개";
-    theme::write(list, {x + width - theme::extent(count, theme::caption).x, base.y + y}, theme::text3, count, theme::caption);
+    theme::write(list, {x + width - 28 - theme::extent(count, theme::caption).x, base.y + y}, theme::text3, count, theme::caption);
+    ImGui::SetCursorScreenPos({x + width - 20, base.y + y - 6});
+    if (ImGui::InvisibleButton("##fold", {22, 26})) sideOpen_ = false;
+    if (ImGui::IsItemHovered()) { list->AddRectFilled({x + width - 20, base.y + y - 6}, {x + width + 2, base.y + y + 20}, theme::bg3, 4); ImGui::SetTooltip("패널 접기"); }
+    theme::icon(list, theme::Icon::Right, {x + width - 9, base.y + y + 7}, 11, theme::text2);
     y += 26;
     for (int slot = 0; slot < int(frames_.size()); ++slot) {
         const auto& frame = frames_[slot];
@@ -779,14 +765,7 @@ void Application::sidePanel() {
         y += 24;
         ImGui::SetCursorScreenPos({x, base.y + y});
         nudgePad(frame, box);
-        y += 246;
-        float kx = x;
-        for (const char* key : {"↑", "↓", "←", "→"}) kx += theme::keycapAt(list, {kx, base.y + y}, key) + 4;
-        theme::write(list, {kx + 2, base.y + y + 1}, theme::text3, "그 방향 경계를 바깥으로 1픽셀", theme::caption);
-        y += 24;
-        kx = x + theme::keycapAt(list, {x, base.y + y}, "Shift") + 6;
-        theme::write(list, {kx, base.y + y + 1}, theme::text3, "+ 방향키는 안으로 1픽셀 · 마스크는 그대로", theme::caption);
-        y += 30;
+        y += 246 + 8;
     } else {
         theme::write(list, {x, base.y + y}, theme::text2, "장면 요약", theme::caption, theme::bold);
         y += 26;
@@ -801,11 +780,8 @@ void Application::sidePanel() {
             theme::write(list, {x + width - theme::extent(value, theme::caption).x, base.y + y + 2}, theme::text2, value, theme::caption);
             y += 30;
         }
+        if (!same) { theme::warning(list, {x + 6, base.y + y + 14}, 11, theme::warn); theme::write(list, {x + 17, base.y + y + 6}, theme::warn, "카메라마다 공 개수가 다릅니다", theme::caption); y += 26; }
         y += 6;
-        theme::write(list, {x, base.y + y}, same ? theme::text3 : theme::warn, same ? "세 카메라의 공 개수가 같습니다." : "카메라마다 공 개수가 다릅니다. 빠진 공이 없는지 확인하세요.", theme::caption);
-        y += 20;
-        theme::write(list, {x, base.y + y}, theme::text3, "공을 클릭하면 박스 보정과 속성이 여기에 나옵니다.", theme::caption);
-        y += 26;
     }
     ImGui::SetCursorPos({0, y}); ImGui::Dummy({1, 1});
     ImGui::EndChild();
@@ -822,7 +798,6 @@ void Application::sidePanel() {
     ImGui::SameLine(0, 8);
     if (ImGui::Button("다음 미검수   N", {(width - 8) / 2, 32})) later_ = [this] { if (guard()) nextUnreviewed(); };
     ImGui::PopFont();
-    theme::write(draw, {origin.x + pad, top + 108}, theme::text3, "확인한 뒤 수정하면 그 이미지의 확인이 풀립니다.", theme::caption);
 }
 // Edge steppers around a picture of the box. Buttons and arrow keys share Application::nudge().
 void Application::nudgePad(FrameView& frame, Json& box) {

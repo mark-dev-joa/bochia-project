@@ -44,6 +44,8 @@ public:
     void selectSceneForCapture(int recordingNumber, int index);
     void selectForCapture(int camera, int rank);     // rank = left-to-right position of the ball in that camera
     void askRemoveForCapture(int camera, int rank);  // opens the delete dialog for that ball
+    void foldForCapture() { listOpen_ = sideOpen_ = summaryOpen_ = false; }
+    void showShortcutsForCapture() { shortcutsWanted_ = true; }
     bool selfCheckStep(int step);                    // scripted logic checks for the hidden smoke run
     bool stageCheckStep(int step);                   // the same for split and export; needs a fully confirmed project
     const std::string& error() const { return error_; }
@@ -78,6 +80,7 @@ private:
     std::vector<std::vector<cv::Point>> proposalContours_;
     std::vector<std::string> picked_;                            // recordings ticked on the split page
     BallRef pendingRemove_;                                      // ball whose deletion the dialog is asking about
+    std::vector<int> history_;                                   // scenes shown before the current one, for the back button
     int scene_ = 0, camera_ = 0, selected_ = 0, filter_ = 0, pageCaptureScene_ = -1, aheadScene_ = -1, aheadAuto_ = -1,
         targetScenes_ = -1, emptyDrafts_ = 0,                    // counted from the catalog when targetScenes_ < 0
         aheadHits_ = 0;                                          // scenes shown from a fetch made ahead; the self-test reads it
@@ -87,7 +90,10 @@ private:
          scrollToCurrent_ = false, rowsDirty_ = true, panning_ = false,
          stale_ = false,                                         // labels changed on the engine while another page was open
          aheadDirty_ = true,                                     // the scene to fetch ahead may have changed
-         planEdited_ = false;                                    // the split plan on screen is not the one the engine has stored
+         planEdited_ = false,                                    // the split plan on screen is not the one the engine has stored
+         listOpen_ = true, sideOpen_ = true, summaryOpen_ = true, // the collapsible panels
+         backing_ = false,                                       // the next scene load comes from the back button
+         shortcutsWanted_ = false;                               // open the shortcut list on the next frame
     float brightness_ = 1.65f, brushSize_ = 6, radius_ = 16;
     Json proposal_;
     cv::Mat brushMask_;
@@ -121,6 +127,7 @@ private:
     void save(std::function<void()> next = {});
     void review(Scope scope, bool hold, int member = -1);
     void nextUnreviewed();
+    void back();
     int nextUnreviewedIndex() const;
     std::filesystem::path preferencesPath() const;
     void rememberPosition() const;
@@ -136,6 +143,8 @@ private:
     void polygonProposal();
     void keys();
     void topBar();
+    void shortcutsPopup(ImVec2 below);
+    bool collapsedStrip(const char* id, bool& open, bool pointsRight, float height);
     void errorBar();
     void statusBar();
     void rebuildRows();
@@ -156,7 +165,6 @@ private:
     void paintMarks(FrameView& frame, const std::function<ImVec2(double, double)>& at, Paint paint);
     void viewImage(int slot, ImVec2 a, ImVec2 b, bool compact);
     void emptyTile(ImVec2 pos, ImVec2 size);
-    void hintBar(ImVec2 pos, float width);
     void canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size);
     void sidePanel();
     void nudgePad(FrameView& frame, Json& box);

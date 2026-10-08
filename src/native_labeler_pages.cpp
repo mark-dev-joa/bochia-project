@@ -17,18 +17,25 @@ const ImU32 splitColors[] = {theme::train, theme::val, theme::test};
 
 struct Stage { ImVec2 body, side; float bodyWidth, sideWidth; };
 // Reserves the visible area and returns where the two columns start. Everything is placed with absolute positions.
-Stage stageFrame() {
+// The summary column folds to a thin strip; sideWidth is 0 then and the pages skip it.
+Stage stageFrame(bool& open) {
     const ImVec2 origin = ImGui::GetCursorScreenPos(), avail = ImGui::GetContentRegionAvail();
     ImGui::Dummy(avail);
-    const float side = avail.x < 1300 ? 300.f : 372.f;
-    return {origin, {origin.x + avail.x - side, origin.y}, avail.x - side - 22, side};
+    auto draw = ImGui::GetWindowDrawList();
+    const float side = open ? (avail.x < 1300 ? 300.f : 372.f) : 0.f;
+    const ImVec2 at{origin.x + avail.x - 24, origin.y + 2};
+    ImGui::SetCursorScreenPos(at);
+    if (ImGui::InvisibleButton("##summary", {24, 26})) open = !open;
+    if (ImGui::IsItemHovered()) { draw->AddRectFilled(at, {at.x + 24, at.y + 26}, theme::bg3, 4); ImGui::SetTooltip(open ? "요약 접기" : "요약 펼치기"); }
+    theme::icon(draw, open ? theme::Icon::Right : theme::Icon::Left, {at.x + 12, at.y + 13}, 11, theme::text2);
+    return {origin, {origin.x + avail.x - side, origin.y + 34}, avail.x - (open ? side + 22 : 34), side};
 }
 // Draw-list content does not grow the scroll area, so reserve it down to the lowest thing drawn.
 void reserve(const Stage& stage, float bottom) { ImGui::SetCursorScreenPos({stage.body.x, bottom}); ImGui::Dummy({1, 1}); }
 // Returns the y below the heading. The subtitle wraps instead of running under the buttons on a narrow window.
-float heading(ImDrawList* draw, ImVec2 pos, float width, const char* title, const char* subtitle) {
-    theme::write(draw, pos, theme::text, title, theme::heading, theme::bold);
-    return pos.y + 31 + theme::paragraph(draw, {pos.x, pos.y + 31}, theme::text2, subtitle, width, theme::sub) + 15;
+float heading(ImDrawList* draw, ImVec2 pos, float width, const char* title) {
+    (void)width; theme::write(draw, pos, theme::text, title, theme::heading, theme::bold);
+    return pos.y + 46;
 }
 void panel(ImDrawList* draw, ImVec2 a, ImVec2 b) { draw->AddRectFilled(a, b, theme::bg1, 10); draw->AddRect(a, b, theme::line, 10); }
 void card(ImDrawList* draw, ImVec2 pos, float width, const std::string& label, const std::string& value, const std::string& note, ImU32 swatch = 0, ImFont* font = nullptr) {
@@ -120,9 +127,9 @@ void progressBar(ImDrawList* draw, ImVec2 pos, float width, int done, int total,
 
 void Application::preparePage() {
     auto draw = ImGui::GetWindowDrawList();
-    const auto stage = stageFrame();
+    const auto stage = stageFrame(summaryOpen_);
     const auto& stats = catalog_["stats"]; const auto& recordings = catalog_["recordings"]; const auto& summary = catalog_["summary"];
-    float y = heading(draw, stage.body, stage.bodyWidth, "데이터 준비", "현장 PC에서 복사해 온 촬영의 자동 초안과 반복 장면 필터 상태를 확인하고 검수를 시작합니다.");
+    float y = heading(draw, stage.body, stage.bodyWidth, "데이터 준비");
     int images = 0, cameras = 0;
     for (const auto& recording : recordings) { cameras = std::max(cameras, int(recording["cameras"].size())); for (const auto& camera : recording["cameras"]) images += camera.value("count", 0); }
     if (targetScenes_ < 0) {   // counted once per catalog change, not per frame
@@ -189,6 +196,7 @@ void Application::preparePage() {
 
     // summary column
     float sy = stage.side.y;
+    if (stage.sideWidth > 0) {
     {
         SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "다음 단계");
         box.mark(running ? Mark::Info : Mark::Ok, running ? "자동 초안을 만드는 중입니다" : "자동 초안과 반복 장면 필터가 준비됐습니다",
@@ -198,7 +206,6 @@ void Application::preparePage() {
         if (theme::primaryButton("검수 시작", {box.inner(), 44})) later_ = [this] { openPage(Page::Review); };
         ImGui::PopFont();
         box.y += 52;
-        box.text("자동 초안은 초안입니다. 사람이 확인한 이미지만 학습 데이터로 내보냅니다.");
         sy = box.close();
     }
     {
@@ -225,7 +232,6 @@ void Application::preparePage() {
         };
         ImGui::PopFont();
         box.y += 38;
-        box.text("사람이 고친 이미지는 자동 초안이 덮어쓰지 않습니다. EfficientSAM-Ti를 이 PC에서 실행합니다.");
         sy = box.close();
     }
     if (!recordings.empty()) {
@@ -239,11 +245,11 @@ void Application::preparePage() {
         sy = box.close();
     }
     {
-        SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "원본 보호");
-        box.mark(Mark::Ok, "원본 촬영 파일은 읽기만 합니다", "복사, 수정, 삭제하지 않습니다.");
+        SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "경로");
         box.text("입력 " + utf8(config_.source));
         box.text("라벨 " + utf8(config_.project));
         sy = box.close();
+    }
     }
     reserve(stage, std::max(y, sy));
 }
@@ -278,12 +284,12 @@ void Application::confirmSplit() {
 }
 void Application::splitPage() {
     auto draw = ImGui::GetWindowDrawList();
-    const auto stage = stageFrame();
+    const auto stage = stageFrame(summaryOpen_);
     const auto& stats = catalog_["stats"]; const auto& recordings = catalog_["recordings"];
     const float left = stage.body.x, right = left + stage.bodyWidth;
     static const char* const mergeLabel = "선택한 촬영을 같은 배치로 묶기"; static const char* const proposeLabel = "배분안 다시 제안";
     const float mergeWidth = theme::extent(mergeLabel, theme::sub).x + 28, proposeWidth = theme::extent(proposeLabel, theme::sub).x + 28;
-    float y = heading(draw, stage.body, stage.bodyWidth - mergeWidth - proposeWidth - 28, "분할", "확인한 이미지를 학습·검증·평가로 나눕니다. 같은 촬영의 카메라와 연속 프레임은 항상 같은 쪽에 들어갑니다.");
+    float y = heading(draw, stage.body, stage.bodyWidth - mergeWidth - proposeWidth - 28, "분할");
     const int done = catalog_.value("reviewed_target_images", 0), target = catalog_.value("target_images", 0);
     const bool complete = target > 0 && done == target, confirmed = splitConfirmed();
 
@@ -298,7 +304,7 @@ void Application::splitPage() {
     draw->AddRect({left, y}, {right, y + 36}, complete ? theme::rgb(0x3dd68c, 100) : theme::rgb(0x5b9dff, 115), 10);
     if (complete) theme::check(draw, {left + 22, y + 18}, 11, theme::ok); else theme::icon(draw, theme::Icon::Info, {left + 22, y + 18}, 14, theme::accent);
     theme::write(draw, {left + 42, y + 10}, theme::text, complete ? "검수 대상 " + grouped(target) + "장을 모두 확인했습니다"
-        : "확인한 이미지 " + grouped(done) + " / " + grouped(target) + "장 · 배분안은 지금 볼 수 있고, 확정은 모두 확인한 뒤에 할 수 있습니다", theme::sub);
+        : "확인한 이미지 " + grouped(done) + " / " + grouped(target) + "장 · 모두 확인하면 확정할 수 있습니다", theme::sub);
     y += 36 + 12;
 
     // ratio
@@ -391,6 +397,7 @@ void Application::splitPage() {
 
     // summary column
     float sy = stage.side.y;
+    if (stage.sideWidth > 0) {
     {
         SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "점검");
         for (const auto& check : splitChecks(stats, splits_, groups_)) box.mark(check.ok ? Mark::Ok : Mark::Warn, check.text, check.detail);
@@ -408,9 +415,8 @@ void Application::splitPage() {
         ImGui::PopFont();
         box.y += 52;
         if (!complete) box.text("확인하지 않은 이미지 " + grouped(target - done) + "장이 남아 있어 아직 확정할 수 없습니다.", theme::hold);
-        box.text("확정하면 이 배정과 라벨 상태가 데이터 버전으로 기록됩니다. 확정한 뒤 라벨을 고치면 다시 확정해야 내보낼 수 있습니다.");
-        box.text("평가에 넣은 촬영은 첫 학습 뒤에는 바꾸지 않습니다. 모든 모델을 같은 평가 세트로 비교하기 위해서입니다.");
         sy = box.close();
+    }
     }
     reserve(stage, std::max(y, sy));
 }
@@ -432,9 +438,9 @@ void Application::startExport() {
 }
 void Application::exportPage() {
     auto draw = ImGui::GetWindowDrawList();
-    const auto stage = stageFrame();
+    const auto stage = stageFrame(summaryOpen_);
     const auto& stats = catalog_["stats"];
-    float y = heading(draw, stage.body, stage.bodyWidth, "내보내기", "확정한 데이터 버전을 학습용 폴더로 내보냅니다. 확인하지 않은 이미지는 들어가지 않습니다.");
+    float y = heading(draw, stage.body, stage.bodyWidth, "내보내기");
     const bool confirmed = splitConfirmed();
     const std::string fingerprint = dataVersion();
     auto totals = splitTotals(stats, splits_);
@@ -509,7 +515,7 @@ void Application::exportPage() {
     } else if (exportStatus_.contains("error")) theme::write(draw, {left + 146, y + 14}, theme::warn, exportStatus_.value("error", ""), theme::caption);
     else if (exportStatus_.contains("result")) theme::write(draw, {left + 146, y + 14}, theme::ok, "완료 · " + exportStatus_["result"].value("path", ""), theme::caption);
     // Measured on the 2026-10-02 recordings: a PNG is about 1.8MB in color and 2.2MB in mono.
-    else if (confirmed) theme::write(draw, {left + 146, y + 14}, theme::text3, "이미지 " + grouped(all) + "장 · 예상 크기 약 " + std::to_string(std::max(1, int(std::lround(all * 2.1 / 1024)))) + "GB · 끝나면 이 화면에 결과가 남습니다", theme::caption);
+    else if (confirmed) theme::write(draw, {left + 146, y + 14}, theme::text3, "이미지 " + grouped(all) + "장 · 약 " + std::to_string(std::max(1, int(std::lround(all * 2.1 / 1024)))) + "GB", theme::caption);
     else theme::write(draw, {left + 146, y + 14}, theme::text3, "분할을 확정한 뒤에 내보낼 수 있습니다.", theme::caption);
     draw->PopClipRect();
     y += 44;
@@ -518,6 +524,7 @@ void Application::exportPage() {
     std::string latest = exportStatus_.contains("result") ? exportStatus_["result"].value("path", "") : "";
     if (latest.empty() && !exports_.empty()) latest = exports_[0].value("path", "");
     float sy = stage.side.y;
+    if (stage.sideWidth > 0) {
     {
         SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "학습 시작");
         theme::write(draw, {box.left(), box.y}, theme::text, "YOLO26", theme::sub, theme::bold);
@@ -529,9 +536,8 @@ void Application::exportPage() {
             ImGui::PopStyleVar(); ImGui::PopFont();
         }
         box.y += 24;
-        if (latest.empty()) box.text("먼저 내보내세요. 내보낸 폴더의 data.yaml로 학습 명령을 만듭니다.");
+        if (latest.empty()) box.text("내보낸 뒤에 명령이 나옵니다.");
         else {
-            box.text("가장 최근에 내보낸 폴더의 data.yaml을 지정합니다");
             const float height = theme::paragraph(draw, {box.left() + 12, box.y + 10}, theme::text, command, box.inner() - 24, theme::caption, theme::mono);
             draw->AddRect({box.left(), box.y}, {box.left() + box.inner(), box.y + height + 20}, theme::line2, 8);
             box.y += height + 32;
@@ -563,10 +569,6 @@ void Application::exportPage() {
         }
         sy = box.close();
     }
-    {
-        SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "비교 원칙");
-        box.mark(Mark::Ok, "모든 모델은 같은 데이터 버전으로 학습하고 같은 평가 세트로 비교합니다", "라벨이나 배정이 하나라도 바뀌면 데이터 버전이 달라집니다.");
-        sy = box.close();
     }
     reserve(stage, std::max(y, sy));
 }
