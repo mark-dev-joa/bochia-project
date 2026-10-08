@@ -8,6 +8,7 @@
 #include "labeler_native.hpp"
 #include "labeler_selection.hpp"
 #include "labeler_util.hpp"
+#include "native_labeler_view.hpp"
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <zstd.h>
@@ -17,6 +18,7 @@
 #include <iostream>
 #include <atomic>
 #include <chrono>
+#include <random>
 #include <numeric>
 #include <set>
 #include <stdexcept>
@@ -70,10 +72,11 @@ struct Fixture {
     // Rewrites one camera as an uncompressed BGR8 colour stream showing the given 8x6 image on all three frames.
     void colourCamera(const char* session, const char* camera, const cv::Mat& bgr) const {
         const std::string pixels(reinterpret_cast<const char*>(bgr.data), bgr.total() * 3);
+        const int size = int(bgr.total() * 3);
         std::string index;
         for (int frame = 0; frame < 3; ++frame) {
-            Json info = {{"width", 8}, {"height", 6}, {"padding_x", 0}, {"padding_y", 0}, {"pixel_format", 0x02180015}, {"size", 144}, {"stored_size", 144},
-                         {"offset", frame * 144}, {"codec", 0}, {"filter_stride", 0}, {"status", 0}, {"host_ns", 1000 + frame * 100 + (std::string(camera) == "camera-1" ? 5 : 0)}};
+            Json info = {{"width", bgr.cols}, {"height", bgr.rows}, {"padding_x", 0}, {"padding_y", 0}, {"pixel_format", 0x02180015}, {"size", size}, {"stored_size", size},
+                         {"offset", frame * size}, {"codec", 0}, {"filter_stride", 0}, {"status", 0}, {"host_ns", 1000 + frame * 100 + (std::string(camera) == "camera-1" ? 5 : 0)}};
             index += info.dump() + (frame < 2 ? "\n" : "");
         }
         writeFile(source / session / camera / "frames.raw", pixels + pixels + pixels);
@@ -184,6 +187,30 @@ void assistTests() {
     check(ballColor(patchOf({8, 12, 32}), disc) == "red" && ballColor(patchOf({42, 58, 68}), disc) == "white" && ballColor(patchOf({10, 11, 10}), disc) == "black" && ballColor(patchOf({60, 22, 10}), disc) == "blue", "ball colours wrong");
     check(ballColor(cv::Mat(20, 20, CV_8UC1, cv::Scalar(0)), disc) == "unknown", "a mono image must have no colour");
     check(boundedNumber(3, 0, 10, "x") == 3 && fails([&] { boundedNumber(Json(true), 0, 10, "값"); }, "값: 0~10 사이") && fails([&] { boundedNumber(11, 0, 10, "값"); }), "bounded number wrong");
+    // refineCircle: a bright disc on a dark floor is measured to a fraction of a pixel; nothing is measured on a flat image
+    cv::Mat floor(240, 320, CV_8UC3, cv::Scalar(40, 45, 50)); cv::circle(floor, {160, 120}, 20, cv::Scalar(230, 230, 230), -1, cv::LINE_8);
+    cv::Mat discMask(240, 320, CV_8UC1, cv::Scalar(0)); cv::circle(discMask, {160, 120}, 20, cv::Scalar(1), -1, cv::LINE_8);
+    const CircleFit fit = refineCircle(floor, discMask);
+    check(fit.ok && std::abs(fit.x - 160.5) < .2 && std::abs(fit.y - 120.5) < .2 && std::abs(fit.r - 20) < .3 && fit.coverage > .9 && fit.residual < .5, "circle fit wrong: " + std::to_string(fit.x) + "," + std::to_string(fit.y) + " r " + std::to_string(fit.r) + " ok " + std::to_string(fit.ok));   // cv::circle paints the pixels whose centres lie within 20
+    cv::Mat shrunk(240, 320, CV_8UC1, cv::Scalar(0)); cv::circle(shrunk, {159, 119}, 18, cv::Scalar(1), -1, cv::LINE_8);   // a draft mask a pixel or two inside the ball
+    const CircleFit fromShrunk = refineCircle(floor, shrunk);
+    check(fromShrunk.ok && std::abs(fromShrunk.r - 20) < .3 && std::abs(fromShrunk.x - 160.5) < .2, "the fit must find the image edge, not the mask edge");
+    check(!refineCircle(cv::Mat(240, 320, CV_8UC3, cv::Scalar(40, 45, 50)), discMask).ok, "a flat image must not give a circle");
+    Json refinedBox = {{"bbox", {140, 100, 41, 41}}, {"segmentation", encodeMask(discMask)}, {"occluded", false}, {"source", "auto_sam"}};
+    Json refinedBox2 = refinedBox; refinedBox2["bbox"] = {141, 101, 39, 39}; refinedBox2["segmentation"] = encodeMask(shrunk); refinedBox2["area"] = cv::countNonZero(shrunk);
+    check(refinable(refinedBox2) && refineBallBox(refinedBox2, floor) && !refinable(refinedBox2), "the shrunk draft was not refined");
+    check(refinedBox2["circle"].size() == 3 && std::abs(refinedBox2["detection_bbox"][0].get<double>() - 140.5) < .3 && std::abs(refinedBox2["detection_bbox"][2].get<double>() - 40) < .6, "refined box wrong: " + refinedBox2["detection_bbox"].dump());
+    const cv::Mat measured = decodeMaskChecked(refinedBox2["segmentation"], 320, 240);
+    check(std::abs(refinedBox2["bbox"][0].get<double>() - 140.5) <= .5 && std::abs(refinedBox2["bbox"][2].get<double>() - 40) <= 1 && cv::countNonZero(measured != discMask) <= 16 && refinedBox2["area"] == cv::countNonZero(measured), "the mask must become the measured disc: " + refinedBox2["bbox"].dump());
+    check(refineBallBox(refinedBox, floor), "the exact disc was not refined");
+    const Json kept = validateBoxes(Json::array({refinedBox}), 320, 240)[0];
+    check(kept["circle"] == refinedBox["circle"] && kept.contains("detection_bbox"), "validation must keep the circle");
+    Json occludedBox = refinedBox; occludedBox["occluded"] = true; occludedBox.erase("circle");
+    Json drawn = refinedBox; drawn["source"] = "manual_polygon"; drawn.erase("circle");
+    check(!refinable(occludedBox) && !refinable(drawn), "occluded and hand-drawn balls must not be refined");
+    const Json edited = maskAnnotation(shrunk, kept, "manual_brush");
+    check(!edited.contains("circle") && !edited.contains("detection_bbox"), "a new outline must drop the measured circle");
+    check(validateBoxes(Json::array({{{"bbox", {1, 1, 3, 3}}, {"circle", {1, 2}}}}), 8, 6)[0].contains("circle") == false, "a malformed circle must be dropped");
     std::cout << "PASS: RLE checks, contours, overlap, polygon proposal, box validation and ball colour\n";
 }
 
@@ -454,6 +481,31 @@ void nativeTests() {
         Json monoPayload = polygonPayload; monoPayload["camera"] = "camera-1";
         check(!assistance(project3, noModel, "polygon", monoPayload)["proposals"][0].contains("color"), "a polygon on a mono camera must not propose a colour");
     }
+    // refine-circles: the boxes of drafted balls come from the image's edge; hand-drawn and occluded balls are left alone
+    {
+        Fixture fifth;
+        cv::Mat floor(100, 120, CV_8UC3, cv::Scalar(40, 45, 50)); cv::circle(floor, {60, 50}, 20, cv::Scalar(230, 230, 230), -1, cv::LINE_8);
+        fifth.colourCamera("capture-a", "camera-0", floor);
+        Catalog catalog5(fifth.source); Project project5(catalog5, fifth.project, fifth.exports);
+        cv::Mat small(100, 120, CV_8UC1, cv::Scalar(0)); cv::circle(small, {59, 49}, 18, cv::Scalar(1), -1, cv::LINE_8);   // the draft stops short of the edge
+        const auto bounds = cv::boundingRect(small);
+        const Json draft = {{"bbox", {bounds.x, bounds.y, bounds.width, bounds.height}}, {"segmentation", encodeMask(small)}, {"occluded", false}, {"source", "auto_sam"}};
+        Json drawn = draft; drawn["source"] = "manual_polygon";
+        Json hidden = draft; hidden["occluded"] = true;
+        const std::string key5 = fifth.ids[0] + "/camera-0/0";
+        project5.state["frames"][key5] = {{"recording", fifth.ids[0]}, {"camera", "camera-0"}, {"index", 0}, {"width", 120}, {"height", 100}, {"boxes", {draft, drawn, hidden}}, {"reviewed", false}, {"human_touched", false}};
+        check(nativeCatalog(project5)["circleable"] == 1 && circleRefineStatus(project5)["status"] == "idle", "circleable count wrong");
+        const Json started = nativeAction(project5, "refine-circles", Json::object());
+        check(started["status"] == "running" && started["total"] == 1, "circle refinement did not start: " + started.dump());
+        for (int i = 0; i < 500 && circleRefineStatus(project5)["status"] == "running"; ++i) Sleep(10);
+        const Json status5 = circleRefineStatus(project5);
+        check(status5["status"] == "complete" && status5["balls"] == 1 && status5["skipped"] == 0, "circle refinement did not complete: " + status5.dump());
+        const Json& boxes5 = project5.state["frames"][key5]["boxes"];
+        check(boxes5[0].contains("circle") && std::abs(boxes5[0]["circle"][2].get<double>() - 20) < .3 && std::abs(boxes5[0]["detection_bbox"][0].get<double>() - 40.5) < .3 && std::abs(boxes5[0]["bbox"][0].get<double>() - 40.5) <= .5 && std::abs(boxes5[0]["bbox"][2].get<double>() - 40) <= 1 && boxes5[0]["segmentation"] != draft["segmentation"] && boxes5[0]["source"] == "auto_sam", "the drafted ball must get the measured disc and box: " + boxes5[0].dump().substr(0, 160));
+        check(!boxes5[1].contains("circle") && !boxes5[2].contains("circle"), "hand-drawn and occluded balls were refined");
+        check(project5.state["revision"] == 0 && project5.state["auto_revision"] == 1 && project5.state["circle_refine"]["balls"] == 1 && nativeCatalog(project5)["circleable"] == 0 && !project5.state.contains("native_split"), "circle refinement record wrong");
+        check(project5.frame(fifth.ids[0], "camera-0", 0)["boxes"][0]["color"] == "white", "the shown frame must still colour the ball");
+    }
     // test_thumbnail_is_a_small_cached_jpeg
     const cv::Mat thumb = thumbnail(project, fixture.ids[0], "camera-0", 0, 32);
     check(thumb.rows == 24 && thumb.cols == 32 && thumb.data == thumbnail(project, fixture.ids[0], "camera-0", 0, 32).data, "thumbnail size or cache wrong");
@@ -630,7 +682,7 @@ void samTests() {
     auto fake = std::make_unique<FakeSam>(); FakeSam* model = fake.get();
     BallAssist assist(fs::path("missing"), std::move(fake));
     check(assist.status()["ready"] == true && assist.status()["model_files"] == false && assist.status()["model"] == "EfficientSAM-Ti", "status with an injected model wrong");
-    cv::Mat image(140, 180, CV_8UC3, cv::Scalar(10, 40, 200));
+    cv::Mat image(140, 180, CV_8UC3, cv::Scalar(10, 40, 200)); cv::circle(image, {90, 70}, 10, cv::Scalar(230, 230, 230), -1, cv::LINE_8);   // a ball where the stand-in model puts its disc
     const Json positive = {{"x", 90}, {"y", 70}, {"label", 1}};
     const Json first = assist.segment(image, "same-frame", Json::array({positive}), 14);
     const Json second = assist.segment(image, "same-frame", Json::array({positive, {{"x", 112}, {"y", 70}, {"label", 0}}}), 14);
@@ -649,6 +701,12 @@ void samTests() {
     check(boxed["bbox"] == first["bbox"] && model->calls == 1, "box prompt must reuse the embedding");
     assist.segment(image, "other-frame", Json::array({positive}), 14);
     check(model->calls == 2, "another frame must encode again");
+    // A proposal of the engine's segment tool is measured again from the image: the dragged box fixture of the Python test
+    // has no real ball, so this uses the disc above through the dispatcher's own refinement.
+    {
+        Json proposal = first; refineBallBox(proposal, image);
+        check(proposal.contains("circle") && std::abs(proposal["circle"][0].get<double>() - 90.5) < .4 && std::abs(proposal["circle"][2].get<double>() - 10.5) < .7 && proposal.contains("detection_bbox"), "the proposal's circle must follow the image: " + proposal.value("circle", Json()).dump());
+    }
     // test_assist_proposals_do_not_mutate_or_cross_cameras, the parts without a model
     BallAssist none(fs::path("missing-model"));
     check(none.status()["ready"] == false && none.status()["runtime"] == true, "missing model reported ready");
@@ -977,6 +1035,18 @@ int main(int argc, char** argv) try {
         std::cout << "seeds covered " << cache.covered() << " keys " << cache.seeded() << " total " << cache.seedCount() << " " << cache.method() << "\n";
         return 0;
     }
+    if (argc >= 4 && std::string(argv[1]) == "--refine") {
+        // Runs the circle refinement over a whole project copy and prints the counts and the time: --refine <source> <project>
+        Catalog catalog(fromUtf8(argv[2]));
+        const auto projectPath = fromUtf8(argv[3]);
+        Project project(catalog, projectPath, projectPath.parent_path() / "refine-exports");
+        const auto started = std::chrono::steady_clock::now();
+        std::cout << "circleable " << circleable(project) << "\n";
+        nativeAction(project, "refine-circles", Json::object());
+        while (circleRefineStatus(project)["status"] == "running") Sleep(200);
+        std::cout << circleRefineStatus(project).dump() << " seconds " << std::round(std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() * 10) / 10 << " circleable " << circleable(project) << "\n";
+        return 0;
+    }
     if (argc >= 4 && std::string(argv[1]) == "--auto") {
         // Parity with labeler_auto on a project copy: drafts every unlabelled frame with the real model and prints the counts.
         Catalog catalog(fromUtf8(argv[2]));
@@ -990,6 +1060,57 @@ int main(int argc, char** argv) try {
         Json summary = Json::object();
         for (const char* name : {"status", "done", "written", "preserved", "boxes", "sam_masks", "tracked_masks", "fallback_boxes", "seed_method", "workers"}) summary[name] = status.value(name, Json());
         std::cout << summary.dump() << " seconds " << std::round(std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() * 10) / 10 << "\n";
+        return 0;
+    }
+    if (argc >= 6 && std::string(argv[1]) == "--circle-eval") {
+        // Measures the Canny circle refinement on real balls: --circle-eval <source> <project> <count> <out.jsonl> [examples.png] [low high band]
+        Catalog catalog(fromUtf8(argv[2]));
+        const Json state = Json::parse(readFile(fromUtf8(argv[3])));
+        const int wanted = std::stoi(argv[4]);
+        const double low = argc > 7 ? std::stod(argv[7]) : 20, high = argc > 8 ? std::stod(argv[8]) : 60; const int band = argc > 9 ? std::stoi(argv[9]) : 3;
+        std::vector<std::string> keys; for (const auto& [key, frame] : state["frames"].items()) keys.push_back(key);
+        std::shuffle(keys.begin(), keys.end(), std::mt19937(3));
+        std::ofstream out(fromUtf8(argv[5]), std::ios::binary);
+        std::vector<cv::Mat> examples; int balls = 0;
+        for (const auto& key : keys) {
+            if (balls >= wanted) break;
+            const Json& frame = state["frames"][key];
+            if (frame["boxes"].empty()) continue;
+            const cv::Mat image = catalog.read(frame["recording"], frame["camera"], frame["index"]);
+            const bool colour = catalog.camera(frame["recording"], frame["camera"]).kind == "컬러";
+            for (size_t i = 0; i < frame["boxes"].size() && balls < wanted; ++i) {
+                const Json& box = frame["boxes"][i];
+                if (!box.contains("segmentation") || box.value("occluded", false)) continue;
+                const cv::Mat mask = decodeMaskChecked(box["segmentation"], frame["width"], frame["height"]);
+                std::vector<std::vector<cv::Point>> contours; cv::findContours(mask.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
+                std::vector<cv::Point> edge; for (const auto& c : contours) edge.insert(edge.end(), c.begin(), c.end());
+                const Circle before = fitCircle(edge);
+                const CircleFit after = refineCircle(image, mask, band, low, high);
+                out << Json{{"key", key}, {"box", i}, {"kind", colour ? "color" : "mono"}, {"bbox", box["bbox"]},
+                            {"mask", {{"x", before.x}, {"y", before.y}, {"r", before.r}}},
+                            {"fit", {{"x", after.x}, {"y", after.y}, {"r", after.r}, {"ok", after.ok}, {"coverage", after.coverage}, {"inliers", after.inliers}, {"points", after.points}, {"residual", after.residual}}}}.dump() << "\n";
+                ++balls;
+                if (argc > 6 && examples.size() < 16 && (examples.size() % 2 == 0) == colour) {
+                    const cv::Rect bounds = cv::boundingRect(mask); const int margin = 8;
+                    const cv::Rect crop = cv::Rect(bounds.x - margin, bounds.y - margin, bounds.width + 2 * margin, bounds.height + 2 * margin) & cv::Rect(0, 0, image.cols, image.rows);
+                    cv::Mat view; cv::resize(image(crop), view, {}, 6, 6, cv::INTER_NEAREST);
+                    if (view.channels() == 1) cv::cvtColor(view, view, cv::COLOR_GRAY2BGR);
+                    auto at = [&](double x, double y) { return cv::Point(int(std::lround((x - crop.x) * 6)), int(std::lround((y - crop.y) * 6))); };
+                    for (const auto& c : contours) { std::vector<cv::Point> poly; for (const auto& p : c) poly.push_back(at(p.x + .5, p.y + .5)); cv::polylines(view, poly, true, cv::Scalar(255, 255, 0), 1, cv::LINE_AA); }
+                    cv::circle(view, at(before.x + .5, before.y + .5), int(std::lround(before.r * 6)), cv::Scalar(0, 160, 255), 1, cv::LINE_AA);
+                    if (after.ok) cv::circle(view, at(after.x, after.y), int(std::lround(after.r * 6)), cv::Scalar(0, 220, 0), 1, cv::LINE_AA);
+                    cv::Mat tile(300, 300, CV_8UC3, cv::Scalar(20, 20, 20)); const cv::Rect place(0, 0, std::min(300, view.cols), std::min(300, view.rows)); view(place).copyTo(tile(place));
+                    cv::putText(tile, (colour ? "C " : "M ") + std::string(after.ok ? "ok" : "no") + " r " + std::to_string(int(std::lround(before.r * 10)) / 10.0).substr(0, 4) + ">" + std::to_string(int(std::lround(after.r * 10)) / 10.0).substr(0, 4), {4, 292}, cv::FONT_HERSHEY_SIMPLEX, .45, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+                    examples.push_back(tile);
+                }
+            }
+        }
+        if (argc > 6 && !examples.empty()) {
+            while (examples.size() % 4) examples.push_back(cv::Mat(300, 300, CV_8UC3, cv::Scalar(20, 20, 20)));
+            std::vector<cv::Mat> rows; for (size_t r = 0; r < examples.size(); r += 4) { cv::Mat row; cv::hconcat(std::vector<cv::Mat>(examples.begin() + r, examples.begin() + r + 4), row); rows.push_back(row); }
+            cv::Mat sheet; cv::vconcat(rows, sheet); cv::imwrite(utf8(fromUtf8(argv[6])), sheet);
+        }
+        std::cout << "balls " << balls << "\n";
         return 0;
     }
     utilTests();

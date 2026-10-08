@@ -33,6 +33,7 @@ public:
     Json exportStatus() const;                        // GET /api/export-status
     Json exports() const;                             // GET /api/native/exports → {"exports": [...]}
     Json colorFillStatus() const;                     // GET /api/native/color-fill
+    Json circleRefineStatus() const;                  // the background circle refinement
     Json autoStatus() const;                          // GET /api/auto-status → {"job", "summary"}
     Json autoStart();                                 // POST /api/auto-start
     Json autoStop();                                  // POST /api/auto-stop

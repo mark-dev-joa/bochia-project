@@ -83,8 +83,9 @@ Project::Project(const Catalog& source, const fs::path& project, const fs::path&
     }
 }
 Project::~Project() {
-    colorWorker.request_stop();
+    colorWorker.request_stop(); circleWorker.request_stop();
     if (colorWorker.joinable()) colorWorker.join();
+    if (circleWorker.joinable()) circleWorker.join();
     if (exportWorker.joinable()) exportWorker.join();
 }
 void Project::write(const Json& replacement) const { atomicJson(path, replacement, replacement.value("frames", Json::object()).size() < 128); }

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <random>
 #include <stdexcept>
 #include <utility>
 
@@ -95,6 +96,136 @@ Json polygonProposal(const Json& points, int width, int height) {
     return {{"bbox", {bounds.x, bounds.y, bounds.width, bounds.height}}, {"occluded", false}, {"source", "manual_polygon"},
             {"segmentation", encodeMask(mask)}, {"contours", maskContours(mask)}};
 }
+namespace {
+struct FitPoint { double x, y; };
+// Gauss-Newton on the geometric distance: a few steps from a good start are enough for a near-complete arc.
+void geometricFit(const std::vector<FitPoint>& points, double& cx, double& cy, double& r) {
+    for (int step = 0; step < 8; ++step) {
+        cv::Matx33d normal = cv::Matx33d::zeros(); cv::Vec3d rhs(0, 0, 0);
+        for (const auto& p : points) {
+            const double dx = p.x - cx, dy = p.y - cy, d = std::max(1e-9, std::hypot(dx, dy));
+            const double j[3] = {-dx / d, -dy / d, -1}, residual = d - r;
+            for (int a = 0; a < 3; ++a) { rhs[a] -= j[a] * residual; for (int b = 0; b < 3; ++b) normal(a, b) += j[a] * j[b]; }
+        }
+        cv::Vec3d delta;
+        if (!cv::solve(normal, rhs, delta, cv::DECOMP_SVD)) break;
+        cx += delta[0]; cy += delta[1]; r += delta[2];
+        if (std::abs(delta[0]) + std::abs(delta[1]) + std::abs(delta[2]) < 1e-4) break;
+    }
+}
+}
+CircleFit refineCircle(const cv::Mat& image, const cv::Mat& mask, int band, double low, double high) {
+    CircleFit fit; fit.low = low; fit.high = high;
+    const int area = cv::countNonZero(mask);
+    if (area < 12) return fit;
+    const cv::Rect bounds = cv::boundingRect(mask);
+    const double r0 = std::sqrt(area / CV_PI);
+    const cv::Moments moments = cv::moments(mask, true);
+    const double mx = moments.m10 / moments.m00, my = moments.m01 / moments.m00;
+    const int margin = std::max(6, int(std::ceil(r0 * .5)) + band);
+    const cv::Rect crop = cv::Rect(bounds.x - margin, bounds.y - margin, bounds.width + 2 * margin, bounds.height + 2 * margin) & cv::Rect(0, 0, image.cols, image.rows);
+    cv::Mat gray;
+    if (image.channels() == 3) cv::cvtColor(image(crop), gray, cv::COLOR_BGR2GRAY); else gray = image(crop).clone();
+    cv::GaussianBlur(gray, gray, {3, 3}, 0);
+    cv::Mat edges; cv::Canny(gray, edges, low, high, 3, true);
+    // Only the edges near the mask's outline count: not the seams inside the ball, not the floor further out.
+    const cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, {2 * band + 1, 2 * band + 1});
+    cv::Mat local = mask(crop), outer, inner, ring;
+    cv::dilate(local, outer, kernel); cv::erode(local, inner, kernel); cv::subtract(outer, inner, ring);
+    std::vector<FitPoint> points;
+    for (int y = 0; y < edges.rows; ++y) for (int x = 0; x < edges.cols; ++x) if (edges.at<uchar>(y, x) && ring.at<uchar>(y, x)) points.push_back({crop.x + x + .5, crop.y + y + .5});
+    fit.points = int(points.size());
+    if (points.size() < 8) return fit;
+    // RANSAC: the shadow under the ball and the floor's wood grain also leave edges in the band.
+    std::mt19937 random(7);
+    std::uniform_int_distribution<size_t> pick(0, points.size() - 1);
+    double bestX = 0, bestY = 0, bestR = 0; int bestCount = 0; double bestError = 1e18;
+    const double threshold = 1.0;
+    for (int iteration = 0; iteration < 300; ++iteration) {
+        const auto& a = points[pick(random)]; const auto& b = points[pick(random)]; const auto& c = points[pick(random)];
+        const double d = 2 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+        if (std::abs(d) < 1e-6) continue;
+        const double a2 = a.x * a.x + a.y * a.y, b2 = b.x * b.x + b.y * b.y, c2 = c.x * c.x + c.y * c.y;
+        const double ux = (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d, uy = (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d;
+        const double r = std::hypot(a.x - ux, a.y - uy);
+        if (r < .6 * r0 || r > 1.6 * r0 || std::hypot(ux - mx, uy - my) > .6 * r0) continue;
+        int count = 0; double error = 0;
+        for (const auto& p : points) { const double e = std::abs(std::hypot(p.x - ux, p.y - uy) - r); if (e <= threshold) { ++count; error += e; } }
+        if (count > bestCount || (count == bestCount && error < bestError)) { bestCount = count; bestError = error; bestX = ux; bestY = uy; bestR = r; }
+    }
+    if (bestCount < 6) return fit;
+    double cx = bestX, cy = bestY, r = bestR;
+    for (int round = 0; round < 2; ++round) {
+        std::vector<FitPoint> inliers;
+        for (const auto& p : points) if (std::abs(std::hypot(p.x - cx, p.y - cy) - r) <= threshold) inliers.push_back(p);
+        if (inliers.size() < 6) return fit;
+        geometricFit(inliers, cx, cy, r);
+    }
+    // Canny marks whole pixels, half a pixel inside a sharp rim on average. The rim's true place along each inlier's
+    // radial line is the vertex of a parabola through the gradient magnitude one pixel inward, at the pixel and one
+    // pixel outward; the circle is fitted once more through those sub-pixel points.
+    cv::Mat gx, gy, magnitude; cv::Sobel(gray, gx, CV_32F, 1, 0, 3); cv::Sobel(gray, gy, CV_32F, 0, 1, 3); cv::magnitude(gx, gy, magnitude);
+    auto sample = [&](double x, double y) {   // bilinear, continuous image coordinates (pixel i centred at i + .5)
+        const double fx = x - crop.x - .5, fy = y - crop.y - .5;
+        const int x0 = int(std::floor(fx)), y0 = int(std::floor(fy)); const double tx = fx - x0, ty = fy - y0;
+        auto at = [&](int px, int py) { return double(magnitude.at<float>(std::clamp(py, 0, magnitude.rows - 1), std::clamp(px, 0, magnitude.cols - 1))); };
+        return (at(x0, y0) * (1 - tx) + at(x0 + 1, y0) * tx) * (1 - ty) + (at(x0, y0 + 1) * (1 - tx) + at(x0 + 1, y0 + 1) * tx) * ty;
+    };
+    {
+        std::vector<FitPoint> refined;
+        for (const auto& p : points) {
+            const double d = std::hypot(p.x - cx, p.y - cy);
+            if (std::abs(d - r) > threshold || d < 1e-6) continue;
+            const double ux = (p.x - cx) / d, uy = (p.y - cy) / d;
+            const double before = sample(p.x - ux, p.y - uy), here = sample(p.x, p.y), beyond = sample(p.x + ux, p.y + uy);
+            const double curvature = before - 2 * here + beyond;
+            const double shift = std::abs(curvature) > 1e-6 ? std::clamp(.5 * (before - beyond) / curvature, -1.0, 1.0) : 0.0;
+            refined.push_back({p.x + shift * ux, p.y + shift * uy});
+        }
+        if (refined.size() >= 6) { geometricFit(refined, cx, cy, r); points = refined; }
+    }
+    std::vector<bool> sector(36, false); int inliers = 0; double residual = 0;
+    for (const auto& p : points) {
+        const double e = std::abs(std::hypot(p.x - cx, p.y - cy) - r);
+        if (e > threshold) continue;
+        ++inliers; residual += e;
+        sector[size_t((int(std::floor((std::atan2(p.y - cy, p.x - cx) + CV_PI) / (2 * CV_PI) * 36)) % 36 + 36) % 36)] = true;
+    }
+    fit.x = cx; fit.y = cy; fit.r = r; fit.inliers = inliers; fit.residual = inliers ? residual / inliers : 0;
+    fit.coverage = double(std::count(sector.begin(), sector.end(), true)) / 36;
+    fit.ok = inliers >= 12 && fit.coverage >= .5 && std::abs(r - r0) <= .35 * r0 && std::hypot(cx - mx, cy - my) <= .5 * r0;
+    return fit;
+}
+bool refinable(const Json& box) {
+    const auto source = box.value("source", "manual");
+    return box.contains("segmentation") && !box.value("occluded", false) && !box.contains("circle") && source != "manual" && source != "manual_brush" && source != "manual_polygon";
+}
+cv::Mat discMask(double x, double y, double r, int width, int height) {
+    cv::Mat disc(height, width, CV_8UC1, cv::Scalar(0));
+    const int x0 = std::max(0, int(std::floor(x - r - 1))), x1 = std::min(width - 1, int(std::ceil(x + r + 1)));
+    const int y0 = std::max(0, int(std::floor(y - r - 1))), y1 = std::min(height - 1, int(std::ceil(y + r + 1)));
+    for (int py = y0; py <= y1; ++py) for (int px = x0; px <= x1; ++px) if (std::hypot(px + .5 - x, py + .5 - y) <= r) disc.at<uchar>(py, px) = 1;
+    return disc;
+}
+bool refineBallBox(Json& box, const cv::Mat& image) {
+    if (!box.contains("segmentation")) return false;
+    const CircleFit fit = refineCircle(image, decodeMaskChecked(box["segmentation"], image.cols, image.rows));
+    if (!fit.ok) return false;
+    auto round4 = [](double value) { return std::nearbyint(value * 10000) / 10000; };
+    const double left = std::max(0.0, fit.x - fit.r), top = std::max(0.0, fit.y - fit.r);
+    const double right = std::min(double(image.cols), fit.x + fit.r), bottom = std::min(double(image.rows), fit.y + fit.r);
+    if (right - left < 1 || bottom - top < 1) return false;
+    const cv::Mat disc = discMask(fit.x, fit.y, fit.r, image.cols, image.rows);
+    if (cv::countNonZero(disc) < 4) return false;
+    const cv::Rect bounds = cv::boundingRect(disc);
+    box["segmentation"] = encodeMask(disc);   // the pixels inside the measured circle
+    box["bbox"] = {bounds.x, bounds.y, bounds.width, bounds.height};
+    if (box.contains("area")) box["area"] = cv::countNonZero(disc);
+    if (box.contains("contours")) box["contours"] = maskContours(disc);
+    box["detection_bbox"] = {round4(left), round4(top), round4(right - left), round4(bottom - top)};
+    box["circle"] = {round4(fit.x), round4(fit.y), round4(fit.r)};
+    return true;
+}
 Json validateBoxes(const Json& boxes, int width, int height) {
     if (!boxes.is_array() || boxes.size() > 500) throw std::runtime_error("공 박스 목록이 올바르지 않습니다.");
     static const char* sources[] = {"manual", "manual_brush", "efficientsam", "circle", "tracking", "manual_polygon", "auto_sam", "auto_tracking", "auto_geometry"};
@@ -109,6 +240,8 @@ Json validateBoxes(const Json& boxes, int width, int height) {
         Json item = {{"bbox", Json::array()}, {"occluded", occluded.get<bool>()}};
         for (const auto& value : box["bbox"]) item["bbox"].push_back(roundHalfEven(value.get<double>() * 10000) / 10000);
         if (box.contains("detection_bbox")) item["detection_bbox"] = validateBoxes(Json::array({{{"bbox", box["detection_bbox"]}}}), width, height)[0]["bbox"];   // independent of the mask
+        if (box.contains("circle") && box["circle"].is_array() && box["circle"].size() == 3 && finiteNumber(box["circle"][0]) && finiteNumber(box["circle"][1]) && finiteNumber(box["circle"][2]) && box["circle"][2].get<double>() > 0)
+            item["circle"] = {box["circle"][0].get<double>(), box["circle"][1].get<double>(), box["circle"][2].get<double>()};   // the ball measured from the image
         const Json color = box.value("color", Json("unknown"));
         if (!color.is_string() || (color != "unknown" && std::find(std::begin(ballColors), std::end(ballColors), color.get<std::string>()) == std::end(ballColors))) throw std::runtime_error("공 색상 속성이 올바르지 않습니다.");
         if (color != "unknown") item["color"] = color;

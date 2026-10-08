@@ -39,7 +39,7 @@ public:
     void draw();
     bool ready() const { return catalog_.is_object() && !frames_.empty(); }
     bool busy() const { return task_.valid(); }
-    bool settled() const { return !busy() && !thumbTask_.valid() && thumbWanted_.empty() && colorStatus_.value("status", "") != "running"; }
+    bool settled() const { return !busy() && !thumbTask_.valid() && thumbWanted_.empty() && colorStatus_.value("status", "") != "running" && circleStatus_.value("status", "") != "running"; }
     bool idle() const;                               // settled and nothing waiting to be saved; an open proposal does not count
     void showEditor(int camera = 0);
     void showPage(int page);
@@ -71,7 +71,8 @@ private:
     Configuration config_;
     std::shared_ptr<Engine> engine_;                             // the labels, the recordings and the models, in this process
     Json catalog_, groups_ = Json::object(), splits_ = Json::object(), autoStatus_ = Json::object(), exportStatus_ = Json::object(), exports_ = Json::array(),
-         colorStatus_ = Json::object();                          // the background colour fill
+         colorStatus_ = Json::object(),                          // the background colour fill
+         circleStatus_ = Json::object();                         // the background circle refinement
     std::vector<FrameView> frames_;
     std::future<JobResult> task_, ahead_;
     std::function<void(JobResult)> completion_;
@@ -98,7 +99,8 @@ private:
          backing_ = false,                                       // the next scene load comes from the back button
          shortcutsWanted_ = false,                               // open the shortcut list on the next frame
          growAsk_ = false,                                       // the grow-masks dialog is open
-         colorAsk_ = false;                                      // the fill-colours dialog is open
+         colorAsk_ = false,                                      // the fill-colours dialog is open
+         circleAsk_ = false;                                     // the refine-circles dialog is open
     float brightness_ = 1.65f, brushSize_ = 6, radius_ = 16;
     Json proposal_;
     cv::Mat brushMask_;
@@ -147,6 +149,8 @@ private:
     void growMasks(int pixels);
     void confirmColors();                            // the dialog behind colorAsk_
     void fillColors();
+    void confirmCircles();                           // the dialog behind circleAsk_
+    void refineCircles();
     void segment(cv::Point2d point, bool negative);
     void segmentBox(cv::Rect2d box);
     void polygonProposal();

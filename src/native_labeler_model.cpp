@@ -36,7 +36,7 @@ Json maskAnnotation(const cv::Mat& mask, const Json& previous, const std::string
     auto bounds = cv::boundingRect(mask);
     box["bbox"] = {bounds.x, bounds.y, bounds.width, bounds.height};
     box["segmentation"] = encodeMask(mask); box["area"] = cv::countNonZero(mask); box["source"] = source;
-    box.erase("detection_bbox"); box.erase("contours");
+    box.erase("detection_bbox"); box.erase("contours"); box.erase("circle");   // a new outline is measured again
     box["occluded"] = box.value("occluded", false);
     return box;
 }

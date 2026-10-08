@@ -23,6 +23,7 @@ Json Engine::assistStatus() const { return assist_.status(); }
 Json Engine::exportStatus() const { std::lock_guard guard(project_.lock); return project_.job; }
 Json Engine::exports() const { return {{"exports", exportHistory(project_)}}; }
 Json Engine::colorFillStatus() const { return boccia::labeler::colorFillStatus(project_); }
+Json Engine::circleRefineStatus() const { return boccia::labeler::circleRefineStatus(project_); }
 Json Engine::autoStatus() const { return {{"job", auto_.status()}, {"summary", project_.summary()}}; }
 Json Engine::autoStart() { return auto_.start(); }
 Json Engine::autoStop() { return auto_.stop(); }

@@ -275,6 +275,34 @@ void Application::confirmColors(){
     }
     ImGui::PopStyleVar(2);
 }
+// Measures every masked ball's outline again from the image. The dialog says how many balls that is.
+void Application::confirmCircles(){
+    if(!circleAsk_)return;
+    if(!ImGui::IsPopupOpen("##refine-circles"))ImGui::OpenPopup("##refine-circles");
+    const auto viewport=ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({viewport->WorkPos.x+viewport->WorkSize.x/2,viewport->WorkPos.y+viewport->WorkSize.y/2},ImGuiCond_Appearing,{.5f,.5f});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{22,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,10});
+    if(ImGui::BeginPopupModal("##refine-circles",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
+        ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted("공 둘레를 영상에서 다시 재기");ImGui::PopFont();
+        ImGui::Text("공 %s개의 가장자리를 Canny로 찾아 원을 맞추고, 그 원으로 검출 박스를 정합니다.",grouped(catalog_.value("circleable",0)).c_str());
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"마스크는 그대로 두고 박스와 원만 바뀝니다. 가려진 공, 손으로 그린 윤곽, 원이 맞지 않는 공은 건너뜁니다. 그동안 계속 작업할 수 있습니다.");ImGui::PopFont();
+        ImGui::Dummy({0,4});
+        bool close=false;
+        ImGui::PushFont(theme::bold,theme::px(theme::base));
+        if(theme::primaryButton("다듬기  Enter",{140,34})||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{refineCircles();};close=true;}
+        ImGui::PopFont();ImGui::SameLine();
+        if(ImGui::Button("취소  Esc",{110,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
+        if(close){circleAsk_=false;ImGui::CloseCurrentPopup();}
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(2);
+}
+void Application::refineCircles(){
+    if(!guard())return;
+    if(!frames_.empty()&&current().dirty){save([this]{refineCircles();});return;}
+    const auto engine=engine_;
+    launch("둘레 다듬기 시작",[engine]{return JobResult{engine->nativeAction("refine-circles",Json::object()),{}};},[this](JobResult result){circleStatus_=result.data;message_="공 둘레를 다시 재는 중입니다. 끝나면 알려 드립니다.";});
+}
 void Application::fillColors(){
     if(!guard())return;
     if(!frames_.empty()&&current().dirty){save([this]{fillColors();});return;}
@@ -382,13 +410,14 @@ void Application::tick(){
     }
     pumpThumbs();prefetch();
     if(ready()&&!busy()&&!pending()&&current().dirty&&Clock::now()-changed_>std::chrono::milliseconds(450)&&error_.empty())save();
-    const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running"||colorStatus_.value("status","")=="running";
+    const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running"||colorStatus_.value("status","")=="running"||circleStatus_.value("status","")=="running";
     if(activeJob&&ready()&&!busy()&&Clock::now()-poll_>std::chrono::seconds(3)&&error_.empty()&&!current().dirty&&!pending()){
         poll_=Clock::now();const auto engine=engine_;
-        launch("작업 상태 확인",[engine]{return JobResult{{{"auto",engine->autoStatus()},{"export",engine->exportStatus()},{"color",engine->colorFillStatus()},{"catalog",engine->nativeCatalog()}}, {}};},[this](JobResult result){
+        launch("작업 상태 확인",[engine]{return JobResult{{{"auto",engine->autoStatus()},{"export",engine->exportStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"catalog",engine->nativeCatalog()}}, {}};},[this](JobResult result){
             const auto oldRevision=catalog_["summary"].value("revision",0),oldAuto=catalog_["summary"].value("auto_revision",0);const bool exporting=exportStatus_.value("status","")=="running";
-            const bool coloring=colorStatus_.value("status","")=="running";
-            autoStatus_=result.data["auto"];exportStatus_=result.data["export"];colorStatus_=result.data["color"];updateCatalog(result.data["catalog"]);
+            const bool coloring=colorStatus_.value("status","")=="running",refining=circleStatus_.value("status","")=="running";
+            autoStatus_=result.data["auto"];exportStatus_=result.data["export"];colorStatus_=result.data["color"];circleStatus_=result.data["circle"];updateCatalog(result.data["catalog"]);
+            if(refining&&circleStatus_.value("status","")!="running"){message_=circleStatus_.value("status","")=="complete"?"공 "+grouped(circleStatus_.value("balls",0))+"개의 둘레를 다시 쟀습니다. 건너뛴 공 "+grouped(circleStatus_.value("skipped",0))+"개.":"둘레 다듬기가 실패했습니다.";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
             if(coloring&&colorStatus_.value("status","")!="running"){message_=colorStatus_.value("status","")=="complete"?"공 "+grouped(colorStatus_.value("filled",0))+"개의 색상을 채웠습니다.":"색상 채우기가 실패했습니다.";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
             if(oldRevision!=catalog_["summary"].value("revision",0)||oldAuto!=catalog_["summary"].value("auto_revision",0)){if(page_==Page::Review)loadScene(scene_,editor_,camera_);else stale_=true;}
             if(exporting&&exportStatus_.value("status","")!="running"){message_=exportStatus_.contains("error")?"내보내기가 실패했습니다. 내보내기 화면에서 원인을 확인하세요.":"내보내기를 마쳤습니다.";refreshStage();}
@@ -411,7 +440,9 @@ void Application::repaint(FrameView& f){
         auto mask=decodeMask(boxes[i]["segmentation"],f.image.cols,f.image.rows);
         cv::findContours(mask.clone(),f.contours[i],cv::RETR_EXTERNAL,cv::CHAIN_APPROX_SIMPLE);
         std::vector<cv::Point> edge;for(const auto& contour:f.contours[i])edge.insert(edge.end(),contour.begin(),contour.end());
-        f.circles[i]=fitCircle(edge);
+        // The circle measured from the image, when the ball has one; otherwise a fit to the mask's outline.
+        if(boxes[i].contains("circle")){const auto& c=boxes[i]["circle"];f.circles[i]={c[0].get<double>()-.5,c[1].get<double>()-.5,c[2].get<double>()};}
+        else f.circles[i]=fitCircle(edge);
         if(active&&replacement_==i&&!proposal_.is_null())continue;
         overlay.setTo(active&&editor_&&i==selected_?cv::Scalar(255,216,74,13):cv::Scalar(46,230,208,51),mask);
     }
@@ -518,12 +549,12 @@ bool Application::stageCheckStep(int step) {
 // The stage pages show per-recording counts that only the full catalog carries.
 void Application::refreshStage(){
     if(busy())return;const auto engine=engine_;
-    launch("현황 새로 읽기",[engine]{return JobResult{{{"catalog",engine->nativeCatalog()},{"exports",engine->exports()},{"export",engine->exportStatus()},{"auto",engine->autoStatus()},{"color",engine->colorFillStatus()}},{}};},
+    launch("현황 새로 읽기",[engine]{return JobResult{{{"catalog",engine->nativeCatalog()},{"exports",engine->exports()},{"export",engine->exportStatus()},{"auto",engine->autoStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()}},{}};},
         [this](JobResult result){
             const auto revision=catalog_["summary"].value("revision",0),automatic=catalog_["summary"].value("auto_revision",0);
             updateCatalog(result.data["catalog"]);
             if(revision!=catalog_["summary"].value("revision",0)||automatic!=catalog_["summary"].value("auto_revision",0))stale_=true;
-            exports_=result.data["exports"].value("exports",Json::array());exportStatus_=result.data["export"];autoStatus_=result.data["auto"];colorStatus_=result.data["color"];
+            exports_=result.data["exports"].value("exports",Json::array());exportStatus_=result.data["export"];autoStatus_=result.data["auto"];colorStatus_=result.data["color"];circleStatus_=result.data["circle"];
             // Nothing assigned yet: show the plan the engine would make, so the split page never opens empty.
             const bool unassigned=std::all_of(splits_.begin(),splits_.end(),[](const Json& split){return split.get<std::string>()=="unassigned";});
             if(page_==Page::Split&&unassigned&&!splits_.empty())proposeSplit();
@@ -531,7 +562,7 @@ void Application::refreshStage(){
 }
 void Application::keys() {
     auto& io=ImGui::GetIO();
-    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||pendingRemove_.camera>=0||growAsk_||colorAsk_)return;   // an open dialog owns the keys
+    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||pendingRemove_.camera>=0||growAsk_||colorAsk_||circleAsk_)return;   // an open dialog owns the keys
     auto pressed=[](ImGuiKey key){return ImGui::IsKeyPressed(key,false);};
     if(pressed(ImGuiKey_Escape)){
         if(pending())cancel();
@@ -694,6 +725,7 @@ void Application::draw(){
     confirmRemoval();
     confirmGrowth();
     confirmColors();
+    confirmCircles();
     ImGui::PopStyleVar();
     ImGui::End();
     if(later_){auto action=std::move(later_);later_=nullptr;action();}

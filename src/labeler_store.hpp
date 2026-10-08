@@ -38,6 +38,7 @@ public:
     Json state;
     Json job = {{"status", "idle"}};    // the export job
     Json colorJob = {{"status", "idle"}};
+    Json circleJob = {{"status", "idle"}};
     std::map<std::string, cv::Mat> thumbnails;   // "recording/camera/index@width"
     mutable SelectionFile selection;    // its sidecar cache refreshes on read
     Json summary() const;
@@ -50,6 +51,7 @@ public:
     void write(const Json& replacement) const;
     std::thread exportWorker;           // declared last: joined before anything above goes away
     std::jthread colorWorker;
+    std::jthread circleWorker;
 };
 std::vector<std::pair<std::string, Json>> selectedReviewed(const Json& snapshot);
 }

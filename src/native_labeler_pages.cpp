@@ -262,6 +262,27 @@ void Application::preparePage() {
         if (fill.is_object()) box.text("채움 · 공 " + grouped(fill.value("balls", 0)) + "개 · " + fill.value("at", "").substr(0, 10));
         sy = box.close();
     }
+    {
+        // The box of a ball from the image's own edge: Canny around the mask, a circle through the edge (2026-10-08 user request).
+        SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "공 둘레 (Canny 원)");
+        const auto refine = catalog_.value("circle_refine", Json());
+        const bool refining = circleStatus_.value("status", "") == "running";
+        const int remaining = catalog_.value("circleable", 0);
+        if (refining) {
+            box.text("재는 중 · " + grouped(circleStatus_.value("done", 0)) + " / " + grouped(circleStatus_.value("total", 0)) + "장", theme::text);
+            progressBar(draw, {box.left(), box.y}, box.inner(), circleStatus_.value("done", 0), circleStatus_.value("total", 0), theme::accent); box.y += 14;
+        } else {
+            box.text(remaining ? "아직 안 잰 공 " + grouped(remaining) + "개" : "모든 공의 둘레를 쟀습니다", theme::text);
+            ImGui::PushFont(nullptr, theme::px(theme::caption));
+            ImGui::SetCursorScreenPos({box.left(), box.y});
+            if (ImGui::Button("원으로 박스 다듬기", {box.inner(), 30}) && remaining) circleAsk_ = true;
+            ImGui::PopFont();
+            box.y += 36;
+        }
+        if (circleStatus_.value("status", "") == "error") box.text(circleStatus_.value("error", ""), theme::warn);
+        if (refine.is_object()) box.text("다듬음 · 공 " + grouped(refine.value("balls", 0)) + "개 · 건너뜀 " + grouped(refine.value("skipped", 0)) + "개 · " + refine.value("at", "").substr(0, 10));
+        sy = box.close();
+    }
     if (!recordings.empty()) {
         SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "카메라");
         for (const auto& camera : recordings[0]["cameras"]) {
