@@ -6,6 +6,7 @@
 #include <cmath>
 #include <map>
 #include <set>
+#include <string>
 #include <mutex>
 #include <thread>
 
@@ -66,7 +67,7 @@ Json transfer(const Json& confirmed, const Json& drafts, const cv::Mat& image, d
 }
 // The repeated frames whose confirmed representative they do not yet carry (or all of them, on request), and with
 // carry the review targets after a confirmed frame whose draft holds fewer balls than it.
-std::vector<Target> plan(const Project& project, bool force, bool carry, int& representatives, int& duplicates, int& pending, int& done, int& carries) {
+std::vector<Target> plan(const Project& project, bool force, bool carry, const std::set<std::string>& only, int& representatives, int& duplicates, int& pending, int& done, int& carries) {
     std::vector<Target> targets; representatives = duplicates = pending = done = carries = 0;
     const Json view = project.selection.view(project.state["frames"]);
     const Json& decisions = view["frames"]; const Json& frames = project.state["frames"];
@@ -82,13 +83,17 @@ std::vector<Target> plan(const Project& project, bool force, bool carry, int& re
                 const Json& frame = *found;
                 const FrameInfo& info = stream.frames[size_t(index)];
                 if (truthy(frame.value("reviewed", Json(false))) || truthy(frame.value("propagated", Json(false)))) {
-                    if (frame.value("review_status", "") == "hold") { source = nullptr; continue; }
+                    if (frame.value("review_status", "") == "hold" || (!only.empty() && !only.count(key))) { source = nullptr; continue; }   // a confirmed frame ends the window; only the listed ones open one
                     sourceKey = key; source = &frame; sourceNs = info.hasHostNs ? info.hostNs : 0; sourceIndex = index; continue;
                 }
                 if (!source || humanWork(frame) || source->value("boxes", Json::array()).empty()) continue;
                 const bool near = info.hasHostNs && sourceNs ? info.hostNs - sourceNs <= 1500000000LL : index - sourceIndex <= 30;
                 if (!near) { source = nullptr; continue; }
                 if (decisions.contains(key) && !decisions[key].value("selected", true)) continue;   // a repeat: the propagation proper handles it
+                // A draft that the stereo matching seeded is trusted unless a ball is missing: a ball that moved since the
+                // confirmed frame must keep its new place. A draft without seeds follows the confirmed frame whenever it differs.
+                const int seeds = frame.contains("automatic") && frame["automatic"].is_object() ? frame["automatic"].value("seed_count", 0) : 0;
+                if (seeds > 0 && frame["boxes"].size() >= (*source)["boxes"].size()) continue;
                 if (consistent((*source)["boxes"], frame["boxes"])) continue;   // the draft already agrees with the confirmed frame
                 const std::string hash = sourceHash((*source)["boxes"]);
                 const Json carried = frame.contains("automatic") && frame["automatic"].is_object() ? frame["automatic"].value("carried", Json()) : Json();
@@ -103,6 +108,7 @@ std::vector<Target> plan(const Project& project, bool force, bool carry, int& re
         if (decision.value("selected", true)) continue;
         const std::string representative = decision.value("representative", key);
         if (representative == key || !frames.contains(key) || !frames.contains(representative)) continue;
+        if (!only.empty() && !only.count(representative)) continue;
         const Json& source = frames[representative];
         if (!truthy(source.value("reviewed", Json(false))) || source.value("review_status", "") != "reviewed") continue;
         const Json& frame = frames[key];
@@ -123,17 +129,19 @@ Json propagationStatus(const Project& project) { std::lock_guard guard(project.l
 Json propagationCounts(const Project& project) {
     std::lock_guard guard(project.lock);
     int representatives, duplicates, pending, done, carries;
-    plan(project, false, true, representatives, duplicates, pending, done, carries);
+    plan(project, false, true, {}, representatives, duplicates, pending, done, carries);
     return {{"representatives", representatives}, {"duplicates", duplicates}, {"pending", pending}, {"done", done}, {"carry", carries}};
 }
-Json startPropagation(Project& project, bool force, bool carry) {
+Json startPropagation(Project& project, bool force, bool carry, const Json& sources) {
     std::lock_guard guard(project.lock);
     if (project.propagationJob.value("status", "") == "running") throw std::runtime_error("이미 라벨을 전파하는 중입니다.");
+    std::set<std::string> only;
+    if (sources.is_array()) for (const auto& key : sources) if (key.is_string()) only.insert(key.get<std::string>());
     int representatives, duplicates, pending, done, carries;
-    std::vector<Target> targets = plan(project, force, carry, representatives, duplicates, pending, done, carries);
+    std::vector<Target> targets = plan(project, force, carry, only, representatives, duplicates, pending, done, carries);
     const double margin = project.state.value("circle_margin", defaultCircleMargin);
     project.propagationJob = {{"status", "running"}, {"run_id", localStamp() + "-" + randomHex(4)}, {"total", targets.size()}, {"done", 0},
-                              {"frames", 0}, {"balls", 0}, {"matched", 0}, {"copied", 0}, {"skipped", 0}, {"carried", 0}, {"force", force}, {"carry", carry}, {"started_at", utcIso()}};
+                              {"frames", 0}, {"balls", 0}, {"matched", 0}, {"copied", 0}, {"skipped", 0}, {"carried", 0}, {"force", force}, {"carry", carry}, {"live", !only.empty()}, {"started_at", utcIso()}};
     if (project.propagationWorker.joinable()) project.propagationWorker.join();
     project.propagationWorker = std::jthread([&project, targets = std::move(targets), margin](std::stop_token stop) {
         try {

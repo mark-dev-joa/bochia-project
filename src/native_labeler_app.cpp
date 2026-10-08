@@ -576,6 +576,14 @@ void Application::confirmMissing(){
     ImGui::PopStyleVar(2);
 }
 // Confirmed labels carried to the repeated frames the filter left out of the review (2026-10-08 user request).
+// After a confirmation: its labels carried into the drafts that follow it, and into its repeated frames, in the engine's
+// background thread. A propagation already running takes the keys afterwards.
+void Application::carryForward(Json keys){
+    for(const auto& key:keys)carryQueue_.push_back(key);
+    if(!engine_||propagationStatus_.value("status","")=="running")return;
+    try{propagationStatus_=engine_->nativeAction("propagate-reviewed",{{"carry",true},{"sources",carryQueue_}});carryQueue_=Json::array();}
+    catch(const std::exception&){}   // the next poll or confirmation tries again
+}
 void Application::startPropagation(){
     if(busy())return;const auto engine=engine_;const Json payload={{"force",propagateForce_},{"carry",propagateCarry_}};
     launch("라벨 전파 시작",[engine,payload]{return JobResult{engine->nativeAction("propagate-reviewed",payload),{}};},[this](JobResult result){propagationStatus_=result.data;message_="반복 프레임에 라벨을 전파하는 중입니다. 그동안 계속 작업할 수 있습니다.";});
@@ -735,6 +743,7 @@ void Application::review(Scope scope,bool hold,int member) {
         for(auto& f:frames_)if(std::find(keys.begin(),keys.end(),f.annotation["key"])!=keys.end()){f.annotation["reviewed"]=!hold;f.annotation["review_status"]=hold?"hold":"reviewed";}
         message_=hold?"보류로 표시했습니다":"확인했습니다";
         // A hold moves on at once; a confirmation stops at a prompt, and a second Space moves on (2026-10-08 user request).
+        if(!hold)carryForward(keys);   // the drafts of the next 1.5 s follow this confirmation at once (2026-10-09 user request)
         if(hold&&moveOn)advance();else if(scope==Scope::Scene)nextAsk_=true;});
 }
 // Held images are skipped; they are revisited through the list filter.
@@ -791,7 +800,8 @@ void Application::tick(){
     pumpThumbs();prefetch();
     if(ready()&&!busy()&&!pending()&&dirtySlot()>=0&&Clock::now()-changed_>std::chrono::milliseconds(450)&&error_.empty())save({},dirtySlot());
     const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running"||colorStatus_.value("status","")=="running"||circleStatus_.value("status","")=="running"||missingStatus_.value("status","")=="running"||propagationStatus_.value("status","")=="running"||occlusionStatus_.value("status","")=="running";
-    if(activeJob&&ready()&&!busy()&&Clock::now()-poll_>std::chrono::seconds(3)&&error_.empty()&&!current().dirty&&!pending()){
+    const auto pollEvery=propagationStatus_.value("status","")=="running"?std::chrono::milliseconds(400):std::chrono::milliseconds(3000);   // a live carry is short; its result should show quickly
+    if(activeJob&&ready()&&!busy()&&Clock::now()-poll_>pollEvery&&error_.empty()&&!current().dirty&&!pending()){
         poll_=Clock::now();const auto engine=engine_;
         launch("작업 상태 확인",[engine]{return JobResult{{{"auto",engine->autoStatus()},{"export",engine->exportStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"missing",engine->missingFillStatus()},{"propagation",engine->propagationStatus()},{"occlusion",engine->occlusionStatus()},{"catalog",engine->nativeCatalog()}}, {}};},[this](JobResult result){
             const auto oldRevision=catalog_["summary"].value("revision",0),oldAuto=catalog_["summary"].value("auto_revision",0);const bool exporting=exportStatus_.value("status","")=="running";
@@ -802,7 +812,10 @@ void Application::tick(){
                 if(occlusionStatus_.value("status","")!="complete")message_="가림 판정이 실패했습니다: "+occlusionStatus_.value("error","");
                 else if(occlusionStatus_.value("dry_run",false)){message_="가림 시험 완료 · "+grouped(occlusionStatus_.value("frames",0))+"장의 공 "+grouped(occlusionStatus_.value("balls",0))+"개가 가려진 것으로 판정 (저장 안 함)";loadMissingSamples(occlusionStatus_.value("samples",Json::array()));}
                 else{message_="공 "+grouped(occlusionStatus_.value("applied_balls",0))+"개를 일부 가림으로 표시했습니다 ("+grouped(occlusionStatus_.value("applied_frames",0))+"장).";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}}
-            if(propagating&&propagationStatus_.value("status","")!="running"){message_=propagationStatus_.value("status","")=="complete"?"반복 프레임 "+grouped(propagationStatus_.value("frames",0))+"장에 라벨을 전파하고 초안 "+grouped(propagationStatus_.value("carried",0))+"장을 채웠습니다 (공 "+grouped(propagationStatus_.value("balls",0))+"개).":"라벨 전파가 실패했습니다: "+propagationStatus_.value("error","");if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
+            if(propagating&&propagationStatus_.value("status","")!="running"){
+                if(propagationStatus_.value("live",false)){if(propagationStatus_.value("carried",0)+propagationStatus_.value("frames",0)>0)message_="확인한 라벨을 다음 초안 "+grouped(propagationStatus_.value("carried",0))+"장과 반복 "+grouped(propagationStatus_.value("frames",0))+"장에 맞췄습니다.";}
+                else{message_=propagationStatus_.value("status","")=="complete"?"반복 프레임 "+grouped(propagationStatus_.value("frames",0))+"장에 라벨을 전파하고 초안 "+grouped(propagationStatus_.value("carried",0))+"장을 채웠습니다 (공 "+grouped(propagationStatus_.value("balls",0))+"개).":"라벨 전파가 실패했습니다: "+propagationStatus_.value("error","");if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
+                if(!carryQueue_.empty())carryForward(Json::array());}
             autoStatus_=result.data["auto"];exportStatus_=result.data["export"];colorStatus_=result.data["color"];circleStatus_=result.data["circle"];missingStatus_=result.data["missing"];updateCatalog(result.data["catalog"]);
             if(filling&&missingStatus_.value("status","")!="running"){
                 const bool trial=missingStatus_.value("dry_run",false);

@@ -90,6 +90,8 @@ private:
     bool occlReviewed_ = false; int occlTrial_ = 30;
     bool propagateForce_ = false;                                // the dialog's "also the frames already up to date"
     bool propagateCarry_ = true;                                 // the dialog's "also the empty drafts after a confirmed frame"
+    Json carryQueue_ = Json::array();                            // confirmed frames whose labels still have to be carried forward
+    void carryForward(Json keys);                                // starts that in the background, or queues it while a propagation runs
     bool fitCircle_ = true;                                      // proposals take the circle fit; off keeps the outline as segmented (hand-held balls)
     std::vector<FrameView> missingSamples_;                      // crops of a trial's new balls, shown in the dialog
     int missingCameras_ = 0, missingTrial_ = 30;                 // 0 colour only, 1 all cameras; frames per trial
