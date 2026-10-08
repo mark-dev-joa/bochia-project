@@ -50,6 +50,7 @@ public:
     void showShortcutsForCapture() { shortcutsWanted_ = true; }
     void showViewForCapture(int mode) { view_ = std::clamp(mode, 0, viewCount - 1); for (auto& frame : frames_) frame.repaint = true; }
     void proposeForCapture();                        // a polygon proposal around the selected ball, to picture the preview
+    void confirmForCapture() { review(Scope::Scene, false); }   // confirms the scene, so the prompt can be pictured
     bool selfCheckStep(int step);                    // scripted logic checks for the hidden smoke run
     bool stageCheckStep(int step);                   // the same for split and export; needs a fully confirmed project
     const std::string& error() const { return error_; }
@@ -104,7 +105,8 @@ private:
          shortcutsWanted_ = false,                               // open the shortcut list on the next frame
          growAsk_ = false,                                       // the grow-masks dialog is open
          colorAsk_ = false,                                      // the fill-colours dialog is open
-         circleAsk_ = false;                                     // the refine-circles dialog is open
+         circleAsk_ = false,                                     // the refine-circles dialog is open
+         nextAsk_ = false;                                       // the scene is confirmed; the prompt asks whether to move on
     float brightness_ = 1.65f, brushSize_ = 6, radius_ = 16, circleMargin_ = .5f;
     int view_ = 0;                                               // how the frames are shown: original, contrast, gray, edges, gradient, edge overlay
     static constexpr int viewCount = 6;
@@ -119,8 +121,6 @@ private:
     ImVec2 dragScreen_{};
     size_t generation_ = 0;
     std::string error_, message_ = "촬영 데이터 연결 중…", busyLabel_;
-    std::string toast_, toastNext_;                              // the notice shown after moving on, and the one prepared for the next scene
-    std::chrono::steady_clock::time_point toastUntil_{};
     std::chrono::steady_clock::time_point changed_, poll_;
     void launch(std::string label, std::function<JobResult()> work, std::function<void(JobResult)> completed);
     void connect();
@@ -161,6 +161,7 @@ private:
     void confirmColors();                            // the dialog behind colorAsk_
     void fillColors();
     void confirmCircles();                           // the dialog behind circleAsk_
+    void confirmNext();                              // the prompt behind nextAsk_: Space moves on, Esc stays
     void refineCircles();
     void segment(cv::Point2d point, bool negative);
     void segmentBox(cv::Rect2d box);
@@ -178,7 +179,6 @@ private:
     void queue();
     void reviewPane();
     void sceneBar(ImVec2 pos, float width);
-    void toastOverlay(ImVec2 origin, ImVec2 size);   // "프레임 0003 확인 → 지금은 프레임 0005", centred, fading out
     void overviewTile(int slot, ImVec2 pos, ImVec2 size);
     void smallTile(int slot, ImVec2 pos, ImVec2 size);
     void focusTile(int slot, ImVec2 pos, ImVec2 size);

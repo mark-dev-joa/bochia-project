@@ -124,9 +124,7 @@ void Application::loadScene(int index,bool editor,int camera,std::string note) {
         const auto& members=catalog_["scenes"][index]["members"];
         for(size_t i=0;i<result.frames.size()&&i<members.size();++i){result.frames[i].member=members[i];result.frames[i].annotation["review_status"]=members[i].value("status","draft");}
         if(backing_)backing_=false;else if(!frames_.empty()&&scene_!=index){history_.push_back(scene_);if(history_.size()>50)history_.erase(history_.begin());}
-        releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor;stale_=false;aheadDirty_=true;scrollToCurrent_=true;cancel();message_=note.empty()?"원본과 저장 라벨 표시 중":note;
-        // After a confirmation the view changes at once; a short notice says which frame was left and which one this is.
-        if(!toastNext_.empty()){char now[32];std::snprintf(now,sizeof now,"프레임 %04d",catalog_["scenes"][index].value("index",0));toast_=toastNext_+"  →  지금은 "+now;toastNext_.clear();toastUntil_=Clock::now()+std::chrono::milliseconds(1800);}};
+        releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor;stale_=false;aheadDirty_=true;scrollToCurrent_=true;cancel();message_=note.empty()?"원본과 저장 라벨 표시 중":note;};
     // A scene fetched ahead is used only if no automatic draft has been written since.
     if(index==aheadScene_&&ahead_.valid()&&aheadAuto_==catalog_["summary"].value("auto_revision",0)){
         const auto fetched=ahead_.share();aheadScene_=-1;++aheadHits_;
@@ -314,6 +312,30 @@ void Application::confirmCircles(){
     }
     ImGui::PopStyleVar(2);
 }
+// After Space confirmed the scene: the prompt in the middle, where a second Space moves on and Esc stays.
+void Application::confirmNext(){
+    if(!nextAsk_)return;
+    if(!ImGui::IsPopupOpen("##next-scene"))ImGui::OpenPopup("##next-scene");
+    const auto viewport=ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({viewport->WorkPos.x+viewport->WorkSize.x/2,viewport->WorkPos.y+viewport->WorkSize.y/2},ImGuiCond_Appearing,{.5f,.5f});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{26,22});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,10});
+    if(ImGui::BeginPopupModal("##next-scene",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
+        char title[48];std::snprintf(title,sizeof title,"프레임 %04d 확인 완료",frames_.empty()?0:catalog_["scenes"][scene_].value("index",0));
+        ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted(title);ImGui::PopFont();
+        const int next=nextUnreviewedIndex();
+        if(next<0||next==scene_)ImGui::TextUnformatted("더 넘어갈 미검수 장면이 없습니다.");
+        else{char line[64];std::snprintf(line,sizeof line,"다음 미검수 장면은 프레임 %04d입니다.",catalog_["scenes"][next].value("index",0));ImGui::TextUnformatted(line);}
+        ImGui::Dummy({0,4});
+        bool close=false;
+        ImGui::PushFont(theme::bold,theme::px(theme::base));
+        if(theme::primaryButton("다음 장면  Space",{160,36})||ImGui::IsKeyPressed(ImGuiKey_Space,false)||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{nextUnreviewed();};close=true;}
+        ImGui::PopFont();ImGui::SameLine();
+        if(ImGui::Button("머물기  Esc",{110,36})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
+        if(close){nextAsk_=false;ImGui::CloseCurrentPopup();}
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(2);
+}
 void Application::refineCircles(){
     if(!guard())return;
     if(!frames_.empty()&&dirtySlot()>=0){save([this]{refineCircles();},dirtySlot());return;}
@@ -394,12 +416,13 @@ void Application::review(Scope scope,bool hold,int member) {
     launch(hold?"보류 상태 저장":"확인 저장",[engine,payload]{
         try{return JobResult{engine->nativeAction("review",payload),{}};}
         catch(const Conflict&){return JobResult{{{"conflict",true},{"catalog",engine->nativeCatalog()}},{}};}
-    },[this,advance,hold,keys](JobResult result){
+    },[this,advance,hold,keys,scope](JobResult result){
         if(result.data.contains("conflict")){updateCatalog(result.data["catalog"]);loadScene(scene_,editor_,camera_,"저장된 라벨이 화면과 달라 다시 불러왔습니다. 확인한 뒤 다시 누르세요.");return;}
         updateSummary(result.data.at("summary"));
         for(auto& f:frames_)if(std::find(keys.begin(),keys.end(),f.annotation["key"])!=keys.end()){f.annotation["reviewed"]=!hold;f.annotation["review_status"]=hold?"hold":"reviewed";}
         message_=hold?"보류로 표시했습니다":"확인했습니다";
-        if(advance){char left[48];std::snprintf(left,sizeof left,"프레임 %04d %s",catalog_["scenes"][scene_].value("index",0),hold?"보류":"확인");toastNext_=left;nextUnreviewed();}});
+        // A hold moves on at once; a confirmation stops at a prompt, and a second Space moves on (2026-10-08 user request).
+        if(hold&&advance)nextUnreviewed();else if(scope==Scope::Scene)nextAsk_=true;});
 }
 // Held images are skipped; they are revisited through the list filter.
 int Application::nextUnreviewedIndex() const {
@@ -414,7 +437,6 @@ void Application::back(){
 }
 void Application::nextUnreviewed(){
     const int index=nextUnreviewedIndex();
-    if(index<0||index==scene_){if(!toastNext_.empty()){toast_=toastNext_+"  ·  더 넘어갈 미검수 장면이 없습니다";toastNext_.clear();toastUntil_=Clock::now()+std::chrono::milliseconds(1800);}}
     if(index<0){editor_=false;message_="검수 대상을 모두 확인했습니다. 분할 단계로 넘어가세요.";return;}
     if(index==scene_){message_="남은 미검수 이미지는 이 장면뿐입니다.";return;}
     loadScene(index);
@@ -558,8 +580,9 @@ bool Application::selfCheckStep(int step) {
     case 14:was={camera_,selected_};io.AddKeyEvent(ImGuiKey_Tab,true);return true;
     case 15:io.AddKeyEvent(ImGuiKey_Tab,false);expect(moved()&&!io.WantTextInput,"Tab put the keyboard into a widget, which turns the shortcuts off");return true;
     case 16:review(Scope::Scene,false);return true;
-    case 17:{for(const auto& member:catalog_["scenes"][checkedScene]["members"])expect(!member.value("selected",true)||member.value("reviewed",false),"scene confirm left an image unconfirmed");
-        expect(scene_!=checkedScene&&!editor_,"confirm did not advance to the next unreviewed scene");
+    case 17:{expect(nextAsk_&&scene_==checkedScene,"confirm did not stop at the move-on prompt");nextAsk_=false;nextUnreviewed();return true;}   // the second Space
+    case 18:{for(const auto& member:catalog_["scenes"][checkedScene]["members"])expect(!member.value("selected",true)||member.value("reviewed",false),"scene confirm left an image unconfirmed");
+        expect(scene_!=checkedScene&&!editor_,"the second Space did not advance to the next unreviewed scene");
         expect(aheadHits_>0,"the next unreviewed scene was not fetched ahead");return false;}
     }
     return false;
@@ -607,7 +630,7 @@ void Application::refreshStage(){
 }
 void Application::keys() {
     auto& io=ImGui::GetIO();
-    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||pendingRemove_.camera>=0||growAsk_||colorAsk_||circleAsk_)return;   // an open dialog owns the keys
+    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||pendingRemove_.camera>=0||growAsk_||colorAsk_||circleAsk_||nextAsk_)return;   // an open dialog owns the keys
     auto pressed=[](ImGuiKey key){return ImGui::IsKeyPressed(key,false);};
     if(pressed(ImGuiKey_Escape)){
         if(pending())cancel();
@@ -690,7 +713,7 @@ void Application::topBar() {
 }
 // The key list lives here instead of in hint lines all over the screens.
 void Application::shortcutsPopup(ImVec2 below) {
-    static const char* const rows[][2]={{"Space / E","세 장 확인하고 다음 미검수 장면"},{"Shift+Space / Shift+E","크게 보는 카메라 한 장만 확인"},{"Q","보류"},{"N","다음 미검수 장면"},
+    static const char* const rows[][2]={{"Space / E","세 장 확인 완료 · 팝업에서 Space 한 번 더 누르면 다음 장면"},{"Shift+Space / Shift+E","크게 보는 카메라 한 장만 확인"},{"Q","보류"},{"N","다음 미검수 장면"},
         {"A / D","이전 / 다음 장면"},{"Backspace","이전에 보던 장면으로"},{"1 / 2 / 3","그 카메라를 크게"},{"Tab / Shift+Tab","다음 / 이전 공"},
         {"방향키","선택한 공의 그 방향 경계를 1픽셀 바깥으로"},{"Shift+방향키","1픽셀 안으로"},{"V / S / B / P / R","선택 / AI 분할 / 브러시 / 폴리곤 / 박스"},
         {"왼쪽 / 오른쪽 클릭","더하기 / 빼기"},{"[ / ]","브러시 굵기"},{"Space / Esc","윤곽 반영 / 취소, 선택 해제, 세 장 보기"},{"G / M / X / C","윤곽 / 마스크 채움 / 박스 / 원 표시"},{"I","보기: 원본 / 대비 / 흑백 / 에지 / 그래디언트 / 에지 겹침"},
@@ -775,6 +798,7 @@ void Application::draw(){
     confirmGrowth();
     confirmColors();
     confirmCircles();
+    confirmNext();
     ImGui::PopStyleVar();
     ImGui::End();
     if(later_){auto action=std::move(later_);later_=nullptr;action();}

@@ -291,7 +291,6 @@ void Application::reviewPane() {
     ImGui::Dummy(avail);
     const float x = origin.x + 12, width = avail.x - 24;
     sceneBar({x, origin.y + 10}, width);
-    toastOverlay({x, origin.y}, {width, avail.y});
     const float top = origin.y + 58, height = avail.y - 58 - 10;
     const auto spans = tileSpans(editor_ ? camera_ : -1, width);
     for (int slot = 0; slot < 3; ++slot) {
@@ -352,20 +351,6 @@ void Application::sceneBar(ImVec2 pos, float width) {
     draw->PushClipRect({x, pos.y}, {right - 10, pos.y + 40}, true);   // narrow windows cut the summary instead of running under the toggles
     theme::write(draw, {x, pos.y + 13}, theme::text3, meta, theme::caption);
     draw->PopClipRect();
-}
-// The notice after moving on: a card in the middle of the review area for 1.8 s, fading over the last half second.
-void Application::toastOverlay(ImVec2 origin, ImVec2 size) {
-    if (toast_.empty() || std::chrono::steady_clock::now() >= toastUntil_) return;
-    const float remaining = std::chrono::duration<float>(toastUntil_ - std::chrono::steady_clock::now()).count();
-    const float alpha = std::clamp(remaining / .5f, 0.f, 1.f);
-    auto draw = ImGui::GetForegroundDrawList();
-    const float fontSize = theme::px(theme::title);
-    const ImVec2 extent = theme::extent(toast_, fontSize, theme::bold);
-    const ImVec2 center{origin.x + size.x / 2, origin.y + size.y / 2 - extent.y / 2 - 12};
-    const ImVec2 a{center.x - extent.x / 2 - 24, center.y}, b{center.x + extent.x / 2 + 24, center.y + extent.y + 24};
-    draw->AddRectFilled(a, b, theme::rgb(0x0d0f12, int(235 * alpha)), 10);
-    draw->AddRect(a, b, theme::rgb(0x5b9dff, int(255 * alpha)), 10, 0, 1.5f);
-    theme::write(draw, {center.x - extent.x / 2, center.y + 12}, theme::rgb(0xffffff, int(255 * alpha)), toast_, fontSize, theme::bold);
 }
 void Application::emptyTile(ImVec2 pos, ImVec2 size) {
     auto draw = ImGui::GetWindowDrawList();
@@ -898,7 +883,7 @@ void Application::sidePanel() {
     draw->AddLine({origin.x, top + .5f}, {origin.x + avail.x, top + .5f}, theme::line);
     ImGui::PushFont(theme::bold, theme::px(theme::base));
     ImGui::SetCursorScreenPos({origin.x + pad, top + 12});
-    if (theme::primaryButton("세 장 확인하고 다음 장면   Space", {width, 44})) later_ = [this] { review(Scope::Scene, false); };
+    if (theme::primaryButton("세 장 확인 완료   Space", {width, 44})) later_ = [this] { review(Scope::Scene, false); };
     ImGui::PopFont();
     ImGui::PushFont(nullptr, theme::px(theme::caption));
     ImGui::SetCursorScreenPos({origin.x + pad, top + 66});
