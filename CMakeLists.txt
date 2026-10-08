@@ -131,7 +131,7 @@ set_target_properties(onnxruntime PROPERTIES
   IMPORTED_LOCATION "${ONNXRUNTIME_ROOT}/lib/onnxruntime.dll"
   IMPORTED_IMPLIB "${ONNXRUNTIME_ROOT}/lib/onnxruntime.lib"
   INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_ROOT}/include")
-add_library(labeler_engine STATIC src/labeler_util.cpp src/labeler_catalog.cpp src/labeler_assist.cpp src/labeler_sam.cpp src/labeler_store.cpp src/labeler_native.cpp src/labeler_export.cpp src/labeler_selection.cpp src/labeler_auto.cpp src/labeler_missing.cpp src/labeler_engine.cpp)
+add_library(labeler_engine STATIC src/labeler_util.cpp src/labeler_catalog.cpp src/labeler_assist.cpp src/labeler_sam.cpp src/labeler_store.cpp src/labeler_native.cpp src/labeler_export.cpp src/labeler_selection.cpp src/labeler_auto.cpp src/labeler_missing.cpp src/labeler_propagate.cpp src/labeler_engine.cpp)
 target_include_directories(labeler_engine PUBLIC src ${OpenCV_INCLUDE_DIRS} "${DEPENDENCY_ROOT}/nlohmann/include")
 target_link_libraries(labeler_engine PUBLIC native_labeler_model ${OpenCV_LIBS} libzstd_static bcrypt ws2_32 onnxruntime)
 target_compile_definitions(labeler_engine PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)

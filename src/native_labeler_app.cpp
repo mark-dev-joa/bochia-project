@@ -548,6 +548,38 @@ void Application::confirmMissing(){
     }
     ImGui::PopStyleVar(2);
 }
+// Confirmed labels carried to the repeated frames the filter left out of the review (2026-10-08 user request).
+void Application::startPropagation(){
+    if(busy())return;const auto engine=engine_;const Json payload={{"force",propagateForce_}};
+    launch("라벨 전파 시작",[engine,payload]{return JobResult{engine->nativeAction("propagate-reviewed",payload),{}};},[this](JobResult result){propagationStatus_=result.data;message_="반복 프레임에 라벨을 전파하는 중입니다. 그동안 계속 작업할 수 있습니다.";});
+}
+void Application::confirmPropagation(){
+    if(!propagateAsk_)return;
+    if(!ImGui::IsPopupOpen("##propagate"))ImGui::OpenPopup("##propagate");
+    const auto viewport=ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({viewport->WorkPos.x+viewport->WorkSize.x/2,viewport->WorkPos.y+viewport->WorkSize.y/2},ImGuiCond_Appearing,{.5f,.5f});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{22,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,10});
+    if(ImGui::BeginPopupModal("##propagate",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
+        const auto counts=catalog_.value("propagation_counts",Json::object());
+        ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted("확인한 라벨을 반복 프레임에 전파");ImGui::PopFont();
+        ImGui::Text("확인한 대표 프레임 %s장의 반복 프레임 %s장 중 아직 전파하지 않은 %s장에 라벨을 옮깁니다.",grouped(counts.value("representatives",0)).c_str(),grouped(counts.value("duplicates",0)).c_str(),grouped(counts.value("pending",0)).c_str());
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+700);
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"반복 프레임의 초안 공 가운데 확인한 공과 8픽셀 안에서 맞는 것은 그 프레임 자체의 위치를 쓰고 그 프레임 영상으로 원을 다시 잽니다. 사람이 더한 공은 복사하고 지운 공은 뺍니다. 전파된 프레임은 학습 데이터에 들어가되 검수 대상은 아니며, 목록에 초록 고리로 보입니다. 대표 프레임을 다시 고치면 다음 전파 때 자동으로 갱신되고, 전파된 프레임을 직접 고치면 보통 프레임이 됩니다.");
+        ImGui::PopTextWrapPos();ImGui::PopFont();
+        ImGui::Dummy({0,2});
+        theme::checkbox("이미 최신인 프레임도 다시 전파",&propagateForce_);
+        ImGui::Dummy({0,4});
+        bool close=false;const bool running=propagationStatus_.value("status","")=="running";
+        ImGui::BeginDisabled(running||busy());
+        ImGui::PushFont(theme::bold,theme::px(theme::base));
+        if(theme::primaryButton("전파  Enter",{140,34})||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{startPropagation();};close=true;}
+        ImGui::PopFont();ImGui::EndDisabled();ImGui::SameLine();
+        if(ImGui::Button("취소  Esc",{110,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
+        if(close){propagateAsk_=false;ImGui::CloseCurrentPopup();}
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(2);
+}
 void Application::refineCircles(){
     if(!guard())return;
     if(!frames_.empty()&&dirtySlot()>=0){save([this]{refineCircles();},dirtySlot());return;}
@@ -662,12 +694,14 @@ void Application::tick(){
     if(queued_){if(!error_.empty())queued_=nullptr;else if(!busy()){auto action=std::move(queued_);queued_=nullptr;action();}}
     pumpThumbs();prefetch();
     if(ready()&&!busy()&&!pending()&&dirtySlot()>=0&&Clock::now()-changed_>std::chrono::milliseconds(450)&&error_.empty())save({},dirtySlot());
-    const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running"||colorStatus_.value("status","")=="running"||circleStatus_.value("status","")=="running"||missingStatus_.value("status","")=="running";
+    const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running"||colorStatus_.value("status","")=="running"||circleStatus_.value("status","")=="running"||missingStatus_.value("status","")=="running"||propagationStatus_.value("status","")=="running";
     if(activeJob&&ready()&&!busy()&&Clock::now()-poll_>std::chrono::seconds(3)&&error_.empty()&&!current().dirty&&!pending()){
         poll_=Clock::now();const auto engine=engine_;
-        launch("작업 상태 확인",[engine]{return JobResult{{{"auto",engine->autoStatus()},{"export",engine->exportStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"missing",engine->missingFillStatus()},{"catalog",engine->nativeCatalog()}}, {}};},[this](JobResult result){
+        launch("작업 상태 확인",[engine]{return JobResult{{{"auto",engine->autoStatus()},{"export",engine->exportStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"missing",engine->missingFillStatus()},{"propagation",engine->propagationStatus()},{"catalog",engine->nativeCatalog()}}, {}};},[this](JobResult result){
             const auto oldRevision=catalog_["summary"].value("revision",0),oldAuto=catalog_["summary"].value("auto_revision",0);const bool exporting=exportStatus_.value("status","")=="running";
-            const bool coloring=colorStatus_.value("status","")=="running",refining=circleStatus_.value("status","")=="running",filling=missingStatus_.value("status","")=="running";
+            const bool coloring=colorStatus_.value("status","")=="running",refining=circleStatus_.value("status","")=="running",filling=missingStatus_.value("status","")=="running",propagating=propagationStatus_.value("status","")=="running";
+            propagationStatus_=result.data["propagation"];
+            if(propagating&&propagationStatus_.value("status","")!="running"){message_=propagationStatus_.value("status","")=="complete"?"반복 프레임 "+grouped(propagationStatus_.value("frames",0))+"장에 라벨을 전파했습니다 (공 "+grouped(propagationStatus_.value("balls",0))+"개).":"라벨 전파가 실패했습니다: "+propagationStatus_.value("error","");if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
             autoStatus_=result.data["auto"];exportStatus_=result.data["export"];colorStatus_=result.data["color"];circleStatus_=result.data["circle"];missingStatus_=result.data["missing"];updateCatalog(result.data["catalog"]);
             if(filling&&missingStatus_.value("status","")!="running"){
                 const bool trial=missingStatus_.value("dry_run",false);
@@ -836,10 +870,10 @@ bool Application::stageCheckStep(int step) {
 // The stage pages show per-recording counts that only the full catalog carries.
 void Application::refreshStage(){
     if(busy())return;const auto engine=engine_;
-    launch("현황 새로 읽기",[engine]{return JobResult{{{"catalog",engine->nativeCatalog()},{"exports",engine->exports()},{"export",engine->exportStatus()},{"auto",engine->autoStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"missing",engine->missingFillStatus()}},{}};},
+    launch("현황 새로 읽기",[engine]{return JobResult{{{"catalog",engine->nativeCatalog()},{"exports",engine->exports()},{"export",engine->exportStatus()},{"auto",engine->autoStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"missing",engine->missingFillStatus()},{"propagation",engine->propagationStatus()}},{}};},
         [this](JobResult result){
             const auto revision=catalog_["summary"].value("revision",0),automatic=catalog_["summary"].value("auto_revision",0);
-            missingStatus_=result.data["missing"];
+            missingStatus_=result.data["missing"];propagationStatus_=result.data["propagation"];
             updateCatalog(result.data["catalog"]);
             if(revision!=catalog_["summary"].value("revision",0)||automatic!=catalog_["summary"].value("auto_revision",0))stale_=true;
             exports_=result.data["exports"].value("exports",Json::array());exportStatus_=result.data["export"];autoStatus_=result.data["auto"];colorStatus_=result.data["color"];circleStatus_=result.data["circle"];
@@ -850,7 +884,7 @@ void Application::refreshStage(){
 }
 void Application::keys() {
     auto& io=ImGui::GetIO();
-    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||growAsk_||colorAsk_||circleAsk_||nextAsk_||missingAsk_)return;   // an open dialog owns the keys
+    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||growAsk_||colorAsk_||circleAsk_||nextAsk_||missingAsk_||propagateAsk_)return;   // an open dialog owns the keys
     auto pressed=[](ImGuiKey key){return ImGui::IsKeyPressed(key,false);};
     if(pressed(ImGuiKey_Escape)){
         if(pending())cancel();
@@ -1020,6 +1054,7 @@ void Application::draw(){
     confirmCircles();
     confirmNext();
     confirmMissing();
+    confirmPropagation();
     ImGui::PopStyleVar();
     ImGui::End();
     if(later_){auto action=std::move(later_);later_=nullptr;action();}

@@ -302,6 +302,24 @@ void Application::preparePage() {
         if (filled.is_object()) box.text("추가함 · " + grouped(filled.value("frames", 0)) + "장에 공 " + grouped(filled.value("balls", 0)) + "개 · " + filled.value("at", "").substr(0, 10));
         sy = box.close();
     }
+    {
+        // Confirmed labels carried to the repeated frames, so they join the training data (2026-10-08 user request).
+        SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "반복 프레임에 라벨 전파");
+        const auto counts = catalog_.value("propagation_counts", Json::object()), record = catalog_.value("propagation", Json());
+        const bool propagating = propagationStatus_.value("status", "") == "running";
+        if (propagating) {
+            box.text("전파 중 · " + grouped(propagationStatus_.value("done", 0)) + " / " + grouped(propagationStatus_.value("total", 0)) + "장", theme::text);
+            progressBar(draw, {box.left(), box.y}, box.inner(), propagationStatus_.value("done", 0), propagationStatus_.value("total", 0), theme::accent); box.y += 14;
+        } else box.text("확인한 대표 " + grouped(counts.value("representatives", 0)) + "장 → 반복 " + grouped(counts.value("duplicates", 0)) + "장 · 전파 대기 " + grouped(counts.value("pending", 0)) + "장 · 최신 " + grouped(counts.value("done", 0)) + "장", theme::text);
+        ImGui::PushFont(nullptr, theme::px(theme::caption));
+        ImGui::SetCursorScreenPos({box.left(), box.y});
+        if (ImGui::Button("라벨 전파…", {box.inner(), 30})) propagateAsk_ = true;
+        ImGui::PopFont();
+        box.y += 36;
+        if (propagationStatus_.value("status", "") == "error") box.text(propagationStatus_.value("error", ""), theme::warn);
+        if (record.is_object()) box.text("전파함 · " + grouped(record.value("frames", 0)) + "장 · 공 " + grouped(record.value("balls", 0)) + "개 · " + record.value("at", "").substr(0, 10));
+        sy = box.close();
+    }
     if (!recordings.empty()) {
         SideBox box(draw, {stage.side.x, sy}, stage.sideWidth, "카메라");
         for (const auto& camera : recordings[0]["cameras"]) {

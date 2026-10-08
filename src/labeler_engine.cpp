@@ -1,5 +1,6 @@
 #include "labeler_engine.hpp"
 #include "labeler_missing.hpp"
+#include "labeler_propagate.hpp"
 #include "labeler_util.hpp"
 #include <stdexcept>
 
@@ -27,9 +28,12 @@ Json Engine::nativeAction(const std::string& action, const Json& payload) {
     if (action == "drop-missing-trial") return dropMissingTrial(project_, payload.value("name", ""));
     if (action == "missing-trial-samples") return missingTrialSamples(project_, payload.value("name", ""), payload.value("limit", 8));
     if (action == "apply-missing-trial") return applyMissingTrial(project_, payload.value("name", ""));
+    if (action == "propagate-reviewed") return startPropagation(project_, payload.value("force", false));
+    if (action == "propagation-counts") return propagationCounts(project_);
     return boccia::labeler::nativeAction(project_, action, payload);
 }
 Json Engine::missingFillStatus() const { return boccia::labeler::missingFillStatus(project_); }
+Json Engine::propagationStatus() const { return boccia::labeler::propagationStatus(project_); }
 Json Engine::assist(const std::string& method, const Json& payload) { return assistance(project_, assist_, method, payload); }
 Json Engine::assistStatus() const { return assist_.status(); }
 Json Engine::exportStatus() const { std::lock_guard guard(project_.lock); return project_.job; }

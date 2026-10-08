@@ -35,7 +35,7 @@ cv::Rect2d cropRegion(const cv::Rect2d& box, int imageWidth, int imageHeight, do
     return {x, y, side, side};
 }
 MemberState memberState(const Json& member) {
-    if (!member.value("selected", true)) return MemberState::Duplicate;
+    if (!member.value("selected", true)) return member.value("status", "") == "propagated" ? MemberState::Propagated : MemberState::Duplicate;
     const auto status = member.value("status", "draft");
     return status == "reviewed" ? MemberState::Done : status == "hold" ? MemberState::Hold : status == "editing" ? MemberState::Editing : MemberState::Todo;
 }

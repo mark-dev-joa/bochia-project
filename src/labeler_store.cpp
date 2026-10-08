@@ -100,13 +100,13 @@ Json Project::summary() const {
         const bool isAutomatic = item.contains("automatic") && truthy(item["automatic"]);
         const int count = int(item.value("boxes", Json::array()).size());
         const Json decision = decisions.contains(key) ? decisions[key] : Json::object();
-        const bool included = decision.value("selected", true);
-        frames[key] = {{"reviewed", done}, {"count", count},
+        const bool included = decision.value("selected", true), propagated = truthy(item.value("propagated", Json(false)));
+        frames[key] = {{"reviewed", done}, {"count", count}, {"propagated", propagated},
                        {"review_status", item.contains("review_status") ? item["review_status"] : Json(done ? "reviewed" : touched ? "editing" : "draft")},
                        {"automatic", isAutomatic}, {"human_touched", item.value("human_touched", Json(false))},
                        {"needs_attention", item.contains("automatic") && item["automatic"].is_object() ? item["automatic"].value("needs_attention", Json(false)) : Json(false)},
                        {"selected", included}, {"representative", decision.value("representative", key)}, {"selection_reason", decision.value("reason", "unfiltered")}};
-        reviewed += done; if (done) boxes += count; if (done && included) { ++exportFrames; exportBoxes += count; }
+        reviewed += done; if (done) boxes += count; if ((done && included) || propagated) { ++exportFrames; exportBoxes += count; }
         automatic += isAutomatic; if (!done) drafts += count;
     }
     Json rest = Json::object();
@@ -209,7 +209,8 @@ std::vector<std::pair<std::string, Json>> selectedReviewed(const Json& snapshot)
     const Json decisions = snapshot.contains("frame_selection") && snapshot["frame_selection"].is_object() ? snapshot["frame_selection"].value("frames", Json::object()) : Json::object();
     std::vector<std::pair<std::string, Json>> result;
     for (const auto& [key, item] : snapshot["frames"].items())
-        if (truthy(item.value("reviewed", Json(false))) && (truthy(item.value("human_touched", Json(false))) || (decisions.contains(key) ? decisions[key].value("selected", true) : true)))
+        if ((truthy(item.value("reviewed", Json(false))) && (truthy(item.value("human_touched", Json(false))) || (decisions.contains(key) ? decisions[key].value("selected", true) : true)))
+            || truthy(item.value("propagated", Json(false))))   // a repeated frame carrying its confirmed representative's labels
             result.emplace_back(key, item);
     return result;
 }

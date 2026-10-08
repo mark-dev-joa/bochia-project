@@ -39,7 +39,7 @@ public:
     void draw();
     bool ready() const { return catalog_.is_object() && !frames_.empty(); }
     bool busy() const { return task_.valid(); }
-    bool settled() const { return !busy() && !thumbTask_.valid() && thumbWanted_.empty() && colorStatus_.value("status", "") != "running" && circleStatus_.value("status", "") != "running" && missingStatus_.value("status", "") != "running"; }
+    bool settled() const { return !busy() && !thumbTask_.valid() && thumbWanted_.empty() && colorStatus_.value("status", "") != "running" && circleStatus_.value("status", "") != "running" && missingStatus_.value("status", "") != "running" && propagationStatus_.value("status", "") != "running"; }
     bool idle() const;                               // settled and nothing waiting to be saved; an open proposal does not count
     void showEditor(int camera = 0);
     void showPage(int page);
@@ -53,6 +53,7 @@ public:
     void moveOnForCapture() { later_ = [this] { nextAsk_ = false; advance(); }; }   // the second Space, as the key does it
     void missingTrialForCapture(int frames) { missingTrial_ = frames; missingAsk_ = true; startMissing(true, false); }   // a trial of the missing-ball pass, to picture its dialog
     void missingApplyForCapture(int frames) { missingAsk_ = true; startMissing(false, false, frames); }           // applies the pass to a few frames, for the check of the apply path
+    void propagateForCapture() { startPropagation(); }   // runs the propagation, for the check of its path
     bool selfCheckStep(int step);                    // scripted logic checks for the hidden smoke run
     bool stageCheckStep(int step);                   // the same for split and export; needs a fully confirmed project
     bool missingScriptStep(int step);                // trials of the missing-ball pass, their assembly and the apply of one
@@ -79,7 +80,9 @@ private:
     Json catalog_, groups_ = Json::object(), splits_ = Json::object(), autoStatus_ = Json::object(), exportStatus_ = Json::object(), exports_ = Json::array(),
          colorStatus_ = Json::object(),                          // the background colour fill
          circleStatus_ = Json::object(),                         // the background circle refinement
-         missingStatus_ = Json::object();                        // the pass that adds the detector's balls the draft lacks
+         missingStatus_ = Json::object(),                        // the pass that adds the detector's balls the draft lacks
+         propagationStatus_ = Json::object();                    // confirmed labels carried to repeated frames
+    bool propagateForce_ = false;                                // the dialog's "also the frames already up to date"
     std::vector<FrameView> missingSamples_;                      // crops of a trial's new balls, shown in the dialog
     int missingCameras_ = 0, missingTrial_ = 30;                 // 0 colour only, 1 all cameras; frames per trial
     float missingCoverage_ = .8f, missingMinRadius_ = 6, missingMaxRadius_ = 45;
@@ -119,7 +122,8 @@ private:
          colorAsk_ = false,                                      // the fill-colours dialog is open
          circleAsk_ = false,                                     // the refine-circles dialog is open
          nextAsk_ = false,                                       // the scene is confirmed; the prompt asks whether to move on
-         missingAsk_ = false;                                    // the missing-ball dialog is open
+         missingAsk_ = false,                                    // the missing-ball dialog is open
+         propagateAsk_ = false;                                  // the propagation dialog is open
     float brightness_ = 1.65f, brushSize_ = 6, radius_ = 16, circleMargin_ = .5f;
     int view_ = 0;                                               // how the frames are shown: original, contrast, gray, edges, gradient, edge overlay
     static constexpr int viewCount = 6;
@@ -180,6 +184,8 @@ private:
     void confirmCircles();                           // the dialog behind circleAsk_
     void confirmNext();                              // the prompt behind nextAsk_: Space moves on, Esc stays
     void confirmMissing();                           // the dialog behind missingAsk_: options, count, trial, samples, apply
+    void confirmPropagation();                       // the dialog behind propagateAsk_
+    void startPropagation();                         // carries confirmed labels to repeated frames
     void startMissing(bool dryRun, bool countOnly, int limit = -1);   // runs the pass with the dialog's options; limit overrides the frame count
     void loadMissingSamples(Json samples = Json());  // crops of new balls: the last trial's, or the given ones
     void refreshMissingTrials();                     // the saved trials, from the engine

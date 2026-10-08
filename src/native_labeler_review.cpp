@@ -95,7 +95,7 @@ void Application::rebuildRows() {
             if (row.cameras >= 3) break;
             const auto state = memberState(member);
             row.state[row.cameras] = state; row.count[row.cameras] = member.value("count", 0); ++row.cameras;
-            if (state == MemberState::Duplicate) continue;
+            if (state == MemberState::Duplicate || state == MemberState::Propagated) continue;
             target = true; todo |= state == MemberState::Todo || state == MemberState::Editing; held |= state == MemberState::Hold;
             done &= state == MemberState::Done; attention |= member.value("attention", false);
         }
@@ -375,7 +375,7 @@ void Application::tileHeader(int slot, ImVec2 pos, float width, bool compact, co
         theme::write(draw, {x, pos.y + 10}, theme::text3, meta, theme::caption);
         draw->PopClipRect();
         ImGui::SetCursorScreenPos({pos.x + width - 10 - chip, pos.y + 6});
-        if (theme::chip("##chip", state) && state != MemberState::Done && state != MemberState::Duplicate) later_ = [this, slot] { review(Scope::Camera, false, slot); };
+        if (theme::chip("##chip", state) && state != MemberState::Done && state != MemberState::Duplicate && state != MemberState::Propagated) later_ = [this, slot] { review(Scope::Camera, false, slot); };
     }
     draw->AddLine({pos.x, pos.y + 33.5f}, {pos.x + width, pos.y + 33.5f}, theme::line);
 }
@@ -888,7 +888,7 @@ void Application::sidePanel() {
         for (const auto& frame : frames_) {
             const auto state = memberState(frame.member);
             const int balls = int(frame.annotation["boxes"].size());
-            if (state != MemberState::Duplicate) { if (first < 0) first = balls; else same &= balls == first; }
+            if (state != MemberState::Duplicate && state != MemberState::Propagated) { if (first < 0) first = balls; else same &= balls == first; }
             theme::dot(list, {x + 5, base.y + y + 10}, state);
             theme::write(list, {x + 18, base.y + y + 1}, theme::text, cameraLabel(frame.member), theme::sub);
             const std::string value = "공 " + std::to_string(balls) + "개 · " + theme::stateLabel(state);

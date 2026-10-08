@@ -40,14 +40,15 @@ void apply() {
     set(ImGuiCol_PlotHistogram, ok);
 }
 ImU32 stateColor(MemberState state) {
-    return state == MemberState::Done ? ok : state == MemberState::Hold ? hold : state == MemberState::Editing ? accent : state == MemberState::Duplicate ? line2 : text3;
+    return state == MemberState::Done || state == MemberState::Propagated ? ok : state == MemberState::Hold ? hold : state == MemberState::Editing ? accent : state == MemberState::Duplicate ? line2 : text3;
 }
 const char* stateLabel(MemberState state) {
-    return state == MemberState::Done ? "확인됨" : state == MemberState::Hold ? "보류" : state == MemberState::Editing ? "수정 중" : state == MemberState::Duplicate ? "반복" : "미검수";
+    return state == MemberState::Done ? "확인됨" : state == MemberState::Propagated ? "전파됨" : state == MemberState::Hold ? "보류" : state == MemberState::Editing ? "수정 중" : state == MemberState::Duplicate ? "반복" : "미검수";
 }
 void dot(ImDrawList* draw, ImVec2 center, MemberState state, float radius) {
     const ImU32 color = stateColor(state);
     if (state == MemberState::Duplicate) draw->AddLine({center.x - radius, center.y}, {center.x + radius, center.y}, color, 2);
+    else if (state == MemberState::Propagated) draw->AddCircle(center, radius - .75f, color, 0, 2.f);   // a green ring: confirmed by propagation, not by a person
     else if (state == MemberState::Done || state == MemberState::Hold) draw->AddCircleFilled(center, radius, color);
     else { if (state == MemberState::Editing) draw->AddCircleFilled(center, radius, accentSoft); draw->AddCircle(center, radius - .75f, color, 0, 1.5f); }
 }
