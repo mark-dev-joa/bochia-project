@@ -209,12 +209,25 @@ void Application::save(std::function<void()> next,int slot) {
     launch("라벨 저장",[engine,payload]{return JobResult{engine->saveAnnotation(payload),{}};},[this,slot,key,next](JobResult result){updateSummary(result.data.at("summary"));if(slot<int(frames_.size())&&frames_[slot].annotation.value("key","")==key)frames_[slot].dirty=false;message_="자동 저장 완료";if(next)next();});
 }
 void Application::cancel(){++generation_;proposal_=nullptr;brushMask_.release();polygon_.clear();points_=Json::array();replacement_=-1;dragging_=false;if(!frames_.empty())current().repaint=true;}
+// A ball added during review is measured like the others: Canny + RANSAC circle, box from the circle (2026-10-08 user
+// request). A box drawn without a mask starts from the disc inscribed in it, which stays when the fit fails.
+bool Application::measure(Json& box){
+    const auto& image=current().image;
+    if(!box.contains("segmentation"))inscribeCircle(box,image.cols,image.rows);
+    if(box.contains("circle")&&box.value("circle_source","")!="box")return true;   // measured already, by the engine
+    if(!refineBallBox(box,image,circleMargin_))return false;
+    box.erase("circle_source");return true;
+}
 void Application::apply() {
     if(busy())return;
     if(proposal_.is_null()){if(polygon_.size()>=3)polygonProposal();return;}
     try {
         auto box=proposal_;
         if(!brushMask_.empty())box=maskAnnotation(brushMask_,box,"manual_brush");
+        const bool measured=measure(box);
+        char note[112];
+        if(measured)std::snprintf(note,sizeof note,"박스는 Canny+RANSAC 원(r %.1f)에서 잡았습니다",box["circle"][2].get<double>());
+        else std::snprintf(note,sizeof note,"원 맞춤이 안 되어 %s로 박스를 잡았습니다",box.contains("circle")?"내접원":"마스크 경계");
         checkpoint();auto& existing=current().annotation["boxes"];
         const bool added=!(replacement_>=0&&replacement_<int(existing.size()));
         if(!added) {
@@ -222,9 +235,9 @@ void Application::apply() {
             if(existing[replacement_].contains("color"))box["color"]=existing[replacement_]["color"];
             existing[replacement_]=box;selected_=replacement_;
         } else {existing.push_back(box);selected_=int(existing.size())-1;}
-        cancel();changed();message_="윤곽 반영 · 박스는 마스크에서 다시 계산했습니다.";
+        cancel();changed();message_=std::string("윤곽 반영 · ")+note;
         // A found ball, once applied, takes the user back to the three-tile view (2026-10-08 user request).
-        if(added){editor_=false;selected_=-1;message_="새 공 반영 · 세 장 보기로 돌아왔습니다. 확대 조각에서 확인하세요.";}
+        if(added){editor_=false;selected_=-1;message_=std::string("새 공 반영 · ")+note+" · 세 장 보기로 돌아왔습니다.";}
     } catch(const std::exception& error){error_=error.what();}
 }
 void Application::removeSelected(){if(editor_)removeBall(camera_,selected_);}
@@ -366,7 +379,7 @@ void Application::segment(cv::Point2d point,bool negative) {
     points_.push_back({{"x",point.x},{"y",point.y},{"label",negative?0:1}});
     auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["radius"]=radius_;
     const auto key=current().annotation.at("key").get<std::string>();const auto engine=engine_;const auto token=generation_;
-    launch("EfficientSAM으로 공 윤곽 분리",[engine,payload]{return JobResult{engine->assist("segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_="제안 미확정 · Space 반영, Esc 취소";});
+    launch("EfficientSAM으로 공 윤곽 분리",[engine,payload]{return JobResult{engine->assist("segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_=proposal_.contains("circle")?"제안 미확정 · 원 맞춤 완료 · Space 반영, Esc 취소":"제안 미확정 · 원 맞춤 실패, 마스크 경계 박스 · Space 반영, Esc 취소";});
 }
 // A dragged box is sent together with its center as the positive point.
 void Application::segmentBox(cv::Rect2d box) {
@@ -376,14 +389,14 @@ void Application::segmentBox(cv::Rect2d box) {
     points_.push_back({{"x",center.x},{"y",center.y},{"label",1}});
     auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["radius"]=std::max(box.width,box.height)/2;payload["box"]={box.x,box.y,box.width,box.height};
     const auto key=current().annotation.at("key").get<std::string>();const auto engine=engine_;const auto token=generation_;
-    launch("EfficientSAM으로 공 윤곽 분리",[engine,payload]{return JobResult{engine->assist("segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_="제안 미확정 · Space 반영, Esc 취소";});
+    launch("EfficientSAM으로 공 윤곽 분리",[engine,payload]{return JobResult{engine->assist("segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_=proposal_.contains("circle")?"제안 미확정 · 원 맞춤 완료 · Space 반영, Esc 취소":"제안 미확정 · 원 맞춤 실패, 마스크 경계 박스 · Space 반영, Esc 취소";});
 }
 void Application::polygonProposal(){
     if(busy()||polygon_.size()<3)return;Json points=Json::array();for(auto point:polygon_)points.push_back({point.x,point.y});
     // An outline follows the edge of a ball, so its middle says which ball it is; its first point may lie in a neighbour's box.
     replacement_=target(current(),boundsCenter(polygon_));if(replacement_>=0)selected_=replacement_;
     auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points;const auto engine=engine_;const auto token=generation_;
-    launch("수동 폴리곤 마스크 만들기",[engine,payload]{return JobResult{engine->assist("polygon",payload),{}};},[this,token](JobResult result){if(token!=generation_)return;proposal_=result.data.at("proposals").at(0);polygon_.clear();current().repaint=true;message_="폴리곤 미리보기 · Space로 반영";});
+    launch("수동 폴리곤 마스크 만들기",[engine,payload]{return JobResult{engine->assist("polygon",payload),{}};},[this,token](JobResult result){if(token!=generation_)return;proposal_=result.data.at("proposals").at(0);polygon_.clear();current().repaint=true;message_=proposal_.contains("circle")?"폴리곤 미리보기 · 원 맞춤 완료 · Space로 반영":"폴리곤 미리보기 · 원 맞춤 실패, 마스크 경계 박스 · Space로 반영";});
 }
 void Application::review(Scope scope,bool hold,int member) {
     if(frames_.empty())return;

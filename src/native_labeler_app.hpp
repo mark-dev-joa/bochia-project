@@ -157,6 +157,7 @@ private:
     void restorePosition();
     void cancel();
     void apply();
+    bool measure(Json& box);                         // Canny + RANSAC circle on a proposal, box from the circle; false when the fit failed
     void undo();
     void removeSelected();
     void removeBall(int slot, int ball);

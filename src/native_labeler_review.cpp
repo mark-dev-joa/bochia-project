@@ -636,7 +636,7 @@ void Application::canvasInput(FrameView& frame, ImVec2 pos, ImVec2 size, bool ho
         const cv::Rect2d dragged{std::min(clamped.x, dragStart_.x), std::min(clamped.y, dragStart_.y), std::abs(clamped.x - dragStart_.x), std::abs(clamped.y - dragStart_.y)};
         const bool moved = std::hypot(mouse.x - dragScreen_.x, mouse.y - dragScreen_.y) > 4;
         if (tool_ == Tool::Ai) { if (moved) segmentBox(dragged); else segment(dragStart_, false); }
-        else if (tool_ == Tool::Box) { if (dragged.width >= 1 && dragged.height >= 1) proposal_ = {{"bbox", {dragged.x, dragged.y, dragged.width, dragged.height}}, {"occluded", false}, {"source", "manual"}}; }
+        else if (tool_ == Tool::Box) { if (dragged.width >= 1 && dragged.height >= 1) { proposal_ = {{"bbox", {dragged.x, dragged.y, dragged.width, dragged.height}}, {"occluded", false}, {"source", "manual"}}; measure(proposal_); frame.repaint = true; } }
         else if (!brushMask_.empty()) { try { proposal_ = maskAnnotation(brushMask_, proposal_, "manual_brush"); } catch (const std::exception& error) { error_ = error.what(); } }
         frame.repaint = true;
     }
@@ -730,6 +730,7 @@ void Application::canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size) {
             draw->AddRect(p0, p1, theme::proposal, 0, 0, 1.5f);
             std::string caption = "제안 · " + sizeText(r);
             if (proposal_.contains("circle")) { char radius[24]; std::snprintf(radius, sizeof radius, " · r %.1f", proposal_["circle"][2].get<double>()); caption += radius; }
+            else if (proposal_.contains("segmentation")) caption += " · 원 맞춤 실패";
             if (proposal_.contains("color")) { const auto name = colorName(proposal_.value("color", "unknown")); if (*name) caption += std::string(" · ") + name; }
             theme::write(draw, {p0.x, p1.y + 5}, theme::proposal, caption, theme::caption, theme::bold);
         }

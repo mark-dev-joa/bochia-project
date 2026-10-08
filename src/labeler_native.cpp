@@ -497,7 +497,9 @@ Json assistance(const Project& project, BallAssist& assist, const std::string& m
     };
     if (method == "polygon") {
         Json box = polygonProposal(payload.at("points"), width, height);
-        if (colourCamera) box = coloured(box, project.catalog.read(recording, camera, index));
+        const cv::Mat image = project.catalog.read(recording, camera, index);
+        refineBallBox(box, image, circleMargin(project));   // a ball drawn by hand is measured like the others (2026-10-08 user request)
+        if (colourCamera) box = coloured(box, image);
         return {{"key", frame["key"]}, {"proposals", Json::array({box})}};
     }
     const cv::Mat image = project.catalog.read(recording, camera, index);
