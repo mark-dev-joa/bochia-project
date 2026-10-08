@@ -6,6 +6,7 @@
 #include "labeler_store.hpp"
 #include "labeler_export.hpp"
 #include "labeler_native.hpp"
+#include "labeler_propagate.hpp"
 #include "labeler_selection.hpp"
 #include "labeler_util.hpp"
 #include "native_labeler_view.hpp"
@@ -215,6 +216,25 @@ void assistTests() {
         Json hidden = {{"bbox", {visible.x, visible.y, visible.width, visible.height}}, {"segmentation", encodeMask(back)}, {"occluded", false}, {"source", "efficientsam"}};
         check(refineBallBox(hidden, pair, 0, exclude) && std::abs(hidden["circle"][0].get<double>() - 160) < 1 && std::abs(hidden["circle"][1].get<double>() - 120) < 1 && std::abs(hidden["circle"][2].get<double>() - 20) < 1,
               "the half-hidden ball's full circle was not recovered: " + hidden.value("circle", Json()).dump());
+    }
+    {   // Labels carried forward only where the ball still is: a ball that moved leaves no copy behind and keeps its new place.
+        cv::Mat before(240, 320, CV_8UC3, cv::Scalar(150, 170, 190)), after = before.clone();
+        cv::circle(before, {160, 120}, 20, cv::Scalar(235, 235, 235), -1, cv::LINE_AA);
+        cv::circle(after, {230, 120}, 20, cv::Scalar(235, 235, 235), -1, cv::LINE_AA);
+        auto disc = [](int x, int y) { cv::Mat m(240, 320, CV_8UC1, cv::Scalar(0)); cv::circle(m, {x, y}, 20, cv::Scalar(1), -1); return m; };
+        auto ball = [&](int x, int y, const char* source) { const cv::Rect b = cv::boundingRect(disc(x, y)); return Json{{"bbox", {b.x, b.y, b.width, b.height}}, {"segmentation", encodeMask(disc(x, y))}, {"occluded", false}, {"source", source}}; };
+        const Json confirmed = Json::array({ball(160, 120, "efficientsam")});
+        int matched = 0, copied = 0;
+        const Json none = carryLabels(confirmed, Json::array(), before, after, 0, true, matched, copied);
+        check(none.empty() && copied == 0, "a ball that moved away must not be copied to its old place");
+        const Json moved = carryLabels(confirmed, Json::array({ball(230, 120, "auto_sam")}), before, after, 0, true, matched, copied);
+        check(moved.size() == 1 && moved[0].contains("circle") && std::abs(moved[0]["circle"][0].get<double>() - 230) < 1.5, "the ball found at its new place must stay: " + moved.dump().substr(0, 160));
+        const Json stale = carryLabels(confirmed, Json::array({ball(160, 120, "efficientsam")}), before, after, 0, true, matched, copied);
+        check(stale.empty(), "a stale copy on bare floor must go");
+        const Json still = carryLabels(confirmed, Json::array(), before, before, 0, true, matched, copied);
+        check(still.size() == 1 && still[0].value("source", "") == "tracking" && std::abs(still[0]["circle"][0].get<double>() - 160) < 1.5, "a ball still there must be carried, marked tracking");
+        const Json plain = carryLabels(confirmed, Json::array(), before, after, 0, false, matched, copied);
+        check(plain.size() == 1, "without the check (repeated frames) the confirmed ball is carried as is");
     }
     Json margined = refinedBox; margined.erase("circle"); margined.erase("detection_bbox");
     check(refineBallBox(margined, floor, .5) && std::abs(margined["circle"][2].get<double>() - refinedBox["circle"][2].get<double>() - .5) < 1e-6 && std::abs(margined["detection_bbox"][2].get<double>() - refinedBox["detection_bbox"][2].get<double>() - 1) < 1e-6, "the margin must widen the circle and its box");

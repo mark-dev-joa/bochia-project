@@ -604,7 +604,7 @@ void Application::confirmPropagation(){
         ImGui::PopTextWrapPos();ImGui::PopFont();
         ImGui::Dummy({0,2});
         theme::checkbox("이미 최신인 프레임도 다시 전파",&propagateForce_);
-        {char carry[160];std::snprintf(carry,sizeof carry,"확인한 프레임 뒤 1.5초 안의 검수 대상 가운데 초안이 확인본과 다른 %s장도 확인본에 맞추기 (빠진 공은 더하고 그림자 같은 오검출은 빼며, 확인은 사람이)",grouped(counts.value("carry",0)).c_str());theme::checkbox(carry,&propagateCarry_);}
+        {char carry[160];std::snprintf(carry,sizeof carry,"확인한 프레임 뒤 1.5초 안의 검수 대상 가운데 초안이 확인본과 다른 %s장도 맞추기 (공이 아직 그 자리에 있는지 영상으로 확인한 뒤 더하고, 움직인 공은 새 자리를 지키며, 그림자 같은 오검출은 뺌. 확인은 사람이)",grouped(counts.value("carry",0)).c_str());theme::checkbox(carry,&propagateCarry_);}
         ImGui::Dummy({0,4});
         bool close=false;const bool running=propagationStatus_.value("status","")=="running";
         ImGui::BeginDisabled(running||busy());

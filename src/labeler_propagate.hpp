@@ -15,4 +15,11 @@ Json propagationCounts(const Project& project);   // {"representatives", "duplic
 // sources: when given, only these confirmed frames act as representatives and carry sources (the frames a person just
 // confirmed), so the drafts after a confirmation follow it at once.
 Json startPropagation(Project& project, bool force, bool carry = true, const Json& sources = Json::array());
+// The confirmed balls carried onto another frame. A draft ball that matches a confirmed one keeps its own place (measured
+// again on this image) and takes the confirmed flags; an unmatched confirmed ball is copied. With verify (the frames after
+// a confirmation, where balls may have moved) a copy is made only where the ball still is (a circle fits there and the
+// colour is the ball's), a matched draft goes when nothing is there any more (a stale copy on bare floor), and a draft
+// ball the confirmed frame lacks stays when it looks like one of the confirmed balls (the ball moved) and goes otherwise
+// (a shadow). Without verify (repeated frames, near-identical by the filter's rule) everything is carried as is.
+Json carryLabels(const Json& confirmed, const Json& drafts, const cv::Mat& sourceImage, const cv::Mat& image, double margin, bool verify, int& matched, int& copied);
 }

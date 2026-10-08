@@ -36,11 +36,32 @@ bool consistent(const Json& confirmed, const Json& drafts) {
     }
     return true;
 }
-// The confirmed balls carried onto the repeated frame: its own draft ball where one matches (within 8 px and 12 % in
-// size, the repeated-scene filter's own rule), the confirmed ball copied where none does; both measured on this image.
-Json transfer(const Json& confirmed, const Json& drafts, const cv::Mat& image, double margin, int& matched, int& copied) {
+struct Disc { double x, y, r; };
+Disc discOf(const Json& box) {
+    if (box.contains("circle")) return {box["circle"][0].get<double>(), box["circle"][1].get<double>(), box["circle"][2].get<double>()};
+    const Json& b = shownBox(box);
+    return {b[0].get<double>() + b[2].get<double>() / 2, b[1].get<double>() + b[3].get<double>() / 2, std::min(b[2].get<double>(), b[3].get<double>()) / 2};
+}
+// The mean colour inside a ball's disc: where a ball moved away the floor remains, which looks nothing like the ball.
+cv::Scalar discMean(const cv::Mat& image, const Json& box) {
+    const Disc d = discOf(box);
+    cv::Mat mask = cv::Mat::zeros(image.size(), CV_8UC1);
+    cv::circle(mask, cv::Point(int(std::lround(d.x)), int(std::lround(d.y))), std::max(1, int(d.r * .7)), cv::Scalar(255), -1);
+    cv::Scalar mean = cv::mean(image, mask);
+    if (image.channels() == 1) mean[1] = mean[2] = mean[0];
+    return mean;
+}
+bool sameLook(const cv::Scalar& a, const cv::Scalar& b) { return std::abs(a[0] - b[0]) + std::abs(a[1] - b[1]) + std::abs(a[2] - b[2]) <= 96; }
+}
+
+Json carryLabels(const Json& confirmed, const Json& drafts, const cv::Mat& sourceImage, const cv::Mat& image, double margin, bool verify, int& matched, int& copied) {
     std::vector<bool> used(drafts.size(), false); Json out = Json::array();
-    for (const auto& r : confirmed) {
+    std::vector<cv::Scalar> looks;
+    if (verify) for (const auto& r : confirmed) looks.push_back(discMean(sourceImage, r));
+    auto looksLikeAny = [&](const cv::Scalar& look) { for (const auto& l : looks) if (sameLook(look, l)) return true; return false; };
+    auto fits = [&](Json& box) { return box.contains("segmentation") && !box.value("occluded", false) && refineBallBox(box, image, margin); };
+    for (size_t k = 0; k < confirmed.size(); ++k) {
+        const Json& r = confirmed[k];
         const Json& rb = shownBox(r);
         const double rx = rb[0].get<double>() + rb[2].get<double>() / 2, ry = rb[1].get<double>() + rb[3].get<double>() / 2;
         const bool manual = r.value("source", "").rfind("manual", 0) == 0;   // an outline a person drew replaces the draft's
@@ -53,18 +74,31 @@ Json transfer(const Json& confirmed, const Json& drafts, const cv::Mat& image, d
             const bool sized = std::abs(rb[2].get<double>() - db[2].get<double>()) <= std::max(4.0, .12 * rb[2].get<double>()) && std::abs(rb[3].get<double>() - db[3].get<double>()) <= std::max(4.0, .12 * rb[3].get<double>());
             if (distance <= 8 && sized && (best < 0 || distance < bestDistance)) { best = int(i); bestDistance = distance; }
         }
-        Json box;
         if (best >= 0) {
-            used[size_t(best)] = true; box = drafts[size_t(best)];
+            used[size_t(best)] = true; Json box = drafts[size_t(best)];
             box["occluded"] = r.value("occluded", false);
             if (r.contains("color")) box["color"] = r["color"]; else box.erase("color");
-            ++matched;
-        } else { box = r; ++copied; }
-        if (box.contains("segmentation") && !box.value("occluded", false)) refineBallBox(box, image, margin);   // this frame's own edge
-        out.push_back(box);
+            const bool fitted = fits(box);
+            if (verify && !fitted && !sameLook(discMean(image, box), looks[k])) continue;   // nothing there: a stale copy on bare floor
+            ++matched; out.push_back(box);
+        } else {
+            Json box = r;
+            if (verify) {
+                if (!fits(box) || !sameLook(discMean(image, box), looks[k])) continue;   // the ball is not there any more
+                box["source"] = "tracking";   // carried from the confirmed frame, not found on this one
+            } else fits(box);
+            ++copied; out.push_back(box);
+        }
+    }
+    if (verify) for (size_t i = 0; i < drafts.size(); ++i) {   // a ball the draft found elsewhere: a moved ball stays, a shadow goes
+        if (used[i]) continue;
+        Json box = drafts[i];
+        const bool fitted = fits(box);
+        if ((fitted || box.contains("circle")) && looksLikeAny(discMean(image, box))) out.push_back(box);
     }
     return out;
 }
+namespace {
 // The repeated frames whose confirmed representative they do not yet carry (or all of them, on request), and with
 // carry the review targets after a confirmed frame whose draft holds fewer balls than it.
 std::vector<Target> plan(const Project& project, bool force, bool carry, const std::set<std::string>& only, int& representatives, int& duplicates, int& pending, int& done, int& carries) {
@@ -93,11 +127,14 @@ std::vector<Target> plan(const Project& project, bool force, bool carry, const s
                 // A draft that the stereo matching seeded is trusted unless a ball is missing: a ball that moved since the
                 // confirmed frame must keep its new place. A draft without seeds follows the confirmed frame whenever it differs.
                 const int seeds = frame.contains("automatic") && frame["automatic"].is_object() ? frame["automatic"].value("seed_count", 0) : 0;
-                if (seeds > 0 && frame["boxes"].size() >= (*source)["boxes"].size()) continue;
-                if (consistent((*source)["boxes"], frame["boxes"])) continue;   // the draft already agrees with the confirmed frame
-                const std::string hash = sourceHash((*source)["boxes"]);
                 const Json carried = frame.contains("automatic") && frame["automatic"].is_object() ? frame["automatic"].value("carried", Json()) : Json();
-                if (carried.is_object() && carried.value("from", "") == sourceKey && carried.value("source_hash", "") == hash && !force) continue;
+                const bool oldRule = carried.is_object() && carried.value("rule", 1) < 2;   // carried before the presence check: looked at again
+                if (!oldRule) {
+                    if (seeds > 0 && frame["boxes"].size() >= (*source)["boxes"].size()) continue;
+                    if (consistent((*source)["boxes"], frame["boxes"])) continue;   // the draft already agrees with the confirmed frame
+                }
+                const std::string hash = sourceHash((*source)["boxes"]);
+                if (carried.is_object() && !oldRule && carried.value("from", "") == sourceKey && carried.value("source_hash", "") == hash && !force) continue;
                 ++carries;
                 targets.push_back({key, sourceKey, hash, frame, (*source)["boxes"], true});
             }
@@ -152,11 +189,22 @@ Json startPropagation(Project& project, bool force, bool carry, const Json& sour
             std::vector<std::thread> pool;
             for (int w = 0; w < workers; ++w) pool.emplace_back([&] {
                 try {
+                    std::map<std::string, cv::Mat> sourceImages;   // the confirmed frames' images, for the look of their balls
                     for (size_t i = next++; i < targets.size() && !stop.stop_requested(); i = next++) {
                         const Target& target = targets[i];
                         const cv::Mat image = project.catalog.read(target.frame["recording"], target.frame["camera"], target.frame["index"]);
+                        cv::Mat sourceImage;
+                        if (target.carry) {
+                            auto found = sourceImages.find(target.representative);
+                            if (found == sourceImages.end()) {
+                                const std::string& key = target.representative; const auto a = key.find('/'), b = key.rfind('/');
+                                if (sourceImages.size() > 8) sourceImages.clear();
+                                found = sourceImages.emplace(key, project.catalog.read(key.substr(0, a), key.substr(a + 1, b - a - 1), std::stoi(key.substr(b + 1)))).first;
+                            }
+                            sourceImage = found->second;
+                        }
                         int matched = 0, copied = 0;
-                        Json boxes = transfer(target.confirmed, target.frame["boxes"], image, margin, matched, copied);
+                        Json boxes = carryLabels(target.confirmed, target.frame["boxes"], sourceImage, image, margin, target.carry, matched, copied);
                         matchedAll += matched; copiedAll += copied;
                         { std::lock_guard guard(resultsLock); results[target.key] = {{"boxes", boxes}, {"was", target.frame["boxes"]}, {"from", target.representative}, {"hash", target.hash}, {"width", image.cols}, {"height", image.rows}, {"carry", target.carry}}; }
                         { std::lock_guard guard(project.lock); project.propagationJob["done"] = ++finished; }
@@ -177,7 +225,7 @@ Json startPropagation(Project& project, bool force, bool carry, const Json& sour
                     frame["boxes"] = validateBoxes(result["boxes"], result["width"], result["height"]);
                     if (result.value("carry", false)) {   // a draft for a review target: still a person's to confirm
                         if (!frame["automatic"].is_object()) frame["automatic"] = Json::object();
-                        frame["automatic"]["carried"] = {{"from", result["from"]}, {"source_hash", result["hash"]}, {"run_id", runId}, {"at", utcIso()}};
+                        frame["automatic"]["carried"] = {{"from", result["from"]}, {"source_hash", result["hash"]}, {"run_id", runId}, {"at", utcIso()}, {"rule", 2}};
                         frame["automatic"]["needs_attention"] = false;
                         ++carried; balls += int(frame["boxes"].size()); continue;
                     }
