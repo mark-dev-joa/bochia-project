@@ -3,8 +3,10 @@
 // labeler_selection.SelectionFile keep them, so the web labeler and the native app open the same files.
 #include "labeler_catalog.hpp"
 #include <functional>
+#include <map>
 #include <mutex>
 #include <optional>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -27,11 +29,16 @@ private:
 class Project {
 public:
     Project(const Catalog& catalog, const std::filesystem::path& project, const std::filesystem::path& exportRoot);
+    ~Project();                         // stops the colour fill and waits for a running export
+    Project(const Project&) = delete;
+    Project& operator=(const Project&) = delete;
     const Catalog& catalog;
     const std::filesystem::path path, exportRoot;
     mutable std::recursive_mutex lock;
     Json state;
     Json job = {{"status", "idle"}};    // the export job
+    Json colorJob = {{"status", "idle"}};
+    std::map<std::string, cv::Mat> thumbnails;   // "recording/camera/index@width"
     mutable SelectionFile selection;    // its sidecar cache refreshes on read
     Json summary() const;
     int commitAutomatic(const std::vector<std::pair<std::string, Json>>& entries);   // background drafts, own revision
@@ -40,6 +47,8 @@ public:
     Json saveFrame(const Json& payload);
     Json saveSplits(const Json& payload);
     void write(const Json& replacement) const;
+    std::thread exportWorker;           // declared last: joined before anything above goes away
+    std::jthread colorWorker;
 };
 std::vector<std::pair<std::string, Json>> selectedReviewed(const Json& snapshot);
 }

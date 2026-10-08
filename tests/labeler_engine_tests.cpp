@@ -3,6 +3,8 @@
 #include "labeler_catalog.hpp"
 #include "labeler_assist.hpp"
 #include "labeler_store.hpp"
+#include "labeler_export.hpp"
+#include "labeler_native.hpp"
 #include "labeler_util.hpp"
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -12,6 +14,7 @@
 #include <fstream>
 #include <iostream>
 #include <numeric>
+#include <set>
 #include <stdexcept>
 #include <string>
 
@@ -59,6 +62,18 @@ struct Fixture {
             }
         }
         for (const char* session : {"capture-a", "capture-b", "capture-c"}) ids.push_back(sha256Hex(session).substr(0, 16));
+    }
+    // Rewrites one camera as an uncompressed BGR8 colour stream showing the given 8x6 image on all three frames.
+    void colourCamera(const char* session, const char* camera, const cv::Mat& bgr) const {
+        const std::string pixels(reinterpret_cast<const char*>(bgr.data), bgr.total() * 3);
+        std::string index;
+        for (int frame = 0; frame < 3; ++frame) {
+            Json info = {{"width", 8}, {"height", 6}, {"padding_x", 0}, {"padding_y", 0}, {"pixel_format", 0x02180015}, {"size", 144}, {"stored_size", 144},
+                         {"offset", frame * 144}, {"codec", 0}, {"filter_stride", 0}, {"status", 0}, {"host_ns", 1000 + frame * 100 + (std::string(camera) == "camera-1" ? 5 : 0)}};
+            index += info.dump() + (frame < 2 ? "\n" : "");
+        }
+        writeFile(source / session / camera / "frames.raw", pixels + pixels + pixels);
+        writeFile(source / session / camera / "frames.jsonl", index);
     }
 };
 
@@ -274,6 +289,310 @@ void storeTests() {
     check(page["width"] == 8 && page["height"] == 6 && page["host_ns"] == "0", "image frame size must come from the file");
     std::cout << "PASS: project store, summary, conflicts, failed writes, automatic commits, sidecar view and image folders\n";
 }
+
+// NativeWorkflowTests.review_all and .confirm of the Python fixture.
+void reviewAll(Project& project) {
+    for (const auto& scene : sceneIndex(project.catalog)) {
+        Json keys = Json::array();
+        for (const auto& member : scene["members"]) keys.push_back(member["key"]);
+        nativeAction(project, "review", {{"keys", keys}, {"status", "reviewed"}, {"expected_revision", project.state["revision"]}});
+    }
+}
+Json confirmSplit(Project& project) {
+    Json plan = nativeAction(project, "split-preview", Json::object());
+    plan["expected_revision"] = project.state["revision"];
+    return nativeAction(project, "split-confirm", plan);
+}
+Json sceneKeysOf(const Json& scene) { Json keys = Json::array(); for (const auto& member : scene["members"]) keys.push_back(member["key"]); return keys; }
+void nativeTests() {
+    Fixture fixture;
+    Catalog catalog(fixture.source);
+    Project project(catalog, fixture.project, fixture.exports);
+    // test_scene_index_covers_each_frame_once_and_retains_unmatched
+    Json scenes = sceneIndex(catalog);
+    std::set<std::string> keys; size_t total = 0; bool pairs = true;
+    for (const auto& scene : scenes) { pairs = pairs && scene["members"].size() == 2; for (const auto& member : scene["members"]) { keys.insert(member["key"].get<std::string>()); ++total; } }
+    check(total == 18 && keys.size() == 18 && pairs && scenes.size() == 9, "scene index must cover each frame once");
+    check(scenes[0]["id"] == fixture.ids[0] + "/0" && scenes[0]["recording_number"] == 1 && scenes[0]["index"] == 0 && scenes[0]["host_ns"] == "1000"
+          && scenes[0]["members"][1]["delta_ms"] == 5e-06 && scenes[0]["members"][1]["camera"] == "camera-1" && scenes[0]["members"][0]["kind"] == "모노" && scenes[0]["members"][0]["name"] == "Mono A", "scene fields wrong: " + scenes[0].dump());
+    check(scenes[8]["id"] == fixture.ids[2] + "/8" && scenes[8]["recording_number"] == 3, "scene ids must count across recordings");
+    Catalog shifted(fixture.source);
+    for (auto& time : shifted.recordings[0].cameras[1].times) time += 1'000'000'000;
+    scenes = sceneIndex(shifted); keys.clear(); bool single = false;
+    for (const auto& scene : scenes) { single = single || scene["members"].size() == 1; for (const auto& member : scene["members"]) keys.insert(member["key"].get<std::string>()); }
+    check(keys.size() == 18 && single && scenes.size() == 12, "unmatched frames must stay visible as sparse scenes");
+    // test_review_all_then_confirm_and_label_edit_invalidates_confirmation
+    check(fails([&] { confirmSplit(project); }, "미완료"), "confirm before review accepted");
+    reviewAll(project);
+    Json native = nativeCatalog(project);
+    check(native["target_images"] == 18 && native["reviewed_target_images"] == 18 && native["api_version"] == 5 && native["split_confirmed"] == false && native["fingerprint"].is_null() && native["groups"].empty()
+          && native["scenes"][0]["members"][0]["status"] == "reviewed" && native["scenes"][0]["members"][0]["count"] == 0 && native["recordings"].size() == 3 && native["summary"]["reviewed"] == 18, "native catalog after review wrong");
+    const Json confirmed = confirmSplit(project);
+    check(splitValid(project), "confirmation must be valid right after confirming");
+    const std::string version = project.state["native_split"]["fingerprint"];
+    check(confirmed["fingerprint"] == version && confirmed["split_confirmed"] == true && nativeCatalog(project)["fingerprint"] == version && version.size() == 64 && nativeCatalog(project)["split_confirmed"] == true, "fingerprint not reported");
+    check(project.state["native_groups"].size() == 3 && project.state["native_split"]["splits"] == project.state["splits"], "confirmation state wrong");
+    { Project restored(catalog, fixture.project, fixture.exports); check(splitValid(restored), "confirmation lost on reopen"); }
+    saveFrame(project, fixture, 0, "camera-0", 0, false);
+    check(!splitValid(project) && nativeCatalog(project)["fingerprint"].is_null() && !project.state.contains("native_split") && nativeCatalog(project)["split_confirmed"] == false, "a label edit must invalidate the confirmation");
+    check(fails([&] { nativeAction(project, "export", {{"crops", false}}); }, "분할을 확정"), "export without a valid confirmation accepted");
+    // test_data_version_covers_the_assignment_and_the_groups
+    reviewAll(project);
+    const Json first = confirmSplit(project);
+    Json groups = Json::object(); for (const auto& id : fixture.ids) groups[id] = id;
+    Json splits = project.state["splits"];
+    std::string train, test;
+    for (const auto& [recording, split] : splits.items()) { if (split == "train") train = recording; if (split == "test") test = recording; }
+    splits[train] = "test"; splits[test] = "train";
+    auto request = [&] { return Json{{"groups", groups}, {"splits", splits}, {"expected_revision", project.state["revision"]}}; };
+    const Json swapped = nativeAction(project, "split-confirm", request());
+    check(swapped["fingerprint"] != first["fingerprint"] && splitValid(project), "the same labels with another test set must be another dataset");
+    check(nativeAction(project, "split-confirm", request())["fingerprint"] == swapped["fingerprint"], "confirming the same plan twice must give the same version");
+    Json renamed = Json::object(); for (const auto& id : fixture.ids) renamed[id] = "batch-" + id;
+    const Json paired = {{fixture.ids[0], "pair"}, {fixture.ids[1], "pair"}, {fixture.ids[2], "single"}};
+    check(fingerprint(project, nullptr, &renamed) == fingerprint(project, nullptr, &groups) && fingerprint(project, nullptr, &paired) != fingerprint(project, nullptr, &groups), "group names must not matter, membership must");
+    // test_batch_groups_survive_a_label_fix_and_a_restart
+    Json plan = nativeAction(project, "split-preview", {{"groups", renamed}}); plan["expected_revision"] = project.state["revision"];
+    nativeAction(project, "split-confirm", plan);
+    saveFrame(project, fixture, 0, "camera-0", 0, false);
+    check(!splitValid(project) && nativeCatalog(project)["groups"] == renamed, "groups lost after a label fix");
+    { Project restored(catalog, fixture.project, fixture.exports); check(nativeCatalog(restored)["groups"] == renamed, "groups lost after a restart"); }
+    // test_review_refuses_labels_the_screen_has_not_shown
+    const std::string key = fixture.ids[0] + "/camera-0/0";
+    Json sceneKeys;
+    for (const auto& scene : sceneIndex(catalog)) for (const auto& member : scene["members"]) if (member["key"] == key) sceneKeys = sceneKeysOf(scene);
+    saveFrame(project, fixture, 0, "camera-0", 0, false);   // one box arrives after a screen loaded the scene with none
+    auto review = [&](const Json& seen) { return nativeAction(project, "review", {{"keys", sceneKeys}, {"seen", seen}, {"expected_revision", project.state["revision"]}}); };
+    Json seen = Json::object(); for (const auto& item : sceneKeys) seen[item.get<std::string>()] = 0;
+    bool conflicted = false;
+    try { review(seen); } catch (const Conflict&) { conflicted = true; }
+    check(conflicted && project.state["frames"][key]["reviewed"] == false, "unseen boxes were confirmed");
+    seen[key] = 1; review(seen);
+    check(project.state["frames"][key]["reviewed"] == true && project.state["frames"][key]["human_touched"] == true && !project.state["frames"][key]["boxes"][0].contains("contours"), "review with the right counts failed");
+    // test_atomic_scene_review_hold_and_mono_color_guard
+    const Json scene0 = sceneKeysOf(sceneIndex(catalog)[0]);
+    nativeAction(project, "review", {{"keys", scene0}, {"status", "hold"}, {"expected_revision", project.state["revision"]}});
+    for (const auto& item : scene0) check(project.state["frames"][item.get<std::string>()]["review_status"] == "hold" && project.state["frames"][item.get<std::string>()]["reviewed"] == false, "hold not stored");
+    const Json prior = project.state;
+    check(fails([&] { nativeAction(project, "review", {{"keys", {scene0[0], fixture.ids[0] + "/camera-1/2"}}, {"expected_revision", prior["revision"]}}); }, "서로 다른 시점"), "frames of different moments reviewed together");
+    check(project.state == prior, "a refused review changed the state");
+    check(fails([&] { nativeAction(project, "review", {{"keys", {scene0[0], fixture.ids[1] + "/camera-0/0"}}, {"expected_revision", prior["revision"]}}); }, "한 장면의 촬영만"), "two recordings reviewed together");
+    check(fails([&] { nativeAction(project, "review", {{"keys", Json::array()}, {"expected_revision", 0}}); }, "검수 상태 요청") && fails([&] { nativeAction(project, "review", {{"keys", scene0}, {"status", "later"}, {"expected_revision", 0}}); }, "검수 상태 요청"), "bad review requests accepted");
+    check(fails([&] { nativeAction(project, "review", {{"keys", scene0}, {"expected_revision", 0}}); }, "다른 창에서"), "stale review revision accepted");
+    check(fails([&] { nativeAction(project, "nope", Json::object()); }, "지원하지 않는"), "unknown action accepted");
+    // test_groups_never_cross_splits_and_insufficient_groups_rejected
+    reviewAll(project);
+    plan = nativeAction(project, "split-preview", Json::object());
+    std::set<std::string> values; for (const auto& [recording, split] : plan["splits"].items()) values.insert(split.get<std::string>());
+    check(values == std::set<std::string>{"train", "val", "test"} && plan["splits"].size() == 3 && plan["counts"][fixture.ids[0]] == 6 && plan["groups"][fixture.ids[1]] == fixture.ids[1], "split plan wrong: " + plan.dump());
+    Json one = Json::object(); for (const auto& id : fixture.ids) one[id] = "one-scene";
+    check(fails([&] { nativeAction(project, "split-preview", {{"groups", one}}); }, "최소 3개"), "one group planned");
+    check(fails([&] { nativeAction(project, "split-preview", {{"groups", {{fixture.ids[0], "a"}}}}); }, "모든 촬영에"), "partial groups planned");
+    const Json before = project.state;
+    const Json same = {{fixture.ids[0], "same"}, {fixture.ids[1], "same"}, {fixture.ids[2], "other"}};
+    check(fails([&] { nativeAction(project, "split-confirm", {{"groups", same}, {"splits", plan["splits"]}, {"expected_revision", before["revision"]}}); }, "최소 3개"), "a group across splits confirmed");   // three recordings in two groups fail the group count first, as in Python
+    check(project.state == before, "a refused confirmation changed the state");
+    Json partial = plan["splits"]; partial[fixture.ids[0]] = "unassigned";
+    check(fails([&] { nativeAction(project, "split-confirm", {{"groups", plan["groups"]}, {"splits", partial}, {"expected_revision", before["revision"]}}); }, "모든 촬영을"), "an unassigned recording confirmed");
+    // test_grow_masks_widens_draft_masks_and_leaves_human_work
+    {
+        Fixture second; Catalog catalog2(second.source); Project project2(catalog2, second.project, second.exports);
+        cv::Mat mask(6, 8, CV_8UC1, cv::Scalar(0)); mask(cv::Rect(3, 2, 2, 2)).setTo(1);
+        const Json draft = {{"bbox", {3, 2, 2, 2}}, {"segmentation", encodeMask(mask)}, {"area", 4}, {"occluded", false}, {"source", "auto_sam"}};
+        const std::string key2 = second.ids[0] + "/camera-0/0";
+        project2.state["frames"][key2] = {{"recording", second.ids[0]}, {"camera", "camera-0"}, {"index", 0}, {"width", 8}, {"height", 6}, {"boxes", {draft}}, {"reviewed", false}, {"human_touched", false}};
+        saveFrame(project2, second, 1, "camera-0", 0, true, Json::array({draft}));   // saved by a person: left alone
+        check(nativeCatalog(project2)["growable"] == Json({{"frames", 1}, {"balls", 1}}), "growable count wrong");
+        const Json result = nativeAction(project2, "grow-masks", {{"pixels", 1}, {"expected_revision", project2.state["revision"]}});
+        const Json grown = project2.state["frames"][key2]["boxes"][0];
+        check(grown["bbox"] == Json::array({2, 1, 4, 4}) && grown["area"] == 12, "grown box wrong: " + grown.dump());
+        cv::Mat expected(6, 8, CV_8UC1, cv::Scalar(0)); expected(cv::Rect(2, 2, 4, 2)).setTo(1); expected(cv::Rect(3, 1, 2, 4)).setTo(1);
+        check(cv::countNonZero(decodeMaskChecked(grown["segmentation"], 8, 6) != expected) == 0, "grown mask is not the one-pixel ellipse dilation");
+        check(project2.state["frames"][second.ids[1] + "/camera-0/0"]["boxes"][0]["bbox"] == Json::array({3.0, 2.0, 2.0, 2.0}), "human work was grown");
+        check(result["frames"] == 1 && result["balls"] == 1 && result["mask_growth"]["pixels"] == 1 && nativeCatalog(project2)["mask_growth"]["pixels"] == 1 && nativeCatalog(project2)["growable"] == Json({{"frames", 1}, {"balls", 1}}), "grow result wrong: " + result.dump());
+        check(fails([&] { nativeAction(project2, "grow-masks", {{"pixels", 9}, {"expected_revision", project2.state["revision"]}}); }, "1에서 3") && fails([&] { nativeAction(project2, "grow-masks", {{"pixels", true}, {"expected_revision", project2.state["revision"]}}); }, "1에서 3"), "bad pixel counts accepted");
+        nativeAction(project2, "grow-masks", {{"pixels", 2}, {"expected_revision", project2.state["revision"]}});
+        check(project2.state["mask_growth"]["pixels"] == 3 && project2.state["mask_growth"]["at"].get<std::string>().size() == 32, "growth passes must add up");
+    }
+    // test_colour_fill_runs_in_the_background_and_keeps_given_colours, with a real colour camera instead of a patched read()
+    {
+        Fixture third;
+        cv::Mat mask(6, 8, CV_8UC1, cv::Scalar(0)); mask(cv::Rect(1, 1, 4, 4)).setTo(1);
+        cv::Mat image(6, 8, CV_8UC3, cv::Scalar(30, 40, 50)); image.setTo(cv::Scalar(8, 12, 32), mask);
+        third.colourCamera("capture-a", "camera-0", image);
+        Catalog catalog3(third.source);
+        check(catalog3.camera(third.ids[0], "camera-0").kind == "컬러" && catalog3.read(third.ids[0], "camera-0", 1).at<cv::Vec3b>(2, 2) == cv::Vec3b(8, 12, 32), "colour fixture wrong");
+        Project project3(catalog3, third.project, third.exports);
+        const Json red = {{"bbox", {1, 1, 4, 4}}, {"segmentation", encodeMask(mask)}, {"occluded", false}, {"source", "auto_sam"}};
+        Json white = red; white["color"] = "white";
+        const std::string key3 = third.ids[0] + "/camera-0/0";
+        project3.state["frames"][key3] = {{"recording", third.ids[0]}, {"camera", "camera-0"}, {"index", 0}, {"width", 8}, {"height", 6}, {"boxes", {red, white}}, {"reviewed", false}, {"human_touched", false}};
+        check(nativeCatalog(project3)["colorable"] == 1 && colorFillStatus(project3)["status"] == "idle", "colorable count wrong");
+        const Json started = nativeAction(project3, "fill-colors", Json::object());
+        check(started["status"] == "running" && started["total"] == 1, "colour fill did not start: " + started.dump());
+        for (int i = 0; i < 500 && colorFillStatus(project3)["status"] == "running"; ++i) Sleep(10);
+        check(colorFillStatus(project3)["status"] == "complete" && colorFillStatus(project3)["filled"] == 1 && colorFillStatus(project3)["done"] == 1, "colour fill did not complete: " + colorFillStatus(project3).dump());
+        const Json boxes = project3.state["frames"][key3]["boxes"];
+        check(boxes[0]["color"] == "red" && boxes[1]["color"] == "white", "colours wrong: " + boxes.dump());
+        check(nativeCatalog(project3)["colorable"] == 0 && nativeCatalog(project3)["color_fill"]["balls"] == 1 && project3.state["revision"] == 1 && !project3.state.contains("native_split"), "colour fill record wrong");
+        check(fails([&] { saveFrame(project3, third, 0, "camera-1", 0, true, Json::array({{{"bbox", {2, 1, 3, 4}}, {"color", "red"}}})); }, "모노"), "mono guard lost");
+        saveFrame(project3, third, 0, "camera-0", 1, true, Json::array({{{"bbox", {1, 1, 4, 4}}, {"color", "blue"}}}));   // a colour camera takes colours
+    }
+    // test_thumbnail_is_a_small_cached_jpeg
+    const cv::Mat thumb = thumbnail(project, fixture.ids[0], "camera-0", 0, 32);
+    check(thumb.rows == 24 && thumb.cols == 32 && thumb.data == thumbnail(project, fixture.ids[0], "camera-0", 0, 32).data, "thumbnail size or cache wrong");
+    check(fails([&] { thumbnail(project, fixture.ids[0], "camera-0", 0, 4000); }, "썸네일 폭"), "oversized thumbnail accepted");
+    // test_catalog_reports_attention_and_recording_statistics
+    {
+        Fixture fourth; Catalog catalog4(fourth.source); Project project4(catalog4, fourth.project, fourth.exports);
+        saveFrame(project4, fourth, 0, "camera-0", 0, true, Json::array({{{"bbox", {2, 1, 3, 4}}}, {{"bbox", {0, 0, 2, 2}}}}));
+        const Json native4 = nativeCatalog(project4);
+        const Json& stats = native4["stats"][fourth.ids[0]];
+        check(stats["number"] == 1 && stats["images"] == 6 && stats["balls"] == 2 && stats["empty"] == 5 && stats["small"] == 2 && stats["reviewed"] == 1 && stats["day"].is_null() && stats["started"].is_null() && stats["seconds"].is_null() && stats["frames"] == Json::array({3, 3}) && stats["name"] == "capture-a", "recording stats wrong: " + stats.dump());
+        bool attention = true;
+        for (const auto& scene : native4["scenes"]) for (const auto& member : scene["members"]) attention = attention && member.contains("attention") && member.contains("selected") && member.contains("count");
+        check(attention, "scene members must carry attention, selected and count");
+        check(native4["stats"][fourth.ids[2]]["images"] == 6 && native4["stats"][fourth.ids[2]]["number"] == 3, "stats of the other recordings wrong");
+    }
+    std::cout << "PASS: scene index, review, confirmation, data version, groups, unseen guard, hold, split rules, grow masks, colour fill, thumbnails and stats\n";
+}
+
+std::vector<fs::path> listFiles(const fs::path& folder, const std::string& extension) {
+    std::vector<fs::path> files;
+    if (fs::is_directory(folder)) for (const auto& entry : fs::directory_iterator(folder)) if (entry.path().extension() == extension) files.push_back(entry.path());
+    std::sort(files.begin(), files.end());
+    return files;
+}
+Json readJson(const fs::path& path) { return Json::parse(readFile(path)); }
+cv::Mat readPng(const fs::path& path) { const std::string bytes = readFile(path); return cv::imdecode(cv::Mat(1, int(bytes.size()), CV_8UC1, const_cast<char*>(bytes.data())), cv::IMREAD_COLOR); }
+void exportTests() {
+    Fixture fixture;
+    Catalog catalog(fixture.source);
+    Project project(catalog, fixture.project, fixture.exports);
+    // test_detection_override_keeps_mask_and_both_coco_coordinate_contracts
+    cv::Mat mask(6, 8, CV_8UC1, cv::Scalar(0)); mask(cv::Rect(2, 1, 3, 4)).setTo(1); mask.at<uchar>(2, 3) = 0;
+    const Json rle = encodeMask(mask);
+    const Json box = {{"bbox", {2, 1, 3, 4}}, {"segmentation", rle}, {"detection_bbox", {1, 0, 5, 6}}, {"source", "manual_brush"}};
+    saveFrame(project, fixture, 0, "camera-0", 0, true, Json::array({box}));
+    check(cv::countNonZero(decodeMaskChecked(project.frame(fixture.ids[0], "camera-0", 0)["boxes"][0]["segmentation"], 8, 6) != mask) == 0, "mask lost before export");
+    assignSplits(project, fixture);
+    Json result = exportDataset(catalog, project.state, fixture.temp.path / "export-native");
+    fs::path output = fromUtf8(result["path"]);
+    const Json segmentation = readJson(output / "annotations/instances_train.json")["annotations"][0], detection = readJson(output / "annotations/instances_detection_train.json")["annotations"][0];
+    check(segmentation["bbox"] == Json::array({2.0, 1.0, 3.0, 4.0}) && segmentation["area"] == 11 && segmentation["segmentation"] == rle && segmentation["occluded"] == false && segmentation["category_id"] == 1 && segmentation["image_id"] == 1, "segmentation annotation wrong: " + segmentation.dump());
+    check(detection["bbox"] == Json::array({1.0, 0.0, 5.0, 6.0}) && !detection.contains("segmentation") && detection["area"] == 30.0, "detection annotation wrong: " + detection.dump());
+    auto yoloTokens = [&](const fs::path& folder) { const auto files = listFiles(folder, ".txt"); check(files.size() == 1, "one yolo file expected in " + utf8(folder)); std::vector<double> values; std::string text = readFile(files[0]); size_t start = 0; while (start < text.size()) { size_t end = text.find_first_of(" \n", start); if (end == std::string::npos) end = text.size(); if (end > start) values.push_back(std::stod(text.substr(start, end - start))); start = end + 1; } return values; };
+    std::vector<double> yolo = yoloTokens(output / "labels/train");
+    check(yolo.size() == 5 && std::abs(yolo[3] - 5.0 / 8) < 1e-7 && std::abs(yolo[4] - 1) < 1e-7 && std::abs(yolo[1] - 3.5 / 8) < 1e-7, "yolo line must use the detection box");
+    check(fails([&] { Json bad = box; bad["detection_bbox"] = {-1, 0, 5, 6}; validateBoxes(Json::array({bad}), 8, 6); }, "박스"), "detection box outside the image accepted");
+    check(!fs::exists(output / "INCOMPLETE.txt") && fs::exists(output / "manifest.json") && fs::exists(output / "data.yaml") && listFiles(output / "images/train", ".png").size() == 1 && listFiles(output / "crops/train", ".png").size() == 1, "export folder layout wrong");
+    const Json manifest = readJson(output / "manifest.json");
+    check(manifest["version"] == 1 && manifest["complete"] == true && manifest["source_signature"] == catalog.signature && manifest["project_revision"] == project.state["revision"] && manifest["frame_selection"] == Json({{"enabled", false}}) && manifest["native_split"].is_null() && manifest["counts"]["train"]["images"] == 1 && manifest["counts"]["val"]["boxes"] == 0 && manifest["frames"].size() == 1 && manifest["frames"][0]["host_ns"] == "1000" && manifest["frames"][0]["recording_path"] == "capture-a" && manifest["crops"][0]["bbox"] == Json::array({1.0, 0.0, 5.0, 6.0}), "manifest wrong: " + manifest.dump());
+    check(readFile(output / "data.yaml").find("names:\n  0: boccia_ball\n") != std::string::npos && readFile(output / "data.yaml").rfind("path: \"", 0) == 0, "data.yaml wrong");
+    // test_invalid_coordinates_and_missing_split_rejected (the export part)
+    { Fixture other; Catalog catalog2(other.source); Project project2(catalog2, other.project, other.exports); saveFrame(project2, other);
+      check(fails([&] { startExport(project2, true); }, "분할을 먼저 지정"), "export without splits started");
+      Project empty(catalog2, other.temp.path / "empty.json", other.exports);
+      check(fails([&] { startExport(empty, true); }, "검수 완료한 프레임이"), "export without reviewed frames started"); }
+    // test_export_group_splits_review_filter_and_coordinate_agreement
+    {
+        Fixture other; Catalog catalog2(other.source); Project project2(catalog2, other.project, other.exports);
+        assignSplits(project2, other);
+        saveFrame(project2, other);                                              // train
+        saveFrame(project2, other, 0, "camera-1", 2);                            // same recording, same split
+        saveFrame(project2, other, 1, "camera-0", 0, true, Json::array());       // explicitly verified negative, val
+        saveFrame(project2, other, 2, "camera-0", 0, false);                     // draft, excluded
+        result = exportDataset(catalog2, project2.state, other.exports);
+        output = fromUtf8(result["path"]);
+        check(result["images"] == 3 && result["boxes"] == 2, "export counts wrong: " + result.dump());
+        const Json train = readJson(output / "annotations/instances_train.json"), val = readJson(output / "annotations/instances_val.json"), test = readJson(output / "annotations/instances_test.json");
+        check(train["images"].size() == 2 && train["images"][0]["recording_id"] == other.ids[0] && train["images"][1]["recording_id"] == other.ids[0] && val["images"].size() == 1 && val["annotations"].empty() && test["images"].empty(), "split contents wrong");
+        const std::string filename = train["images"][0]["file_name"];
+        const cv::Mat image = readPng(output / "images/train" / filename);
+        for (int y = 0; y < 6; ++y) for (int x = 0; x < 8; ++x) check(image.at<cv::Vec3b>(y, x)[0] == other.original[size_t(y * 8 + x)], "exported image pixels wrong");
+        const auto yoloFiles = listFiles(output / "labels/train", ".txt");
+        check(yoloFiles.size() == 2, "two train label files expected");
+        const std::vector<double> values = [&] { std::vector<double> v; std::string text = readFile(output / "labels/train" / (fs::path(filename).stem().string() + ".txt")); size_t start = 0; while (start < text.size()) { size_t end = text.find_first_of(" \n", start); if (end == std::string::npos) end = text.size(); if (end > start) v.push_back(std::stod(text.substr(start, end - start))); start = end + 1; } return v; }();
+        const double expected[] = {0, 3.5 / 8, 3.0 / 6, 3.0 / 8, 4.0 / 6};
+        for (int i = 0; i < 5; ++i) check(std::abs(values[size_t(i)] - expected[i]) < 1e-7, "yolo coordinates wrong");
+        const Json manifest2 = readJson(output / "manifest.json");
+        check(manifest2["complete"] == true && !fs::exists(output / "INCOMPLETE.txt"), "manifest must say complete");
+        const Json crop = manifest2["crops"][0];
+        const cv::Mat cropImage = readPng(output / fromUtf8(crop["file_name"]));
+        check(cropImage.rows == 4 && cropImage.cols == 3, "crop size wrong");
+        for (int y = 0; y < 4; ++y) for (int x = 0; x < 3; ++x) check(cropImage.at<cv::Vec3b>(y, x)[0] == other.original[size_t((y + 1) * 8 + x + 2)], "crop pixels wrong");
+        check(crop["bbox"] == train["annotations"][0]["bbox"] && crop["occluded"] == true && crop["crop_bounds"] == Json::array({2, 1, 5, 5}), "crop record wrong: " + crop.dump());
+        check(listFiles(output / "labels/val", ".txt").size() == 1 && readFile(listFiles(output / "labels/val", ".txt")[0]).empty(), "the verified negative must have an empty label file");
+    }
+    // test_failed_export_is_marked_incomplete: the raw file goes missing between the save and the export
+    {
+        Fixture other; Catalog catalog2(other.source); Project project2(catalog2, other.project, other.exports);
+        assignSplits(project2, other); saveFrame(project2, other);
+        writeFile(other.source / "capture-a/camera-0/frames.raw", "short");
+        check(fails([&] { exportDataset(catalog2, project2.state, other.exports); }, "잘렸습니다"), "export of an unreadable frame succeeded");
+        const auto folders = [&] { std::vector<fs::path> f; for (const auto& entry : fs::directory_iterator(other.exports)) f.push_back(entry.path()); return f; }();
+        check(folders.size() == 1 && fs::exists(folders[0] / "INCOMPLETE.txt") && !fs::exists(folders[0] / "manifest.json") && readFile(folders[0] / "INCOMPLETE.txt").find("내보내기 실패") == 0, "failed export not marked");
+        check(exportHistory(project2).empty(), "a failed export must not appear in the history");
+    }
+    // test_confirmed_native_export_contains_all_reviewed_images_and_fixed_groups, test_export_history_lists_only_completed_exports
+    {
+        Fixture other; Catalog catalog2(other.source); Project project2(catalog2, other.project, other.exports);
+        check(exportHistory(project2).empty(), "history of a new project must be empty");
+        saveFrame(project2, other, 0, "camera-0", 0, false);
+        reviewAll(project2);
+        confirmSplit(project2);
+        const Json started = nativeAction(project2, "export", {{"crops", false}});
+        check(started["status"] == "running" && started["total"] == 18, "export job did not start: " + started.dump());
+        check(fails([&] { nativeAction(project2, "export", {{"crops", false}}); }, "이미 내보내는 중") || project2.job["status"] != "running", "a second export started while one runs");
+        for (int i = 0; i < 500 && project2.job["status"] == "running"; ++i) Sleep(10);
+        check(project2.job["status"] == "complete", "export job failed: " + project2.job.dump());
+        const Json done = project2.job["result"];
+        check(done["images"] == 18 && done["boxes"] == 1 && project2.job["done"] == 18, "export result wrong: " + done.dump());
+        output = fromUtf8(done["path"]);
+        const Json manifest3 = readJson(output / "manifest.json");
+        check(manifest3["splits"] == project2.state["splits"] && manifest3["native_split"] == project2.state["native_split"] && manifest3["frame_selection"]["enabled"] == false, "manifest must record the confirmed split");
+        for (const auto& id : other.ids) {
+            std::set<std::string> used;
+            for (const auto& frame : manifest3["frames"]) if (frame["recording_path"] == catalog2.recording(id).relativePath) used.insert(frame["split"].get<std::string>());
+            check(used == std::set<std::string>{project2.state["splits"][id].get<std::string>()}, "a recording was split across sets");
+        }
+        for (const char* split : splitNames) check(fs::exists(output / "annotations" / (std::string("instances_detection_") + split + ".json")), "detection coco missing");
+        check(!fs::exists(output / "crops"), "crops were written although not requested");
+        const fs::path broken = other.exports / "20990101-000000-broken";
+        writeFile(broken / "manifest.json", "{}"); writeFile(broken / "INCOMPLETE.txt", "x");
+        const fs::path noManifest = other.exports / "20990102-000000-empty"; fs::create_directories(noManifest);
+        const Json history = exportHistory(project2);
+        check(history.size() == 1 && history[0]["fingerprint"] == project2.state["native_split"]["fingerprint"] && history[0]["name"] == utf8(output.filename()) && history[0]["path"] == utf8(output), "history wrong: " + history.dump());
+        int images = 0; for (const auto& [split, counts] : history[0]["counts"].items()) images += counts["images"].get<int>();
+        check(images == 18 && nativeCatalog(project2)["split_confirmed"] == true, "history counts wrong");
+    }
+    // test_export_subset_masks_and_explicit_human_inclusion, with the selection written by hand (Task 8 builds it)
+    {
+        Fixture other; Catalog catalog2(other.source); Project project2(catalog2, other.project, other.exports);
+        Json snapshot = project2.state;
+        const Json ball = {{"bbox", {2, 1, 3, 4}}, {"segmentation", rle}, {"occluded", false}};
+        Json decisions = Json::object();
+        for (const auto& scene : sceneIndex(catalog2)) for (const auto& member : scene["members"]) {
+            const std::string key = member["key"];
+            const std::string representative = key.substr(0, key.rfind('/')) + "/0";
+            snapshot["frames"][key] = {{"recording", key.substr(0, key.find('/'))}, {"camera", member["camera"]}, {"index", member["index"]}, {"width", 8}, {"height", 6}, {"boxes", {ball}}, {"reviewed", true}, {"human_touched", false}};
+            decisions[key] = {{"selected", member["index"] == 0}, {"representative", representative}, {"reason", member["index"] == 0 ? "first_frame" : "near_duplicate"}};
+        }
+        snapshot["frame_selection"] = {{"enabled", true}, {"frames", decisions}, {"algorithm", "test"}};
+        for (const auto& id : other.ids) snapshot["splits"][id] = "train";
+        const std::string included = other.ids[0] + "/camera-0/2";
+        snapshot["frames"][included]["human_touched"] = true;
+        result = exportDataset(catalog2, snapshot, other.exports, false);
+        check(result["images"] == 7, "the export must take the representatives plus human work: " + result.dump());
+        const Json manifest4 = readJson(fromUtf8(result["path"]) / "manifest.json");
+        bool found = false; for (const auto& frame : manifest4["frames"]) found = found || frame["key"] == included;
+        check(found && manifest4["frame_selection"]["algorithm"] == "test" && !manifest4["frame_selection"].contains("frames"), "human work missing from the export or the selection summary wrong");
+        const Json coco = readJson(fromUtf8(result["path"]) / "annotations/instances_train.json");
+        bool masks = true; for (const auto& entry : coco["annotations"]) masks = masks && entry["segmentation"] == rle;
+        check(masks && coco["images"].size() == 7, "masks must be exported as stored");
+    }
+    std::cout << "PASS: export of coco, detection coco, yolo, crops, manifest, failures, history and selection subsets\n";
+}
 }
 
 int main(int argc, char** argv) try {
@@ -310,9 +629,30 @@ int main(int argc, char** argv) try {
         }
         return 0;
     }
+    if (argc >= 4 && std::string(argv[1]) == "--native") {
+        // Parity with the Python engine on a real project: the same lines as scratch parity_native.py prints.
+        Catalog catalog(fromUtf8(argv[2]));
+        const auto projectPath = fromUtf8(argv[3]);
+        Project project(catalog, projectPath, projectPath.parent_path() / "parity-exports");
+        auto digest = [](const Json& value) { return sha256Hex(value.dump(-1, ' ', true)); };
+        const Json scenes = sceneIndex(catalog);
+        std::cout << "scenes " << scenes.size() << " " << digest(scenes) << "\n";
+        const Json native = nativeCatalog(project);
+        std::cout << "catalog " << native["target_images"] << " " << native["reviewed_target_images"] << " " << native["colorable"] << " " << native["growable"].dump(-1, ' ', true) << " "
+                  << (native["split_confirmed"].get<bool>() ? "True" : "False") << " " << native["groups"].dump(-1, ' ', true) << " " << (native["fingerprint"].is_null() ? "None" : native["fingerprint"].get<std::string>()) << "\n";
+        std::cout << "stats " << digest(native["stats"]) << "\n";
+        std::cout << "scenes-with-state " << digest(native["scenes"]) << "\n";
+        std::cout << "targets " << targets(project).size() << "\n";
+        Json groups = Json::object(); for (const auto& recording : catalog.recordings) groups[recording.id] = recording.id;
+        std::cout << "fingerprint " << fingerprint(project, nullptr, &groups) << "\n";
+        std::cout << "history " << exportHistory(project).size() << "\n";
+        return 0;
+    }
     utilTests();
     catalogTests();
     assistTests();
     storeTests();
+    nativeTests();
+    exportTests();
     return 0;
 } catch (const std::exception& error) { std::cerr << "FAIL: " << error.what() << "\n"; return 1; }

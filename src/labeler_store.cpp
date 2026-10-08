@@ -82,6 +82,11 @@ Project::Project(const Catalog& source, const fs::path& project, const fs::path&
         state = {{"version", 1}, {"source", utf8(catalog.source)}, {"source_signature", catalog.signature}, {"revision", 0}, {"splits", splits}, {"frames", Json::object()}};
     }
 }
+Project::~Project() {
+    colorWorker.request_stop();
+    if (colorWorker.joinable()) colorWorker.join();
+    if (exportWorker.joinable()) exportWorker.join();
+}
 void Project::write(const Json& replacement) const { atomicJson(path, replacement, replacement.value("frames", Json::object()).size() < 128); }
 Json Project::summary() const {
     std::lock_guard guard(lock);
