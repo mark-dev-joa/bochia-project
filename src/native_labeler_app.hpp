@@ -76,12 +76,13 @@ private:
     std::future<Thumbs> thumbTask_;
     std::vector<std::vector<cv::Point>> proposalContours_;
     std::vector<std::string> picked_;                            // recordings ticked on the split page
+    BallRef pendingRemove_;                                      // ball whose deletion the dialog is asking about
     int scene_ = 0, camera_ = 0, selected_ = 0, filter_ = 0, pageCaptureScene_ = -1, aheadScene_ = -1, aheadAuto_ = -1,
         targetScenes_ = -1, emptyDrafts_ = 0,                    // counted from the catalog when targetScenes_ < 0
         aheadHits_ = 0;                                          // scenes shown from a fetch made ahead; the self-test reads it
     Page page_ = Page::Review;
     Tool tool_ = Tool::Select;
-    bool editor_ = false, masks_ = true, boxes_ = false, representatives_ = true, crops_ = true, dragging_ = false,
+    bool editor_ = false, masks_ = true, boxes_ = true, representatives_ = true, crops_ = true, dragging_ = false,
          scrollToCurrent_ = false, rowsDirty_ = true, panning_ = false,
          stale_ = false,                                         // labels changed on the engine while another page was open
          aheadDirty_ = true,                                     // the scene to fetch ahead may have changed
