@@ -195,6 +195,7 @@ private:
     void viewImage(int slot, ImVec2 a, ImVec2 b, bool compact);
     void emptyTile(ImVec2 pos, ImVec2 size);
     void canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size);
+    void toolRail(FrameView& frame, ImVec2 pos);     // the tools, undo, fit and zoom in their own column left of the canvas
     void sidePanel();
     void nudgePad(FrameView& frame, Json& box);
     void preparePage();

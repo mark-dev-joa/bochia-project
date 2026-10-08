@@ -503,7 +503,10 @@ void Application::focusTile(int slot, ImVec2 pos, ImVec2 size) {
     draw->AddRectFilled(pos, {pos.x + size.x, pos.y + size.y}, theme::bg1, 8);
     char meta[128]; std::snprintf(meta, sizeof meta, "프레임 %d · 공 %d개 · 수신 시각 %+.2fms", frame.member.value("index", 0), int(frame.annotation["boxes"].size()), frame.member.value("delta_ms", 0.));
     tileHeader(slot, pos, size.x, false, meta);
-    canvas(frame, {pos.x + 1, pos.y + 34}, {size.x - 2, size.y - 35});
+    // The tool rail has its own column, so it never covers the image (2026-10-08 user request).
+    const float column = 62;
+    toolRail(frame, {pos.x + 1, pos.y + 34});
+    canvas(frame, {pos.x + 1 + column, pos.y + 34}, {size.x - 2 - column, size.y - 35});
     draw->AddRect(pos, {pos.x + size.x, pos.y + size.y}, theme::accent, 8);
 }
 
@@ -639,14 +642,13 @@ void Application::canvasInput(FrameView& frame, ImVec2 pos, ImVec2 size, bool ho
     }
     (void)size;
 }
-// Tool rail, tool hint, zoom readout, minimap and the pending-proposal bar float over the canvas.
-void Application::canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size) {
+// The tool rail in the column left of the canvas: tools, undo, fit and zoom.
+void Application::toolRail(FrameView& frame, ImVec2 pos) {
     auto draw = ImGui::GetWindowDrawList();
-    const ImVec2 end{pos.x + size.x, pos.y + size.y};
     const ImU32 glass = theme::rgb(0x15181c, 236);
     struct RailItem { Tool tool; theme::Icon icon; const char* key; };
     static const RailItem tools[] = {{Tool::Select, theme::Icon::Cursor, "V"}, {Tool::Ai, theme::Icon::Spark, "S"}, {Tool::Brush, theme::Icon::Brush, "B"}, {Tool::Polygon, theme::Icon::Polygon, "P"}, {Tool::Box, theme::Icon::Box, "R"}};
-    const float railX = pos.x + 10, railY = pos.y + 10, railHeight = 4 + 5 * 38 + 9 + 38 + 9 + 2 * 38 + 2;
+    const float railX = pos.x + 9, railY = pos.y + 10, railHeight = 4 + 5 * 38 + 9 + 38 + 9 + 2 * 38 + 2;
     draw->AddRectFilled({railX, railY}, {railX + 44, railY + railHeight}, glass, 8); draw->AddRect({railX, railY}, {railX + 44, railY + railHeight}, theme::line2, 8);
     float y = railY + 4;
     auto button = [&](const char* id, theme::Icon icon, const char* key, bool on) {
@@ -672,9 +674,15 @@ void Application::canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("화면 맞춤 (F)");
     if (button("##zoom", theme::Icon::Target, "Z", false)) frame.scale = 0;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("선택한 공으로 (Z)");
+}
+// Brush size, zoom readout, minimap (only while zoomed in) and the pending-proposal bar float over the canvas.
+void Application::canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size) {
+    auto draw = ImGui::GetWindowDrawList();
+    const ImVec2 end{pos.x + size.x, pos.y + size.y};
+    const ImU32 glass = theme::rgb(0x15181c, 236);
     if (tool_ == Tool::Brush) {   // the only tool with a setting
         char brush[32]; std::snprintf(brush, sizeof brush, "굵기 %.0fpx", brushSize_);
-        const ImVec2 p{pos.x + 64, pos.y + 10};const float w = theme::extent(brush, theme::caption).x + 20;
+        const ImVec2 p{pos.x + 10, pos.y + 10};const float w = theme::extent(brush, theme::caption).x + 20;
         draw->AddRectFilled(p, {p.x + w, p.y + 28}, glass, 6); draw->AddRect(p, {p.x + w, p.y + 28}, theme::line2, 6);
         theme::write(draw, {p.x + 10, p.y + 6}, theme::text2, brush, theme::caption);
     }
@@ -686,17 +694,16 @@ void Application::canvasOverlays(FrameView& frame, ImVec2 pos, ImVec2 size) {
     theme::write(draw, {z.x + 10, z.y + 6}, theme::text, percent, theme::caption, theme::mono);
     theme::write(draw, {z.x + 18 + theme::extent(percent, theme::caption, theme::mono).x, z.y + 6}, theme::text2, ratio, theme::caption);
 
-    if (size.x > 520 && size.y > 420) {   // minimap with the visible area
+    const float vx0 = std::clamp(-frame.offsetX / frame.scale / frame.image.cols, 0.f, 1.f), vy0 = std::clamp(-frame.offsetY / frame.scale / frame.image.rows, 0.f, 1.f);
+    const float vx1 = std::clamp((size.x - frame.offsetX) / frame.scale / frame.image.cols, 0.f, 1.f), vy1 = std::clamp((size.y - frame.offsetY) / frame.scale / frame.image.rows, 0.f, 1.f);
+    // The minimap only while zoomed in: with the whole image in view it has nothing to navigate and would only cover the image.
+    if (size.x > 520 && size.y > 420 && (vx1 - vx0 < .98f || vy1 - vy0 < .98f)) {
         const ImVec2 m0{pos.x + 10, end.y - 10 - 141}, m1{m0.x + 188, m0.y + 141};
         draw->AddRectFilled({m0.x - 3, m0.y - 3}, {m1.x + 3, m1.y + 3}, theme::rgb(0x0d0f12, 160), 8);
         draw->AddImage(ImTextureRef(ImTextureID(frame.texture)), m0, m1);
         draw->AddRect(m0, m1, theme::line2, 0);
-        const float vx0 = std::clamp(-frame.offsetX / frame.scale / frame.image.cols, 0.f, 1.f), vy0 = std::clamp(-frame.offsetY / frame.scale / frame.image.rows, 0.f, 1.f);
-        const float vx1 = std::clamp((size.x - frame.offsetX) / frame.scale / frame.image.cols, 0.f, 1.f), vy1 = std::clamp((size.y - frame.offsetY) / frame.scale / frame.image.rows, 0.f, 1.f);
-        if (vx1 - vx0 < .98f || vy1 - vy0 < .98f) {
-            const ImVec2 v0{m0.x + vx0 * 188, m0.y + vy0 * 141}, v1{std::max(m0.x + vx1 * 188, v0.x + 5), std::max(m0.y + vy1 * 141, v0.y + 5)};
-            draw->AddRectFilled(v0, v1, theme::rgb(0xffd84a, 40)); draw->AddRect(v0, v1, theme::selected, 0, 0, 1.5f);
-        }
+        const ImVec2 v0{m0.x + vx0 * 188, m0.y + vy0 * 141}, v1{std::max(m0.x + vx1 * 188, v0.x + 5), std::max(m0.y + vy1 * 141, v0.y + 5)};
+        draw->AddRectFilled(v0, v1, theme::rgb(0xffd84a, 40)); draw->AddRect(v0, v1, theme::selected, 0, 0, 1.5f);
     }
 
     // The pending proposal enlarged at the bottom right, to judge the outline before applying (2026-10-08 user request).
