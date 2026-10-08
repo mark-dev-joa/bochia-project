@@ -1,6 +1,8 @@
 #include "labeler_catalog.hpp"
 #include "labeler_util.hpp"
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+#include <windows.h>
 #include <zstd.h>
 #include <algorithm>
 #include <fstream>
@@ -16,6 +18,14 @@ std::string readBytes(const fs::path& path) {
 }
 std::string_view withoutBom(std::string_view text) { return text.substr(0, 3) == "\xEF\xBB\xBF" ? text.substr(3) : text; }
 std::string lower(std::string text) { for (auto& c : text) c = char(std::tolower(static_cast<unsigned char>(c))); return text; }
+const char* imageExtensions[] = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"};
+// os.stat().st_mtime_ns on Windows: the FILETIME, moved to the Unix epoch, in nanoseconds.
+int64_t modifiedNs(const fs::path& path) {
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data)) throw std::runtime_error("파일 정보를 읽지 못했습니다: " + utf8(path));
+    const uint64_t ticks = (uint64_t(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime;
+    return int64_t(ticks - 116444736000000000ull) * 100;
+}
 }
 FrameInfo FrameInfo::parse(const Json& line) {
     FrameInfo info;
@@ -127,6 +137,34 @@ Catalog::Catalog(const fs::path& folder) {
         }
         if (!recording.cameras.empty()) recordings.push_back(std::move(recording));
     }
+    // A plain image folder is also useful for a separate day's evaluation set.
+    if (sessions.empty()) {
+        std::vector<fs::path> files;
+        for (const auto& entry : fs::recursive_directory_iterator(source, fs::directory_options::skip_permission_denied)) files.push_back(entry.path());
+        std::sort(files.begin(), files.end(), pathLess);
+        std::vector<std::pair<fs::path, std::vector<fs::path>>> byFolder;
+        for (const auto& path : files) {
+            if (!fs::is_regular_file(path)) continue;
+            const auto extension = lower(path.extension().string());
+            if (std::find(std::begin(imageExtensions), std::end(imageExtensions), extension) == std::end(imageExtensions)) continue;
+            auto folder = std::find_if(byFolder.begin(), byFolder.end(), [&](const auto& item) { return item.first == path.parent_path(); });
+            if (folder == byFolder.end()) { byFolder.push_back({path.parent_path(), {}}); folder = byFolder.end() - 1; }
+            folder->second.push_back(path);
+        }
+        for (const auto& [imageFolder, paths] : byFolder) {
+            std::string relative = imageFolder.lexically_relative(source).generic_string();
+            if (relative.empty() || relative == ".") relative = ".";
+            Recording recording;
+            recording.id = sha256Hex(relative).substr(0, 16); recording.name = utf8(imageFolder.filename()); recording.relativePath = relative; recording.complete = true;
+            CameraStream stream; stream.id = "images"; stream.name = "이미지"; stream.kind = "이미지";
+            for (const auto& path : paths) {
+                FrameInfo info; info.imagePath = path; stream.frames.push_back(info); stream.times.push_back(int64_t(stream.times.size()));
+                digest.update(utf8(path.lexically_relative(source).make_preferred()) + ":" + std::to_string(fs::file_size(path)) + ":" + std::to_string(modifiedNs(path)));
+            }
+            recording.cameras.push_back(std::move(stream));
+            recordings.push_back(std::move(recording));
+        }
+    }
     if (recordings.empty()) throw std::runtime_error("session.json 촬영 데이터 또는 이미지 파일을 찾지 못했습니다.");
     signature = digest.hex();
 }
@@ -149,7 +187,14 @@ const FrameInfo& Catalog::frameInfo(const std::string& recordingId, const std::s
 }
 cv::Mat Catalog::read(const std::string& recordingId, const std::string& cameraId, int index) const {
     const auto& stream = camera(recordingId, cameraId);
-    return decodeRaw(stream.rawPath, frameInfo(recordingId, cameraId, index));
+    const auto& info = frameInfo(recordingId, cameraId, index);
+    if (info.isImage()) {
+        const std::string bytes = readBytes(info.imagePath);
+        cv::Mat image = cv::imdecode(cv::Mat(1, int(bytes.size()), CV_8UC1, const_cast<char*>(bytes.data())), cv::IMREAD_COLOR);
+        if (image.empty()) throw std::runtime_error("이미지 파일을 읽지 못했습니다.");
+        return image;
+    }
+    return decodeRaw(stream.rawPath, info);
 }
 int Catalog::nearest(const std::string& recordingId, const std::string& cameraId, int64_t hostNs) const {
     const auto& times = camera(recordingId, cameraId).times;

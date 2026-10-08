@@ -13,14 +13,16 @@ struct FrameInfo {
     int64_t hostNs = 0;
     uint64_t id = 0;
     bool hasHostNs = false, hasId = false;
+    std::filesystem::path imagePath;           // set for a plain image file instead of a raw frame
+    bool isImage() const { return !imagePath.empty(); }
     static FrameInfo parse(const Json& line);   // one frames.jsonl entry; absent fields keep Python's defaults
 };
 struct CameraStream {
-    std::string id, name, serial, kind;        // kind: "모노" or "컬러"
+    std::string id, name, serial, kind;        // kind: "모노", "컬러" or "이미지"
     bool hasSerial = false;
     std::vector<FrameInfo> frames;
     std::vector<int64_t> times;                // host_ns, or the index when a frame has none
-    std::filesystem::path rawPath;
+    std::filesystem::path rawPath;             // empty for an image folder
 };
 struct Recording {
     std::string id, name, relativePath;

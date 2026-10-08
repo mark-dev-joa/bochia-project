@@ -2,9 +2,12 @@
 // name, so a behaviour the two engines must share has the same check on both sides.
 #include "labeler_catalog.hpp"
 #include "labeler_assist.hpp"
+#include "labeler_store.hpp"
 #include "labeler_util.hpp"
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <zstd.h>
+#include <windows.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -164,6 +167,113 @@ void assistTests() {
     check(boundedNumber(3, 0, 10, "x") == 3 && fails([&] { boundedNumber(Json(true), 0, 10, "값"); }, "값: 0~10 사이") && fails([&] { boundedNumber(11, 0, 10, "값"); }), "bounded number wrong");
     std::cout << "PASS: RLE checks, contours, overlap, polygon proposal, box validation and ball colour\n";
 }
+
+// LabelerTests.save and .splits of the Python fixture.
+Json saveFrame(Project& project, const Fixture& fixture, int recording = 0, const char* camera = "camera-0", int index = 0, bool reviewed = true, Json boxes = nullptr) {
+    if (boxes.is_null()) boxes = Json::array({{{"bbox", {2, 1, 3, 4}}, {"occluded", true}}});
+    return project.saveFrame({{"recording", fixture.ids[size_t(recording)]}, {"camera", camera}, {"index", index}, {"reviewed", reviewed}, {"boxes", boxes}, {"expected_revision", project.state["revision"]}});
+}
+Json assignSplits(Project& project, const Fixture& fixture) {
+    return project.saveSplits({{"expected_revision", project.state["revision"]}, {"splits", {{fixture.ids[0], "train"}, {fixture.ids[1], "val"}, {fixture.ids[2], "test"}}}});
+}
+void storeTests() {
+    Fixture fixture;
+    Catalog catalog(fixture.source);
+    Project project(catalog, fixture.project, fixture.exports);
+    check(project.state["revision"] == 0 && project.state["splits"][fixture.ids[1]] == "unassigned" && project.state["source_signature"] == catalog.signature && project.state["frames"].empty(), "new project state wrong");
+    check(utf8(project.path) == utf8(fs::weakly_canonical(fixture.project)), "project path must be absolute");
+    // test_save_resume_and_conflict_do_not_overwrite
+    Json summary = saveFrame(project, fixture);
+    check(summary["reviewed"] == 1 && summary["boxes"] == 1 && summary["export_frames"] == 1 && summary["export_boxes"] == 1 && summary["draft_boxes"] == 0 && summary["revision"] == 1, "summary after a save wrong: " + summary.dump());
+    const std::string key0 = fixture.ids[0] + "/camera-0/0";
+    check(summary["frames"][key0]["review_status"] == "reviewed" && summary["frames"][key0]["selected"] == true && summary["frames"][key0]["selection_reason"] == "unfiltered" && summary["selection"]["enabled"] == false, "frame summary wrong");
+    { Project resumed(catalog, fixture.project, fixture.exports); check(resumed.frame(fixture.ids[0], "camera-0", 0)["reviewed"] == true && resumed.state["revision"] == 1, "saved frame did not survive a reopen"); }
+    const std::string before = readFile(fixture.project);
+    check(fails([&] { project.saveSplits({{"expected_revision", 0}, {"splits", {{fixture.ids[0], "train"}}}}); }, "다른 창에서 변경"), "stale revision accepted");
+    try { project.saveSplits({{"expected_revision", 0}, {"splits", {{fixture.ids[0], "train"}}}}); check(false, "no conflict"); } catch (const Conflict&) {}
+    check(readFile(fixture.project) == before, "a refused save touched the file");
+    SetFileAttributesW(fixture.project.c_str(), FILE_ATTRIBUTE_READONLY);   // "disk full": the replace fails
+    check(fails([&] { saveFrame(project, fixture, 0, "camera-0", 1); }, "파일을"), "a failed write must throw");
+    SetFileAttributesW(fixture.project.c_str(), FILE_ATTRIBUTE_NORMAL);
+    check(project.summary()["reviewed"] == 1 && project.state["revision"] == 1 && !project.state["frames"].contains(fixture.ids[0] + "/camera-0/1"), "a failed write changed the state");
+    // test_invalid_coordinates_and_missing_split_rejected (the store part) and the status checks
+    check(fails([&] { saveFrame(project, fixture, 0, "camera-0", 0, true, Json::array({{{"bbox", {7, 0, 3, 2}}}})); }, "박스는 이미지 안에"), "invalid box saved");
+    check(fails([&] { project.saveFrame({{"recording", fixture.ids[0]}, {"camera", "camera-0"}, {"index", 0}, {"reviewed", 1}, {"boxes", Json::array()}, {"expected_revision", 1}}); }, "검수 상태가 올바르지"), "non-bool reviewed accepted");
+    check(fails([&] { project.saveFrame({{"recording", fixture.ids[0]}, {"camera", "camera-0"}, {"index", 0}, {"reviewed", true}, {"review_status", "hold"}, {"boxes", Json::array()}, {"expected_revision", 1}}); }, "일치하지"), "reviewed with hold accepted");
+    check(fails([&] { saveFrame(project, fixture, 0, "camera-0", 0, true, Json::array({{{"bbox", {2, 1, 3, 4}}, {"color", "red"}}})); }, "모노 이미지의 색상"), "a colour on a mono camera was accepted");
+    check(fails([&] { project.saveSplits({{"expected_revision", 1}, {"splits", {{"nope", "train"}}}}); }, "촬영별 분할") && fails([&] { project.saveSplits({{"expected_revision", 1}, {"splits", {{fixture.ids[0], "later"}}}}); }, "촬영별 분할"), "bad splits accepted");
+    // test_mask_persistence_export_and_bbox_agree (the store part)
+    cv::Mat mask(6, 8, CV_8UC1, cv::Scalar(0)); mask(cv::Rect(2, 1, 3, 4)).setTo(1); mask.at<uchar>(2, 3) = 0;
+    const Json rle = encodeMask(mask);
+    assignSplits(project, fixture);
+    saveFrame(project, fixture, 0, "camera-0", 0, true, Json::array({{{"bbox", {2, 1, 3, 4}}, {"segmentation", rle}, {"source", "efficientsam"}, {"occluded", true}}}));
+    { Project resumed(catalog, fixture.project, fixture.exports); const Json restored = resumed.frame(fixture.ids[0], "camera-0", 0)["boxes"][0];
+      check(restored["segmentation"] == rle && !restored["contours"].empty() && restored["source"] == "efficientsam" && restored["occluded"] == true, "mask did not survive the store"); }
+    check(!project.state["frames"][key0]["boxes"][0].contains("contours"), "contours must never be stored");
+    check(fails([&] { saveFrame(project, fixture, 0, "camera-0", 0, true, Json::array({{{"bbox", {1, 1, 3, 4}}, {"segmentation", rle}}})); }, "분할 윤곽과 박스"), "box away from its mask saved");
+    // test_manual_polygon_mask_and_rejected_coordinates (the store part)
+    saveFrame(project, fixture, 0, "camera-0", 0, true, Json::array({polygonProposal(Json::parse("[[2,1],[4,1],[4,4],[2,4]]"), 8, 6)}));
+    const Json restored = project.frame(fixture.ids[0], "camera-0", 0)["boxes"][0];
+    check(restored["source"] == "manual_polygon" && cv::countNonZero(decodeMaskChecked(restored["segmentation"], 8, 6)) == 12, "polygon box lost in the store");
+    const Json shown = project.frame(fixture.ids[0], "camera-1", 2);
+    check(shown["key"] == fixture.ids[0] + "/camera-1/2" && shown["boxes"].empty() && shown["reviewed"] == false && shown["host_ns"] == "1205" && shown["width"] == 8 && shown["selection"]["reason"] == "unfiltered" && shown["revision"] == project.state["revision"], "unlabelled frame response wrong: " + shown.dump());
+    // test_background_writes_do_not_conflict_or_overwrite_human_edits
+    const std::string key1 = fixture.ids[0] + "/camera-0/1";
+    const Json automatic = {{"recording", fixture.ids[0]}, {"camera", "camera-0"}, {"index", 1}, {"width", 8}, {"height", 6}, {"boxes", Json::array()}, {"reviewed", false}, {"automatic", {{"needs_attention", true}}}, {"human_touched", false}};
+    const int revision = project.state["revision"];
+    check(project.commitAutomatic({{key1, automatic}}) == 1 && project.state["revision"] == revision && project.state["auto_revision"] == 1, "automatic commit wrong");
+    summary = project.summary();
+    check(summary["automatic_frames"] == 1 && summary["frames"][key1]["needs_attention"] == true && summary["frames"][key1]["review_status"] == "draft" && summary["frames"][key1]["automatic"] == true, "automatic frame summary wrong");
+    saveFrame(project, fixture, 0, "camera-0", 1);
+    const Json edited = project.state["frames"][key1];
+    check(edited["human_touched"] == true && edited["reviewed"] == true && edited["automatic"]["needs_attention"] == true, "the automatic note must survive a human save");
+    check(project.commitAutomatic({{key1, automatic}}) == 0 && project.state["frames"][key1] == edited && project.state["auto_revision"] == 1, "a background write overwrote human work");
+    // test_sidecar_human_override_reload_and_invalid_reference, with a hand-written sidecar
+    const std::string dup = fixture.ids[1] + "/camera-0/1", rep = fixture.ids[1] + "/camera-0/0";
+    Json sidecar = {{"version", 1}, {"source_signature", catalog.signature}, {"created_at", "2026-10-08T00:00:00+00:00"}, {"algorithm", "test"}, {"rules", {{"center_pixels", 8.0}}},
+                    {"frames", {{rep, {{"selected", true}, {"representative", rep}, {"reason", "first_frame"}}}, {dup, {{"selected", false}, {"representative", rep}, {"reason", "near_duplicate"}}}}}};
+    atomicJson(selectionPath(project.path), sidecar, true);
+    summary = project.summary();
+    check(summary["frames"].contains(dup) == false && summary["selection"]["enabled"] == true && summary["selection"]["selected"] == 17 && summary["selection"]["excluded"] == 1 && summary["selection"]["total"] == 18 && summary["selection"]["coverage"] == 2, "sidecar view wrong: " + summary["selection"].dump());
+    check(project.frame(fixture.ids[1], "camera-0", 1)["selection"]["selected"] == false, "frame must show the sidecar decision");
+    saveFrame(project, fixture, 1, "camera-0", 1, false);
+    summary = project.summary();
+    check(summary["frames"][dup]["selected"] == true && summary["frames"][dup]["selection_reason"] == "human_preserved" && summary["selection"]["selected"] == 18, "human work must override the sidecar");
+    Sleep(5);
+    Json invalid = sidecar; invalid["source_signature"] = "different"; atomicJson(selectionPath(project.path), invalid, true);
+    check(fails([&] { project.summary(); }, "대표 프레임 필터와 촬영 데이터가 다릅니다"), "a sidecar of another source was accepted");
+    Sleep(5);
+    invalid = sidecar; invalid["frames"][dup]["representative"] = fixture.ids[1] + "/camera-1/0"; atomicJson(selectionPath(project.path), invalid, true);
+    check(fails([&] { SelectionFile(catalog, selectionPath(project.path)).read(); }, "중복 프레임은"), "a representative of another camera was accepted");
+    Sleep(5);
+    invalid = sidecar; invalid["frames"][dup]["selected"] = 1; atomicJson(selectionPath(project.path), invalid, true);
+    check(fails([&] { SelectionFile(catalog, selectionPath(project.path)).read(); }, "선택 상태"), "a non-bool selection was accepted");
+    fs::remove(selectionPath(project.path));
+    check(project.summary()["selection"]["enabled"] == false, "a removed sidecar must disable the filter");
+    // selectedReviewed: the export subset follows the selection, except for human work
+    Json snapshot = project.state;
+    snapshot["frame_selection"] = {{"frames", {{key0, {{"selected", false}}}, {key1, {{"selected", false}}}}}};
+    snapshot["frames"][key0]["human_touched"] = false;
+    auto chosen = selectedReviewed(snapshot);
+    check(chosen.size() == 1 && chosen[0].first == key1, "selected reviewed set wrong");
+    // test_source_change_rejected_and_plain_unicode_images_supported
+    const fs::path raw = fixture.source / "capture-a/camera-0/frames.raw";
+    writeFile(raw, readFile(raw) + "extra");
+    Catalog changed(fixture.source);
+    check(fails([&] { Project(changed, fixture.project, fixture.exports); }, "기존 라벨 프로젝트와 촬영 데이터가 다릅니다"), "a changed source opened the old project");
+    const fs::path photos = fixture.temp.path / L"사진" / L"다른날";
+    std::vector<unsigned char> png; cv::imencode(".png", catalog.read(fixture.ids[1], "camera-0", 0), png);
+    writeFile(photos / L"공.png", std::string(png.begin(), png.end()));
+    Catalog plain(photos.parent_path());
+    check(plain.recordings.size() == 1 && plain.recordings[0].name == "다른날" && plain.recordings[0].cameras[0].id == "images" && plain.recordings[0].cameras[0].kind == "이미지" && plain.recordings[0].complete, "image folder catalog wrong");
+    const cv::Mat photo = plain.read(plain.recordings[0].id, "images", 0);
+    for (int y = 0; y < 6; ++y) for (int x = 0; x < 8; ++x) check(photo.at<cv::Vec3b>(y, x)[0] == fixture.original[size_t(y * 8 + x)], "image folder pixels wrong");
+    check(fails([&] { Project(plain, fixture.temp.path / "photos.json", photos / "exports"); }, "이미지 입력 폴더 밖"), "export root inside the image folder accepted");
+    Project album(plain, fixture.temp.path / "photos.json", fixture.temp.path / "photo-exports");
+    const Json page = album.frame(plain.recordings[0].id, "images", 0);
+    check(page["width"] == 8 && page["height"] == 6 && page["host_ns"] == "0", "image frame size must come from the file");
+    std::cout << "PASS: project store, summary, conflicts, failed writes, automatic commits, sidecar view and image folders\n";
+}
 }
 
 int main(int argc, char** argv) try {
@@ -184,8 +294,25 @@ int main(int argc, char** argv) try {
         }
         return 0;
     }
+    if (argc >= 4 && std::string(argv[1]) == "--store") {
+        // Parity with the Python engine on a real project: the same lines as scratch parity_store.py prints.
+        Catalog catalog(fromUtf8(argv[2]));
+        const auto projectPath = fromUtf8(argv[3]);
+        Project project(catalog, projectPath, projectPath.parent_path() / "parity-exports");
+        const Json summary = project.summary();
+        std::cout << "summary " << summary["revision"] << " " << summary["reviewed"] << " " << summary["boxes"] << " " << summary["export_frames"] << " " << summary["export_boxes"] << " " << summary["automatic_frames"] << " " << summary["draft_boxes"] << " " << summary["auto_revision"] << "\n";
+        std::cout << "selection " << summary["selection"].dump(-1, ' ', true) << "\n";
+        std::cout << "frames " << summary["frames"].size() << " " << sha256Hex(summary["frames"].dump(-1, ' ', true)) << "\n";
+        for (int i = 4; i < argc; ++i) {
+            const std::string spec = argv[i]; const auto first = spec.find('/'), second = spec.find('/', first + 1);
+            const Json frame = project.frame(spec.substr(0, first), spec.substr(first + 1, second - first - 1), std::stoi(spec.substr(second + 1)));
+            std::cout << "frame " << spec << " " << frame["boxes"].size() << " " << sha256Hex(frame.dump(-1, ' ', true)) << "\n";
+        }
+        return 0;
+    }
     utilTests();
     catalogTests();
     assistTests();
+    storeTests();
     return 0;
 } catch (const std::exception& error) { std::cerr << "FAIL: " << error.what() << "\n"; return 1; }
