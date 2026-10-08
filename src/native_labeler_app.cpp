@@ -84,7 +84,7 @@ void Application::connect() {
             throw std::runtime_error("이 포트는 다른 프로젝트를 사용 중입니다. 별도 --port와 --project를 지정하세요.");
         auto catalog=client.get("/api/native/catalog");
         // The engine keeps running after the app closes, so an older one may still own the port.
-        if(catalog.value("api_version",0)<2)throw std::runtime_error("실행 중인 라벨 엔진이 이전 버전입니다. 포트 "+std::to_string(config.port)+"의 엔진(python ball_labeler.py)을 종료한 뒤 앱을 다시 실행하세요.");
+        if(catalog.value("api_version",0)<3)throw std::runtime_error("실행 중인 라벨 엔진이 이전 버전입니다. 포트 "+std::to_string(config.port)+"의 엔진(python ball_labeler.py)을 종료한 뒤 앱을 다시 실행하세요.");
         return JobResult{{{"catalog",std::move(catalog)},{"auto",client.get("/api/auto-status")},{"assist",client.get("/api/assist-status")}}, {}};
     }, [this](JobResult result){ updateCatalog(result.data.at("catalog")); autoStatus_=result.data.at("auto"); message_="기존 촬영과 라벨 연결 완료"; restorePosition(); });
 }
@@ -198,10 +198,10 @@ void Application::nudge(int edge,bool expand) {
     if(!nudgeEdge(trial,edge,expand,frame.image.cols,frame.image.rows)){message_=expand?"이미지 밖으로 넓힐 수 없습니다.":"박스는 1픽셀보다 작아질 수 없습니다.";return;}
     // A correction that ends up equal to the mask bounds is no correction.
     if(trial.at("detection_bbox")==trial.at("bbox"))trial.erase("detection_bbox");
-    checkpoint();box=trial;boxes_=true;changed();
+    checkpoint();box=trial;boxes_=true;changed(false);   // only the box moved; rebuilding the overlay textures here made every key press lag
 }
 void Application::checkpoint(){auto& f=current();f.history.push_back(f.annotation);if(f.history.size()>40)f.history.erase(f.history.begin());}
-void Application::changed(){auto& f=current();f.dirty=true;f.repaint=true;f.annotation["reviewed"]=false;f.annotation["review_status"]="editing";f.member["reviewed"]=false;f.member["status"]="editing";catalog_["split_confirmed"]=false;rowsDirty_=true;changed_=Clock::now();message_="수정됨 · 자동 저장 대기";}
+void Application::changed(bool repaint){auto& f=current();f.dirty=true;if(repaint)f.repaint=true;f.annotation["reviewed"]=false;f.annotation["review_status"]="editing";f.member["reviewed"]=false;f.member["status"]="editing";catalog_["split_confirmed"]=false;rowsDirty_=true;changed_=Clock::now();message_="수정됨 · 자동 저장 대기";}
 void Application::save(std::function<void()> next) {
     if(frames_.empty()||pending()||busy())return;
     const int slot=camera_; const auto key=current().annotation.at("key").get<std::string>();
@@ -231,6 +231,39 @@ void Application::removeBall(int slot,int ball){
     if(slot!=camera_&&current().dirty){save([this,slot,ball]{removeBall(slot,ball);});return;}
     camera_=slot;auto& objects=current().annotation["boxes"];if(ball<0||ball>=int(objects.size()))return;
     checkpoint();objects.erase(objects.begin()+ball);selected_=-1;current().scale=0;current().repaint=true;changed();
+}
+// Grows every draft mask outward. The dialog says how many images and balls that touches; a person's work is left alone.
+void Application::confirmGrowth(){
+    if(!growAsk_)return;
+    if(!ImGui::IsPopupOpen("##grow-masks"))ImGui::OpenPopup("##grow-masks");
+    const auto viewport=ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({viewport->WorkPos.x+viewport->WorkSize.x/2,viewport->WorkPos.y+viewport->WorkSize.y/2},ImGuiCond_Appearing,{.5f,.5f});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{22,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,10});
+    if(ImGui::BeginPopupModal("##grow-masks",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
+        const auto growable=catalog_.value("growable",Json::object());
+        ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted("자동 초안 윤곽 1픽셀 넓히기");ImGui::PopFont();
+        ImGui::Text("사람이 손대지 않은 이미지 %s장의 공 %s개 마스크를 바깥으로 1픽셀 넓힙니다.",grouped(growable.value("frames",0)).c_str(),grouped(growable.value("balls",0)).c_str());
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"박스도 1픽셀씩 커집니다. 되돌릴 수 없고, 1분쯤 걸립니다.");ImGui::PopFont();
+        ImGui::Dummy({0,4});
+        bool close=false;
+        ImGui::PushFont(theme::bold,theme::px(theme::base));
+        if(theme::primaryButton("넓히기  Enter",{140,34})||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{growMasks(1);};close=true;}
+        ImGui::PopFont();ImGui::SameLine();
+        if(ImGui::Button("취소  Esc",{110,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
+        if(close){growAsk_=false;ImGui::CloseCurrentPopup();}
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(2);
+}
+void Application::growMasks(int pixels){
+    if(!guard())return;
+    if(!frames_.empty()&&current().dirty){save([this,pixels]{growMasks(pixels);});return;}
+    const auto client=client_;const Json payload={{"pixels",pixels},{"expected_revision",catalog_["summary"]["revision"]}};
+    launch("윤곽 넓히는 중",[client,payload]{return JobResult{client.post("/api/native/grow-masks",payload),{}};},[this](JobResult result){
+        updateSummary(result.data.at("summary"));catalog_["mask_growth"]=result.data.value("mask_growth",Json::object());catalog_["growable"]=result.data.value("growable",Json::object());
+        message_="공 "+grouped(result.data.value("balls",0))+"개의 윤곽을 넓혔습니다.";
+        if(!frames_.empty())loadScene(scene_,editor_,camera_,message_);
+    });
 }
 // Asked from a crop or the ball list, where a click must not delete by itself.
 void Application::confirmRemoval(){
@@ -480,7 +513,7 @@ void Application::refreshStage(){
 }
 void Application::keys() {
     auto& io=ImGui::GetIO();
-    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||pendingRemove_.camera>=0)return;   // the delete dialog owns the keys while open
+    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||pendingRemove_.camera>=0||growAsk_)return;   // an open dialog owns the keys
     auto pressed=[](ImGuiKey key){return ImGui::IsKeyPressed(key,false);};
     if(pressed(ImGuiKey_Escape)){
         if(pending())cancel();
@@ -641,6 +674,7 @@ void Application::draw(){
     }
     statusBar();
     confirmRemoval();
+    confirmGrowth();
     ImGui::PopStyleVar();
     ImGui::End();
     if(later_){auto action=std::move(later_);later_=nullptr;action();}

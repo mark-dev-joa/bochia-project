@@ -94,7 +94,8 @@ private:
          planEdited_ = false,                                    // the split plan on screen is not the one the engine has stored
          listOpen_ = true, sideOpen_ = true, summaryOpen_ = true, // the collapsible panels
          backing_ = false,                                       // the next scene load comes from the back button
-         shortcutsWanted_ = false;                               // open the shortcut list on the next frame
+         shortcutsWanted_ = false,                               // open the shortcut list on the next frame
+         growAsk_ = false;                                       // the grow-masks dialog is open
     float brightness_ = 1.65f, brushSize_ = 6, radius_ = 16;
     Json proposal_;
     cv::Mat brushMask_;
@@ -124,7 +125,7 @@ private:
     bool pending() const;
     bool guard();
     void checkpoint();
-    void changed();
+    void changed(bool repaint = true);          // a box nudge leaves the mask overlay as it is
     void save(std::function<void()> next = {});
     void review(Scope scope, bool hold, int member = -1);
     void nextUnreviewed();
@@ -139,6 +140,8 @@ private:
     void removeSelected();
     void removeBall(int slot, int ball);
     void confirmRemoval();                           // the dialog behind pendingRemove_
+    void confirmGrowth();                            // the dialog behind growAsk_
+    void growMasks(int pixels);
     void segment(cv::Point2d point, bool negative);
     void segmentBox(cv::Rect2d box);
     void polygonProposal();

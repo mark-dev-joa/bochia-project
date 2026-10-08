@@ -130,6 +130,30 @@ class NativeWorkflowTests(unittest.TestCase):
         native_action(self.project, "review", request({**dict.fromkeys(keys, 0), key: 1}))
         self.assertTrue(self.project.state["frames"][key]["reviewed"])
 
+    def test_grow_masks_widens_draft_masks_and_leaves_human_work(self):
+        mask = np.zeros((6, 8), np.uint8)
+        mask[2:4, 3:5] = 1
+        draft = {"bbox": [3, 2, 2, 2], "segmentation": encode_mask(mask), "area": 4, "occluded": False, "source": "auto_sam"}
+        key = f"{self.ids[0]}/camera-0/0"
+        self.project.state["frames"][key] = {"recording": self.ids[0], "camera": "camera-0", "index": 0, "width": 8, "height": 6,
+                                             "boxes": [copy.deepcopy(draft)], "reviewed": False, "human_touched": False}
+        self.save(recording=1, boxes=[copy.deepcopy(draft)])   # saved by a person: left alone
+        self.assertEqual(native_catalog(self.project)["growable"], {"frames": 1, "balls": 1})
+        result = native_action(self.project, "grow-masks", {"pixels": 1, "expected_revision": self.project.state["revision"]})
+        grown = self.project.state["frames"][key]["boxes"][0]
+        self.assertEqual((grown["bbox"], grown["area"]), ([2, 1, 4, 4], 12))
+        expected = np.zeros((6, 8), np.uint8)
+        expected[2:4, 2:6] = 1
+        expected[1:5, 3:5] = 1
+        np.testing.assert_array_equal(decode_mask(grown["segmentation"], 8, 6), expected)
+        human = self.project.state["frames"][f"{self.ids[1]}/camera-0/0"]["boxes"][0]
+        self.assertEqual(human["bbox"], [3, 2, 2, 2])
+        self.assertEqual((result["frames"], result["balls"]), (1, 1))
+        self.assertEqual(native_catalog(self.project)["mask_growth"]["pixels"], 1)
+        self.assertEqual(native_catalog(self.project)["growable"], {"frames": 1, "balls": 1})
+        with self.assertRaises(ValueError):
+            native_action(self.project, "grow-masks", {"pixels": 9, "expected_revision": self.project.state["revision"]})
+
     def test_groups_never_cross_splits_and_insufficient_groups_rejected(self):
         self.review_all()
         plan = native_action(self.project, "split-preview", {})
@@ -234,7 +258,7 @@ class NativeWorkflowTests(unittest.TestCase):
         try:
             with urlopen(base + "/api/native/catalog") as response:
                 value = json.load(response)
-            self.assertEqual(value["api_version"], 2)
+            self.assertEqual(value["api_version"], 3)
             self.assertEqual(value["target_images"], 18)
             keys = [member["key"] for member in value["scenes"][0]["members"]]
             body = json.dumps({"keys": keys, "expected_revision": 0}).encode()

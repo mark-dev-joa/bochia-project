@@ -8,9 +8,12 @@ import copy
 import hashlib
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 import cv2
+import numpy as np
+
+from labeler_assist import decode_mask, encode_mask
 
 
 def scene_index(catalog):
@@ -142,6 +145,19 @@ def export_history(project):
     return entries
 
 
+def growable(project):
+    """Images and masks that a mask-growing pass would touch: drafts nobody has worked on."""
+    frames = balls = 0
+    for frame in project.state["frames"].values():
+        if frame.get("human_touched") or frame.get("reviewed"):
+            continue
+        masks = sum("segmentation" in box for box in frame["boxes"])
+        if masks:
+            frames += 1
+            balls += masks
+    return {"frames": frames, "balls": balls}
+
+
 def native_catalog(project):
     with project.lock:
         summary = project.summary()
@@ -156,13 +172,13 @@ def native_catalog(project):
                 if member["selected"]:
                     count += 1
                     reviewed += member["reviewed"]
-        # 2: recording stats, thumbnails, export history and the data version that the v2 screens need.
-        return {"api_version": 2, "source": str(project.catalog.source), "project_path": str(project.path),
+        # 3: adds growable and mask_growth with the grow-masks action. 2: stats, thumbnails, exports, fingerprint.
+        return {"api_version": 3, "source": str(project.catalog.source), "project_path": str(project.path),
                 "recordings": project.catalog.metadata(), "summary": summary, "scenes": scenes,
                 "target_images": count, "reviewed_target_images": reviewed,
                 # The batches outlive a confirmation: a label fix must not turn them back into single recordings.
                 "split_confirmed": split_valid(project), "groups": project.state.get("native_groups") or project.state.get("native_split", {}).get("groups", {}),
-                "stats": recording_stats(project),
+                "stats": recording_stats(project), "growable": growable(project), "mask_growth": project.state.get("mask_growth"),
                 # The data version: set only while the confirmed split still matches the labels.
                 "fingerprint": project.state["native_split"]["fingerprint"] if split_valid(project) else None}
 
@@ -251,6 +267,36 @@ def native_action(project, action, payload):
                                          "fingerprint": fingerprint(project, state, groups)}
             summary = project.mutate(payload["expected_revision"], update)
             return {"summary": summary, "split_confirmed": True, "fingerprint": project.state["native_split"]["fingerprint"]}
+    if action == "grow-masks":
+        # The automatic draft stops short of the ball edge by about a pixel (measured 2026-10-08), the same way on
+        # every ball; one pass moves every draft mask outward. Images a person has saved or confirmed are left alone.
+        pixels = payload.get("pixels", 1)
+        if not isinstance(pixels, int) or not 1 <= pixels <= 3:
+            raise ValueError("넓힐 픽셀 수는 1에서 3 사이여야 합니다.")
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * pixels + 1, 2 * pixels + 1))
+        counts = {"frames": 0, "balls": 0}
+        with project.lock:
+            def update(state):
+                for frame in state["frames"].values():
+                    if frame.get("human_touched") or frame.get("reviewed"):
+                        continue
+                    touched = False
+                    for box in frame["boxes"]:
+                        if "segmentation" not in box:
+                            continue
+                        grown = cv2.dilate(decode_mask(box["segmentation"], frame["width"], frame["height"]).astype(np.uint8), kernel)
+                        box["segmentation"] = encode_mask(grown)
+                        box["bbox"] = [int(value) for value in cv2.boundingRect(grown)]
+                        if "area" in box:
+                            box["area"] = int(grown.sum())
+                        touched = True
+                        counts["balls"] += 1
+                    counts["frames"] += touched
+                state["mask_growth"] = {"pixels": pixels + (state.get("mask_growth") or {}).get("pixels", 0), "frames": counts["frames"],
+                                        "balls": counts["balls"], "at": datetime.now(timezone.utc).isoformat()}
+                state.pop("native_split", None)
+            summary = project.mutate(payload["expected_revision"], update)
+            return {"summary": summary, **counts, "mask_growth": project.state["mask_growth"], "growable": growable(project)}
     if action == "export":
         with project.lock:
             if not split_valid(project):

@@ -232,6 +232,14 @@ void Application::preparePage() {
         };
         ImGui::PopFont();
         box.y += 38;
+        // The draft masks stop about a pixel short of the ball edge (measured 2026-10-08); one pass grows them all.
+        const auto growth = catalog_.value("mask_growth", Json());
+        ImGui::PushFont(nullptr, theme::px(theme::caption));
+        ImGui::SetCursorScreenPos({box.left(), box.y});
+        if (ImGui::Button("윤곽 1픽셀 넓히기", {box.inner(), 30})) growAsk_ = true;
+        ImGui::PopFont();
+        box.y += 36;
+        if (growth.is_object()) box.text("넓힘 " + std::to_string(growth.value("pixels", 0)) + "px · 공 " + grouped(growth.value("balls", 0)) + "개 · " + growth.value("at", "").substr(0, 10));
         sy = box.close();
     }
     if (!recordings.empty()) {
