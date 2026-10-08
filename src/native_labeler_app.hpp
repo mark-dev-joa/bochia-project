@@ -85,7 +85,7 @@ private:
          missingStatus_ = Json::object(),                        // the pass that adds the detector's balls the draft lacks
          propagationStatus_ = Json::object(),                    // confirmed labels carried to repeated frames
          occlusionStatus_ = Json::object();                      // balls marked partly hidden by themselves
-    float occlCoverage_ = .72f, occlCircularity_ = .8f, occlAspect_ = .85f;   // the dialog's thresholds
+    float occlCoverage_ = .5f, occlCircularity_ = .8f, occlAspect_ = .85f;   // the dialog's thresholds; a blurred whole ball keeps about 60 % of its rim
     bool occlReviewed_ = false; int occlTrial_ = 30;
     bool propagateForce_ = false;                                // the dialog's "also the frames already up to date"
     std::vector<FrameView> missingSamples_;                      // crops of a trial's new balls, shown in the dialog

@@ -8,7 +8,7 @@
 
 namespace boccia::labeler {
 struct OcclusionOptions {
-    double coverage = .72;        // rim sectors with edge support, below which the ball counts as hidden
+    double coverage = .5;         // rim sectors with edge support, below which the ball counts as hidden (a blurred whole ball sits near .6)
     double circularity = .8;      // mask area over the disc of its box, below which it counts as hidden
     double aspect = .85;          // short side over long side of the box, below which it counts as hidden
     bool includeReviewed = false; // also a person's confirmed images, but only ever turning the flag on there

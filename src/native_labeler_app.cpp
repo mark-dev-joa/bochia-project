@@ -608,7 +608,7 @@ void Application::confirmOcclusion(){
         ImGui::Dummy({0,2});
         ImGui::BeginDisabled(running);
         ImGui::TextUnformatted("테두리 지지율");ImGui::SameLine();ImGui::SetNextItemWidth(90);ImGui::DragFloat("##ocov",&occlCoverage_,.01f,.3f,1.f,"%.2f");ImGui::SameLine();
-        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"이보다 적은 구간에서만 에지가 잡히면 가림");ImGui::PopFont();
+        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"이보다 적은 테두리 구간에서만 에지가 잡히면 가림. 흔들린 온전한 공도 0.6 근처라 0.5가 안전");ImGui::PopFont();
         ImGui::TextUnformatted("마스크 원형도");ImGui::SameLine();ImGui::SetNextItemWidth(90);ImGui::DragFloat("##ocirc",&occlCircularity_,.01f,.3f,1.f,"%.2f");ImGui::SameLine();
         ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"마스크 넓이 ÷ 박스에 맞는 원 넓이");ImGui::PopFont();
         ImGui::TextUnformatted("박스 비율");ImGui::SameLine();ImGui::SetNextItemWidth(90);ImGui::DragFloat("##oasp",&occlAspect_,.01f,.3f,1.f,"%.2f");ImGui::SameLine();

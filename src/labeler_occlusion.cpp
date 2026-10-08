@@ -44,11 +44,11 @@ Verdict judge(const Json& box, const Json& boxes, size_t self, const cv::Mat& im
         v.coverage = fit.points >= 12 ? fit.coverage : 0;
     } else { v.circularity = 1; v.coverage = 1; }
     char why[96];
-    if (v.edge) { v.hidden = true; v.reason = "화면 가장자리에 걸침"; }
-    else if (v.aspect < o.aspect) { v.hidden = true; std::snprintf(why, sizeof why, "박스 비율 %.2f", v.aspect); v.reason = why; }
-    else if (v.circularity < o.circularity) { v.hidden = true; std::snprintf(why, sizeof why, "마스크 원형도 %.2f", v.circularity); v.reason = why; }
-    else if (v.coverage < o.coverage && !v.neighbour) { v.hidden = true; std::snprintf(why, sizeof why, "테두리 지지 %.0f%%", v.coverage * 100); v.reason = why; }
-    else if (v.coverage < o.coverage && v.neighbour) { std::snprintf(why, sizeof why, "테두리 지지 %.0f%%, 옆 공에 가림", v.coverage * 100); v.reason = why; }
+    if (v.edge) { v.hidden = true; v.reason = "가장자리"; }
+    else if (v.aspect < o.aspect) { v.hidden = true; std::snprintf(why, sizeof why, "비율 %.2f", v.aspect); v.reason = why; }
+    else if (v.circularity < o.circularity) { v.hidden = true; std::snprintf(why, sizeof why, "원형 %.2f", v.circularity); v.reason = why; }
+    else if (v.coverage < o.coverage && !v.neighbour) { v.hidden = true; std::snprintf(why, sizeof why, "지지 %.0f%%", v.coverage * 100); v.reason = why; }
+    else if (v.coverage < o.coverage && v.neighbour) { std::snprintf(why, sizeof why, "지지 %.0f%% 옆 공", v.coverage * 100); v.reason = why; }
     return v;
 }
 struct Target { std::string key; Json frame; bool reviewed; };
@@ -56,7 +56,7 @@ struct Target { std::string key; Json frame; bool reviewed; };
 
 OcclusionOptions occlusionOptions(const Json& payload) {
     OcclusionOptions o;
-    o.coverage = payload.value("coverage", .72); o.circularity = payload.value("circularity", .8); o.aspect = payload.value("aspect", .85);
+    o.coverage = payload.value("coverage", .5); o.circularity = payload.value("circularity", .8); o.aspect = payload.value("aspect", .85);
     for (double value : {o.coverage, o.circularity, o.aspect}) if (!std::isfinite(value) || value < .3 || value > 1) throw std::runtime_error("판정 기준은 0.3에서 1 사이여야 합니다.");
     o.includeReviewed = payload.value("include_reviewed", false);
     o.dryRun = payload.value("dry_run", false); o.countOnly = payload.value("count_only", false);
