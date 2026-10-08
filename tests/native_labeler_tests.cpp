@@ -74,6 +74,16 @@ void viewTests() {
     check(about(float(outlineCenter.x), 120) && about(float(outlineCenter.y), 120), "the center of an outline is the middle of its bounds");
     check(replaceTarget(balls, boundsCenter({{96, 96}, {144, 96}, {144, 144}, {96, 144}}), -1) == 0, "re-tracing a ball from outside its box must still replace it");
     check(replaceTarget(balls, boundsCenter({{101, 101}, {60, 101}, {60, 60}, {101, 60}}), -1) == -1, "an outline that only starts inside a neighbour's box must not replace the neighbour");
+
+    std::vector<cv::Point> ring, arc;
+    for (int degree = 0; degree < 360; degree += 10) {
+        const cv::Point point(int(std::lround(100 + 20 * std::cos(degree * 3.14159265 / 180))), int(std::lround(50 + 20 * std::sin(degree * 3.14159265 / 180))));
+        ring.push_back(point); if (degree <= 180) arc.push_back(point);
+    }
+    const auto full = fitCircle(ring), half = fitCircle(arc);
+    check(about(float(full.x), 100, .3f) && about(float(full.y), 50, .3f) && about(float(full.r), 20, .3f), "a circle fitted to a ring must find its center and radius");
+    check(about(float(half.x), 100, 1) && about(float(half.y), 50, 1) && about(float(half.r), 20, 1), "a circle fitted to a half ring, as of a part-hidden ball, must still find the whole ball");
+    check(fitCircle({{3, 4}}).r == 0 && fitCircle({}).r == 0, "too few points give no circle");
 }
 int main(int argc,char** argv){try{
     viewTests();

@@ -213,6 +213,12 @@ void Application::paintMarks(FrameView& frame, const std::function<ImVec2(double
             for (const auto& p : contour) points.push_back(at(p.x + .5, p.y + .5));
             draw->AddPolyline(points.data(), int(points.size()), color, ImDrawFlags_Closed, active ? 2.f : 1.5f);
         }
+        if (paint.circles && i < int(frame.circles.size()) && frame.circles[i].r > 0) {   // the ball as a circle, fitted to the mask
+            const auto& c = frame.circles[i];
+            const float scale = at(1, 0).x - at(0, 0).x;
+            draw->AddCircle(at(c.x + .5, c.y + .5), float(c.r) * scale, theme::circle, 0, 1.5f);
+            draw->AddCircleFilled(at(c.x + .5, c.y + .5), 2, theme::circle);
+        }
         const auto r = detectionBox(boxes[i]);
         const bool corrected = boxes[i].contains("detection_bbox"), boxOnly = !boxes[i].contains("segmentation");
         if (active && corrected) {
@@ -292,6 +298,7 @@ void Application::sceneBar(ImVec2 pos, float width) {
         theme::checkbox(label, &value);
     };
     right -= 6;
+    option("원", circles_);
     option("박스", boxes_);
     option("마스크 채움", masks_);
     draw->PushClipRect({x, pos.y}, {right - 10, pos.y + 40}, true);   // narrow windows cut the summary instead of running under the toggles
@@ -332,7 +339,7 @@ void Application::viewImage(int slot, ImVec2 a, ImVec2 b, bool compact) {
     ImGui::SetCursorScreenPos(a);
     const bool clicked = ImGui::InvisibleButton("##view", {b.x - a.x, b.y - a.y}), hovered = ImGui::IsItemHovered();
     const bool here = editor_ && slot == camera_;
-    paintImage(frame, a, b, {0, 0, double(frame.image.cols), double(frame.image.rows)}, {.fill = true, .boxes = boxes_, .selected = here ? selected_ : -1});
+    paintImage(frame, a, b, {0, 0, double(frame.image.cols), double(frame.image.rows)}, {.fill = true, .boxes = boxes_, .circles = circles_, .selected = here ? selected_ : -1});
     const float scale = (b.x - a.x) / frame.image.cols;
     if (!compact) {
         const auto order = sorted(frame);
@@ -401,7 +408,7 @@ void Application::cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact) {
         const int ball = order[i];
         const auto r = detectionBox(boxes[ball]);
         const bool active = here && ball == selected_;
-        paintImage(frame, a, b, cropRegion(r, frame.image.cols, frame.image.rows), {.fill = false, .boxes = boxes_, .selected = active ? ball : -1});
+        paintImage(frame, a, b, cropRegion(r, frame.image.cols, frame.image.rows), {.fill = false, .boxes = boxes_, .circles = circles_, .selected = active ? ball : -1});
         draw->AddRect(a, b, active ? theme::selected : hovered ? theme::text3 : theme::line, 4, 0, active ? 2.f : 1.f);
         if (cell > 70) {   // drawn after the image, which would otherwise cover it
             draw->AddRectFilled({b.x - 26, a.y + 4}, {b.x - 4, a.y + 26}, theme::rgb(0x0d0f12, removing ? 235 : 150), 5);
@@ -411,7 +418,9 @@ void Application::cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact) {
         const std::string number = std::to_string(i + 1);
         const float font = compact ? 11.f : theme::caption;
         theme::write(draw, {a.x + 1, b.y + (compact ? 3 : 4)}, active ? theme::selected : theme::text, number, font, theme::bold);
-        if (!compact) theme::write(draw, {a.x + 7 + theme::extent(number, font, theme::bold).x, b.y + 4}, theme::text2, sizeText(r), theme::caption, theme::mono);
+        std::string label = sizeText(r);
+        if (circles_ && ball < int(frame.circles.size()) && frame.circles[ball].r > 0) { char radius[24]; std::snprintf(radius, sizeof radius, " · r %.1f", frame.circles[ball].r); label += radius; }
+        if (!compact) theme::write(draw, {a.x + 7 + theme::extent(number, font, theme::bold).x, b.y + 4}, theme::text2, label, theme::caption, theme::mono);
         if (cell > 70) {
             const char* tag = sourceTag(boxes[ball]);
             const float w = theme::extent(tag, 11).x + 10;
@@ -479,7 +488,7 @@ void Application::canvas(FrameView& frame, ImVec2 pos, ImVec2 size) {
         for (int y = y0; y <= y1; ++y) draw->AddLine(at(x0, y), at(x1, y), grid);
     }
     const bool proposing = !proposal_.is_null();
-    paintMarks(frame, at, {.fill = false, .boxes = boxes_, .selected = proposing ? -1 : selected_, .skip = proposing ? replacement_ : -1});
+    paintMarks(frame, at, {.fill = false, .boxes = boxes_, .circles = circles_, .selected = proposing ? -1 : selected_, .skip = proposing ? replacement_ : -1});
     if (proposing) {
         for (const auto& contour : proposalContours_) {
             if (contour.size() < 3) continue;
@@ -745,6 +754,11 @@ void Application::sidePanel() {
         theme::write(list, {x, base.y + y}, theme::text, title, theme::sub, theme::bold);
         theme::write(list, {x + width - theme::extent(sourceName(box), theme::caption).x, base.y + y + 1}, theme::text3, sourceName(box), theme::caption);
         y += 28;
+        if (circles_ && selected_ < int(frame.circles.size()) && frame.circles[selected_].r > 0) {
+            const auto& c = frame.circles[selected_]; char circle[80]; std::snprintf(circle, sizeof circle, "원  중심 %.1f, %.1f   반지름 %.1f", c.x, c.y, c.r);
+            theme::write(list, {x, base.y + y + 2}, theme::text2, circle, theme::caption, theme::mono);
+            y += 26;
+        }
         theme::write(list, {x, base.y + y + 4}, theme::text2, "일부 가림", theme::caption);
         theme::keycapAt(list, {x + width - 60, base.y + y + 3}, "O");
         bool occluded = box.value("occluded", false);

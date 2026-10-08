@@ -1,5 +1,6 @@
 #include "native_labeler_view.hpp"
 #include <algorithm>
+#include <cmath>
 #include <numeric>
 #include <set>
 #include <cstdio>
@@ -74,6 +75,23 @@ cv::Point2d boundsCenter(const std::vector<cv::Point2d>& points) {
     auto low = points.front(), high = low;
     for (const auto& point : points) { low.x = std::min(low.x, point.x); low.y = std::min(low.y, point.y); high.x = std::max(high.x, point.x); high.y = std::max(high.y, point.y); }
     return (low + high) * .5;
+}
+Circle fitCircle(const std::vector<cv::Point>& points) {
+    if (points.size() < 3) return {};
+    // Algebraic fit of x^2 + y^2 + a x + b y + c = 0 around the centroid, so the normal equations stay well conditioned.
+    double mx = 0, my = 0;
+    for (const auto& p : points) { mx += p.x; my += p.y; }
+    mx /= double(points.size()); my /= double(points.size());
+    double suu = 0, suv = 0, svv = 0, suuu = 0, svvv = 0, suvv = 0, svuu = 0;
+    for (const auto& p : points) {
+        const double u = p.x - mx, v = p.y - my;
+        suu += u * u; suv += u * v; svv += v * v; suuu += u * u * u; svvv += v * v * v; suvv += u * v * v; svuu += v * u * u;
+    }
+    const double det = suu * svv - suv * suv;
+    if (std::abs(det) < 1e-9) return {};
+    const double right1 = (suuu + suvv) / 2, right2 = (svvv + svuu) / 2;
+    const double uc = (right1 * svv - right2 * suv) / det, vc = (right2 * suu - right1 * suv) / det;
+    return {uc + mx, vc + my, std::sqrt(uc * uc + vc * vc + (suu + svv) / double(points.size()))};
 }
 std::map<std::string, SplitTotal> splitTotals(const Json& stats, const Json& splits) {
     std::map<std::string, SplitTotal> totals{{"train", {}}, {"val", {}}, {"test", {}}};

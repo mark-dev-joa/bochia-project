@@ -22,6 +22,7 @@ struct FrameView {
     GLuint texture = 0, overlay = 0;
     std::vector<Json> history;
     std::vector<std::vector<std::vector<cv::Point>>> contours;   // per ball, refreshed by repaint()
+    std::vector<Circle> circles;                                 // per ball, fitted to the mask by repaint()
     bool dirty = false, repaint = true;
     float scale = 0, offsetX = 0, offsetY = 0;                   // scale 0 = fit or zoom to the selected ball on next draw
 };
@@ -64,7 +65,7 @@ private:
         int cameras = 0;
         std::string thumb;
     };
-    struct Paint { bool fill = true, boxes = false; int selected = -1, skip = -1; };
+    struct Paint { bool fill = true, boxes = false, circles = false; int selected = -1, skip = -1; };
     using Thumbs = std::vector<std::pair<std::string, cv::Mat>>;
     Configuration config_;
     Client client_;
@@ -86,7 +87,7 @@ private:
         aheadHits_ = 0;                                          // scenes shown from a fetch made ahead; the self-test reads it
     Page page_ = Page::Review;
     Tool tool_ = Tool::Select;
-    bool editor_ = false, masks_ = true, boxes_ = true, representatives_ = true, crops_ = true, dragging_ = false,
+    bool editor_ = false, masks_ = true, boxes_ = true, circles_ = true, representatives_ = true, crops_ = true, dragging_ = false,
          scrollToCurrent_ = false, rowsDirty_ = true, panning_ = false,
          stale_ = false,                                         // labels changed on the engine while another page was open
          aheadDirty_ = true,                                     // the scene to fetch ahead may have changed

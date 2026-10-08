@@ -28,6 +28,9 @@ BallRef nextBall(const std::vector<BallRef>& order, BallRef current, int step);
 int replaceTarget(const std::vector<cv::Rect2d>& boxes, cv::Point2d point, int selected);
 // 점들을 둘러싼 사각형의 중심. 둘레를 찍은 폴리곤이 어느 공인지는 첫 점이 아니라 이 중심으로 정한다.
 cv::Point2d boundsCenter(const std::vector<cv::Point2d>& points);
+struct Circle { double x = 0, y = 0, r = 0; };
+// 점들에 가장 잘 맞는 원(최소제곱). 점이 셋보다 적거나 한 줄에 있으면 반지름 0.
+Circle fitCircle(const std::vector<cv::Point>& points);
 struct SplitTotal { int recordings = 0, images = 0, balls = 0, empty = 0; };
 struct SplitCheck { bool ok = false; std::string text, detail; };
 std::map<std::string, SplitTotal> splitTotals(const Json& stats, const Json& splits);

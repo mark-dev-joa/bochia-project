@@ -23,7 +23,7 @@ std::filesystem::path Application::preferencesPath() const { return config_.proj
 void Application::rememberPosition() const {
     if(frames_.empty())return;
     const auto& scene=catalog_["scenes"][scene_];
-    Json state={{"recording",scene["recording"]},{"index",scene["index"]},{"camera",frames_[camera_].member["camera"]},{"editor",editor_},{"brightness",brightness_},{"representatives",representatives_},{"filter",filter_},{"masks",masks_},{"boxes",boxes_},{"panels",{listOpen_,sideOpen_,summaryOpen_}}};
+    Json state={{"recording",scene["recording"]},{"index",scene["index"]},{"camera",frames_[camera_].member["camera"]},{"editor",editor_},{"brightness",brightness_},{"representatives",representatives_},{"filter",filter_},{"masks",masks_},{"boxes",boxes_},{"circles",circles_},{"panels",{listOpen_,sideOpen_,summaryOpen_}}};
     auto path=preferencesPath();std::filesystem::create_directories(path.parent_path());
     auto temporary=path;temporary+=L"."+std::to_wstring(Clock::now().time_since_epoch().count())+L".tmp";std::ofstream stream(temporary,std::ios::binary);stream<<state.dump(2);stream.close();
     if(!stream)throw std::runtime_error("작업 위치 저장 실패");
@@ -33,7 +33,7 @@ void Application::restorePosition() {
     int index=0,camera=0;bool editor=false;
     if(config_.rememberUi){try {
         std::ifstream input(preferencesPath(),std::ios::binary);auto state=Json::parse(input);
-        brightness_=std::clamp(state.value("brightness",1.65f),.5f,3.f);representatives_=state.value("representatives",true);filter_=std::clamp(state.value("filter",0),0,3);masks_=state.value("masks",true);boxes_=state.value("boxes",true);
+        brightness_=std::clamp(state.value("brightness",1.65f),.5f,3.f);representatives_=state.value("representatives",true);filter_=std::clamp(state.value("filter",0),0,3);masks_=state.value("masks",true);boxes_=state.value("boxes",true);circles_=state.value("circles",true);
         if(state.contains("panels")&&state["panels"].is_array()&&state["panels"].size()==3){listOpen_=state["panels"][0];sideOpen_=state["panels"][1];summaryOpen_=state["panels"][2];}
         for(int i=0;i<int(catalog_["scenes"].size());++i){auto& scene=catalog_["scenes"][i];if(scene["recording"]==state.at("recording")&&scene["index"]==state.at("index")){
             index=i;editor=state.value("editor",false);for(int c=0;c<int(scene["members"].size());++c)if(scene["members"][c]["camera"]==state.at("camera"))camera=c;break;
@@ -354,11 +354,13 @@ void Application::repaint(FrameView& f){
     cv::Mat display;f.image.convertTo(display,CV_8UC3,f.member.value("kind","")=="컬러"?brightness_:1.12);uploadTexture(f.texture,display);
     cv::Mat overlay(f.image.size(),CV_8UC4,cv::Scalar(0,0,0,0));
     const bool active=!frames_.empty()&&&f==&current();
-    const auto& boxes=f.annotation["boxes"];f.contours.assign(boxes.size(),{});
+    const auto& boxes=f.annotation["boxes"];f.contours.assign(boxes.size(),{});f.circles.assign(boxes.size(),{});
     for(int i=0;i<int(boxes.size());++i){
-        if(!boxes[i].contains("segmentation"))continue;
+        if(!boxes[i].contains("segmentation")){const auto r=detectionBox(boxes[i]);f.circles[i]={r.x+r.width/2,r.y+r.height/2,(r.width+r.height)/4};continue;}   // box only: the inscribed circle
         auto mask=decodeMask(boxes[i]["segmentation"],f.image.cols,f.image.rows);
         cv::findContours(mask.clone(),f.contours[i],cv::RETR_EXTERNAL,cv::CHAIN_APPROX_SIMPLE);
+        std::vector<cv::Point> edge;for(const auto& contour:f.contours[i])edge.insert(edge.end(),contour.begin(),contour.end());
+        f.circles[i]=fitCircle(edge);
         if(active&&replacement_==i&&!proposal_.is_null())continue;
         overlay.setTo(active&&editor_&&i==selected_?cv::Scalar(255,216,74,13):cv::Scalar(46,230,208,51),mask);
     }
@@ -503,6 +505,7 @@ void Application::keys() {
     for(int edge=0;edge<4;++edge)if(ImGui::IsKeyPressed(arrows[edge],true))nudge(edge,!io.KeyShift);
     if(pressed(ImGuiKey_M)){masks_=!masks_;}
     if(pressed(ImGuiKey_X))boxes_=!boxes_;
+    if(pressed(ImGuiKey_C))circles_=!circles_;
     if(!editor_||pending()||busy())return;
     if(pressed(ImGuiKey_V))tool_=Tool::Select;
     if(pressed(ImGuiKey_S))tool_=Tool::Ai;
@@ -559,7 +562,7 @@ void Application::shortcutsPopup(ImVec2 below) {
     static const char* const rows[][2]={{"E","세 장 확인하고 다음 미검수 장면"},{"Shift+E","크게 보는 카메라 한 장만 확인"},{"Q","보류"},{"N","다음 미검수 장면"},
         {"A / D","이전 / 다음 장면"},{"Backspace","이전에 보던 장면으로"},{"1 / 2 / 3","그 카메라를 크게"},{"Tab / Shift+Tab","다음 / 이전 공"},
         {"방향키","선택한 공의 그 방향 경계를 1픽셀 바깥으로"},{"Shift+방향키","1픽셀 안으로"},{"V / S / B / P / R","선택 / AI 분할 / 브러시 / 폴리곤 / 박스"},
-        {"왼쪽 / 오른쪽 클릭","더하기 / 빼기"},{"[ / ]","브러시 굵기"},{"Enter / Esc","윤곽 반영 / 취소, 선택 해제, 세 장 보기"},{"M / X","마스크 채움 / 박스 표시"},
+        {"왼쪽 / 오른쪽 클릭","더하기 / 빼기"},{"[ / ]","브러시 굵기"},{"Enter / Esc","윤곽 반영 / 취소, 선택 해제, 세 장 보기"},{"M / X / C","마스크 채움 / 박스 / 원 표시"},
         {"F / Z","화면 맞춤 / 선택한 공으로"},{"O / Delete","일부 가림 / 공 삭제"},{"Ctrl+Z / Ctrl+S","되돌리기 / 저장"},{"휠 / 가운데 끌기","확대 / 이동"}};
     ImGui::SetNextWindowPos({below.x,below.y+4},ImGuiCond_Always,{1,0});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{16,12});
