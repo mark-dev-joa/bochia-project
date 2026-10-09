@@ -23,6 +23,8 @@ struct BallOptions {
 struct BallSettings {
     bool run=false,overlay=true;
     std::map<std::string,BallOptions> cameras;
+    std::string model;            // The learned detector (ONNX) for every camera, copied into each camera's options; empty means Hough + RANSAC.
+    double modelConfidence=.25;
     void validate()const;
 };
 struct BallCircle {cv::Point2f center;float radius=0;double coverage=0;std::string color;};

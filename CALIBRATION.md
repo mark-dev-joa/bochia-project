@@ -272,6 +272,6 @@ CMake는 최초 빌드 시 SHA-256으로 고정한 [Zstandard 소스](https://gi
 
 ## 학습된 모델로 공 찾기
 
-Ball 패널의 **Model** 항목에서 ONNX 모델(`models/boccia-yolo26n.onnx`, 라벨러 라벨로 학습한 YOLO26)을 고르면 모든 카메라가 Hough + RANSAC 대신 그 모델로 공을 찾는다. 박스 중심이 공 중심, 짧은 변의 절반이 반지름, 모델의 확신이 coverage가 된다. ROI와 색상 분류는 그대로 적용되고, 모델을 쓰는 동안 Preprocess/Hough/RANSAC 설정은 비활성화된다. "모델 끄기"로 돌아온다. 설정 파일에는 `model`(경로)과 `model_confidence`로 저장되어 `tools/detect_recordings`, `tools/triangulate_recording`도 같은 모델을 쓴다.
+Ball Detection 패널 맨 위의 **Model** 항목(카메라가 없어도 보임)에서 ONNX 모델(`models/boccia-yolo26n.onnx`, 라벨러 라벨로 학습한 YOLO26)을 고르면 모든 카메라가 Hough + RANSAC 대신 그 모델로 공을 찾는다. 박스 중심이 공 중심, 짧은 변의 절반이 반지름, 모델의 확신이 coverage가 된다. ROI와 색상 분류는 그대로 적용되고, 모델을 쓰는 동안 Preprocess/Hough/RANSAC 설정은 비활성화된다. "모델 끄기"로 돌아온다. 설정 파일에는 `ball.model`(경로)과 `ball.model_confidence`로 한 번 저장되고 카메라별 옵션에 복사되어 `tools/detect_recordings`, `tools/triangulate_recording`도 같은 모델을 쓴다.
 
 모델은 ONNX Runtime(CPU)으로 돌리며 1280 입력에 한 장 약 100 ms다. `yolo export ... format=onnx imgsz=1280 nms=True`로 내보낸 모델(출력 `[1, 300, 6]`)과 NMS 없는 원시 출력(`[1, 4+클래스, N]`) 둘 다 읽는다. 카메라 SDK 런타임 폴더에 든 2017년 VC++ 런타임(msvcp140 14.16)이 프로그램 옆에 있으면 ONNX Runtime이 그 안에서 죽으므로, 빌드는 복사 뒤 그 DLL들을 지우고 패키지는 최신 재배포판을 넣는다. 검증은 `yolo_detector_tests <model.onnx> <image> [공 수]`.

@@ -53,7 +53,7 @@ void BallOptions::validate()const{
     for(auto p:roi)if(!inRange(p.x,0,1)||!inRange(p.y,0,1))throw std::runtime_error("ROI point is outside the image.");
     if(!roi.empty()&&(!cv::isContourConvex(roi)||std::abs(cv::contourArea(roi))<1e-5))throw std::runtime_error("ROI corners must form a non-crossing quadrilateral.");
 }
-void BallSettings::validate()const{if(cameras.size()>64)throw std::runtime_error("Too many ball detection profiles.");for(const auto& [id,o]:cameras){if(id.empty()||id.size()>256)throw std::runtime_error("Invalid ball camera identity.");o.validate();}}
+void BallSettings::validate()const{if(!inRange(modelConfidence,.01,1))throw std::runtime_error("Invalid model confidence.");if(cameras.size()>64)throw std::runtime_error("Too many ball detection profiles.");for(const auto& [id,o]:cameras){if(id.empty()||id.size()>256)throw std::runtime_error("Invalid ball camera identity.");o.validate();}}
 void to_json(nlohmann::json& j,const BallOptions& o){
     j={{"color",o.color},{"model",o.model},{"model_confidence",o.modelConfidence},{"detect",o.detect},{"overlay",o.overlay},{"roi_enabled",o.roiEnabled},{"ransac",o.ransac},{"show_candidates",o.showCandidates},{"show_center",o.showCenter},{"show_roi",o.showRoi},
         {"stage",o.stage},{"blur",o.blur},{"kernel",o.kernel},{"min_radius",o.minRadius},{"max_radius",o.maxRadius},{"min_distance",o.minDistance},{"canny_low",o.cannyLow},{"canny_high",o.cannyHigh},
@@ -71,8 +71,11 @@ void from_json(const nlohmann::json& j,BallOptions& o){
 #undef READ
     if(j.contains("roi"))for(const auto& p:j.at("roi")){if(p.size()!=2)throw std::runtime_error("Invalid ROI coordinate.");o.roi.emplace_back(p[0].get<float>(),p[1].get<float>());}o.validate();
 }
-void to_json(nlohmann::json& j,const BallSettings& o){o.validate();j={{"run",o.run},{"overlay",o.overlay},{"cameras",o.cameras}};}
-void from_json(const nlohmann::json& j,BallSettings& o){o.run=j.value("run",false);o.overlay=j.value("overlay",true);o.cameras=j.value("cameras",std::map<std::string,BallOptions>{});o.validate();}
+void to_json(nlohmann::json& j,const BallSettings& o){o.validate();j={{"run",o.run},{"overlay",o.overlay},{"model",o.model},{"model_confidence",o.modelConfidence},{"cameras",o.cameras}};}
+void from_json(const nlohmann::json& j,BallSettings& o){o.run=j.value("run",false);o.overlay=j.value("overlay",true);o.cameras=j.value("cameras",std::map<std::string,BallOptions>{});
+    o.model=j.value("model",std::string{});o.modelConfidence=j.value("model_confidence",.25);
+    for(auto& [id,camera]:o.cameras){camera.model=o.model;camera.modelConfidence=o.modelConfidence;}   // one model for every camera
+    o.validate();}
 std::string classifyBallColor(const cv::Mat& bgr,const BallCircle& circle,const BallOptions& o){
     cv::Rect box(int(circle.center.x-circle.radius),int(circle.center.y-circle.radius),int(2*circle.radius+2),int(2*circle.radius+2));box&=cv::Rect(0,0,bgr.cols,bgr.rows);if(box.empty())return "Unknown";
     cv::Mat hsv;cv::cvtColor(bgr(box),hsv,cv::COLOR_BGR2HSV);int counts[3]{},total=0,step=std::max(1,int(circle.radius/20));

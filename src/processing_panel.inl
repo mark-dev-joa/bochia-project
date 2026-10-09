@@ -41,7 +41,8 @@
         }catch(const std::exception& e){ballMessage=e.what();ballEdited=Clock::now();}
     }
     BallOptions& ballOptions(size_t i){auto& c=*cameras.at(i);auto [it,inserted]=settings.ball.cameras.try_emplace(c.device.serial);
-        if(inserted){auto format=c.settings.find("PixelFormat");if(format!=c.settings.end())it->second.color=format->second.find("Bayer")!=std::string::npos||format->second.find("RGB")!=std::string::npos||format->second.find("BGR")!=std::string::npos;}return it->second;}
+        if(inserted){auto format=c.settings.find("PixelFormat");if(format!=c.settings.end())it->second.color=format->second.find("Bayer")!=std::string::npos||format->second.find("RGB")!=std::string::npos||format->second.find("BGR")!=std::string::npos;}
+        it->second.model=settings.ball.model;it->second.modelConfidence=settings.ball.modelConfidence;return it->second;}
     void stopRecording(){for(auto& c:cameras)c->setRecorder({});if(recorder)recorder->stop();}
     void startRecording(){try{
         if(replay||reconnectTask.pending()||busy()||recordingBusy())return;
@@ -225,6 +226,18 @@
         if(ImGui::Begin("Ball Detection",&showProcessing)){
             ImGui::BeginDisabled(loadFailed||saveFuture.valid());auto before=settings.ball;
             ImGui::Checkbox("Run",&settings.ball.run);ImGui::SameLine();ImGui::Checkbox("Overlay",&settings.ball.overlay);
+            {   // The learned detector (trained on the labeler's labels) for every camera, in place of Hough + RANSAC (2026-10-09).
+                ImGui::SeparatorText("Model");
+                const bool usingModel=!settings.ball.model.empty();
+                if(usingModel){const auto file=fs::path(reinterpret_cast<const char8_t*>(settings.ball.model.c_str())).filename().u8string();ImGui::Text("ONNX: %s",std::string(file.begin(),file.end()).c_str());}
+                else ImGui::TextDisabled("ONNX 모델 없음 · Hough + RANSAC 사용");
+                auto applyModel=[&]{for(auto& [id,camera]:settings.ball.cameras){camera.model=settings.ball.model;camera.modelConfidence=settings.ball.modelConfidence;}};
+                if(ImGui::Button("ONNX 모델 고르기…")){if(auto chosen=chooseModelFile();!chosen.empty()){const auto text=chosen.u8string();settings.ball.model=std::string(text.begin(),text.end());applyModel();ballMessage="모든 카메라가 모델로 공을 찾습니다.";}}
+                if(usingModel){ImGui::SameLine();if(ImGui::Button("모델 끄기")){settings.ball.model.clear();applyModel();}
+                    float confidence=float(settings.ball.modelConfidence);ImGui::SetNextItemWidth(210);
+                    if(ImGui::SliderFloat("Model Confidence",&confidence,.05f,.95f,"%.2f",ImGuiSliderFlags_AlwaysClamp)){settings.ball.modelConfidence=confidence;applyModel();}
+                    ImGui::TextDisabled("모델을 쓰면 Preprocess/Hough/RANSAC은 쓰지 않습니다. ROI와 색상 분류는 그대로입니다.");}
+            }
             if(cameras.empty())ImGui::TextDisabled("카메라를 연결하거나 녹화 폴더를 여세요.");
             else {ballCamera=std::clamp(ballCamera,0,int(cameras.size())-1);ImGui::SetNextItemWidth(240);
                 if(ImGui::BeginCombo("Camera",cameraName(cameras[ballCamera]->device.serial).c_str())){for(int i=0;i<int(cameras.size());++i)if(ImGui::Selectable(cameraName(cameras[i]->device.serial).c_str(),i==ballCamera))ballCamera=i;ImGui::EndCombo();}
@@ -242,15 +255,7 @@
                 ImGui::SameLine();if(ImGui::Button("Reset ROI")){o.roi.clear();roiCamera=-1;roiFrame={};roiPoints.clear();}
                 auto slider=[&](const char* name,double& value,float lo,float hi,const char* format="%.2f"){float f=float(value);ImGui::SetNextItemWidth(210);if(ImGui::SliderFloat(name,&f,lo,hi,format,ImGuiSliderFlags_AlwaysClamp))value=f;};
                 auto integer=[&](const char* name,int& value,int lo,int hi){ImGui::SetNextItemWidth(210);ImGui::SliderInt(name,&value,lo,hi,"%d",ImGuiSliderFlags_AlwaysClamp);};
-                // A learned detector, trained on the labeler's labels, in place of the Hough + RANSAC settings below (2026-10-09).
-                ImGui::SeparatorText("Model");
-                {const bool usingModel=!o.model.empty();
-                    if(usingModel){const auto file=fs::path(reinterpret_cast<const char8_t*>(o.model.c_str())).filename().u8string();ImGui::TextDisabled("ONNX: %s",std::string(file.begin(),file.end()).c_str());}
-                    else ImGui::TextDisabled("ONNX 모델 없음 · Hough + RANSAC 사용");
-                    if(ImGui::Button("ONNX 모델 고르기…")){if(auto chosen=chooseModelFile();!chosen.empty()){const auto text=chosen.u8string();const std::string utf8(text.begin(),text.end());for(size_t i=0;i<cameras.size();++i)ballOptions(i).model=utf8;ballMessage="모든 카메라가 모델로 공을 찾습니다.";}}
-                    if(usingModel){ImGui::SameLine();if(ImGui::Button("모델 끄기"))for(size_t i=0;i<cameras.size();++i)ballOptions(i).model.clear();
-                        slider("Model Confidence",o.modelConfidence,.05f,.95f);ImGui::TextDisabled("모델을 쓰면 아래 Preprocess/Hough/RANSAC은 쓰지 않습니다. ROI와 색상 분류는 그대로입니다.");}}
-                ImGui::BeginDisabled(!o.model.empty());
+                ImGui::BeginDisabled(!settings.ball.model.empty());   // with the model in use (Model, at the top) these settings do nothing
                 ImGui::SeparatorText("Preprocess");slider("Brightness",o.brightness,-100,100,"%.0f");slider("Contrast",o.contrast,.25f,3);slider("Scale",o.scale,.25f,1);
                 ImGui::SetNextItemWidth(210);ImGui::Combo("Blur",&o.blur,"None\0Median\0Gaussian\0Bilateral\0Box\0");int kernel=(o.kernel-1)/2;integer("Kernel",kernel,0,15);o.kernel=kernel*2+1;
                 ImGui::SameLine();ImGui::TextDisabled("%d px",o.kernel);integer("Canny Low",o.cannyLow,0,499);integer("Canny High",o.cannyHigh,o.cannyLow+1,500);o.cannyHigh=std::max(o.cannyHigh,o.cannyLow+1);
