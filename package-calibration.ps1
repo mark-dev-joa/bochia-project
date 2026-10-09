@@ -97,8 +97,10 @@ Get-ChildItem -LiteralPath $package -File | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination $runtimeFile -Force
     }
 }
-foreach ($runtimeFolder in @('xml', 'userset', 'licenses')) {
-    Copy-Item -LiteralPath (Join-Path $package $runtimeFolder) -Destination $runtimeOutput -Recurse -Force
+foreach ($runtimeFolder in @('xml', 'userset', 'licenses', 'models')) {
+    if (Test-Path -LiteralPath (Join-Path $package $runtimeFolder)) {
+        Copy-Item -LiteralPath (Join-Path $package $runtimeFolder) -Destination $runtimeOutput -Recurse -Force
+    }
 }
 Write-Output "Executable: $(Join-Path $runtimeOutput 'boccia_calibration.exe')"
 if ($RuntimeOnly) { return }
