@@ -1,0 +1,42 @@
+task: detection
+
+evaluator:
+  type: CocoEvaluator
+  iou_types: ['bbox', ]
+
+# The labeler's export: category id 1 = boccia_ball, used as the label directly (no remap), so 2 classes with 0 unused.
+num_classes: 2
+remap_mscoco_category: False
+
+train_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoDetection
+    img_folder: C:/boccia-train/export/20261009-021405-bed880d6/images/train
+    ann_file: C:/boccia-train/export/20261009-021405-bed880d6/annotations/instances_detection_train.json
+    return_masks: False
+    transforms:
+      type: Compose
+      ops: ~
+  shuffle: True
+  num_workers: 4
+  drop_last: True
+  collate_fn:
+    type: BatchImageCollateFunction
+
+
+val_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoDetection
+    img_folder: C:/boccia-train/export/20261009-021405-bed880d6/images/val
+    ann_file: C:/boccia-train/export/20261009-021405-bed880d6/annotations/instances_detection_val.json
+    return_masks: False
+    transforms:
+      type: Compose
+      ops: ~
+  shuffle: False
+  num_workers: 4
+  drop_last: False
+  collate_fn:
+    type: BatchImageCollateFunction
