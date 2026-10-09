@@ -2,6 +2,7 @@ param(
     [string]$DependencyRoot = 'D:/works/golf_launch_monitor/thirdparty',
     [string]$SdkRoot = 'C:/Program Files/HuarayTech/MV Viewer',
     [string]$VcRuntimeDirectory = '',
+    [string]$CudaDlls = '',   # a folder with the CUDA 12 / cuDNN 9 runtime DLLs to ship beside the program (about 2 GB); empty ships none
     [switch]$RuntimeOnly
 )
 $ErrorActionPreference = 'Stop'
@@ -18,6 +19,16 @@ Copy-Item -LiteralPath $executable -Destination $package
 Copy-Item -LiteralPath (Join-Path $release 'opencv_world4110.dll') -Destination $package
 # The learned ball detector: ONNX Runtime beside the program, the model under models/, its licences with the others.
 Copy-Item -LiteralPath (Join-Path $release 'onnxruntime.dll') -Destination $package
+# The GPU build of ONNX Runtime keeps the CUDA provider in its own DLLs; the CPU build has only the shared one.
+$onnxLib = Join-Path $DependencyRoot 'onnxruntime/lib'
+foreach ($provider in @('onnxruntime_providers_shared.dll', 'onnxruntime_providers_cuda.dll')) {
+    if (Test-Path -LiteralPath (Join-Path $onnxLib $provider)) { Copy-Item -LiteralPath (Join-Path $onnxLib $provider) -Destination $package }
+}
+if ($CudaDlls) {
+    foreach ($pattern in @('cudart64_12.dll', 'cublas64_12.dll', 'cublasLt64_12.dll', 'cudnn*64_9.dll', 'cufft64_11.dll', 'curand64_10.dll', 'nvrtc64_120_0.dll', 'nvrtc-builtins64_*.dll')) {
+        Get-ChildItem -LiteralPath $CudaDlls -File -Filter $pattern | Copy-Item -Destination $package
+    }
+}
 $model = Join-Path $PSScriptRoot 'data/models/boccia/yolo26n-20261009.onnx'
 if (Test-Path -LiteralPath $model) {
     New-Item -ItemType Directory -Path (Join-Path $package 'models') -Force | Out-Null

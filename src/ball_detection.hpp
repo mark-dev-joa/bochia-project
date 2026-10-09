@@ -1,5 +1,6 @@
 #pragma once
 #include <opencv2/core.hpp>
+#include "yolo_detector.hpp"
 #include <nlohmann/json.hpp>
 #include <map>
 #include <stop_token>
@@ -16,6 +17,7 @@ struct BallOptions {
     double colorFraction=.35;
     std::string model;            // A YOLO detector exported to ONNX; empty means Hough + RANSAC below. Applies before every other setting.
     double modelConfidence=.25;   // The model's confidence a ball needs.
+    bool cuda=true;               // Run the model on the GPU through CUDA when available (falls back to the CPU).
     std::vector<cv::Point2f> roi; // Normalized source image coordinates.
     void validate()const;
     bool operator==(const BallOptions&)const=default;
@@ -25,6 +27,8 @@ struct BallSettings {
     std::map<std::string,BallOptions> cameras;
     std::string model;            // The learned detector (ONNX) for every camera, copied into each camera's options; empty means Hough + RANSAC.
     double modelConfidence=.25;
+    bool cuda=true;               // GPU through CUDA when available, else the CPU; copied into every camera's options too.
+    std::string cudaDlls;         // A folder with the CUDA runtime DLLs when they are not beside the program (see yoloCudaLibraryDirectory).
     void validate()const;
 };
 struct BallCircle {cv::Point2f center;float radius=0;double coverage=0;std::string color;};

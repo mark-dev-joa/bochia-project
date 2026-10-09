@@ -55,7 +55,7 @@ void BallOptions::validate()const{
 }
 void BallSettings::validate()const{if(!inRange(modelConfidence,.01,1))throw std::runtime_error("Invalid model confidence.");if(cameras.size()>64)throw std::runtime_error("Too many ball detection profiles.");for(const auto& [id,o]:cameras){if(id.empty()||id.size()>256)throw std::runtime_error("Invalid ball camera identity.");o.validate();}}
 void to_json(nlohmann::json& j,const BallOptions& o){
-    j={{"color",o.color},{"model",o.model},{"model_confidence",o.modelConfidence},{"detect",o.detect},{"overlay",o.overlay},{"roi_enabled",o.roiEnabled},{"ransac",o.ransac},{"show_candidates",o.showCandidates},{"show_center",o.showCenter},{"show_roi",o.showRoi},
+    j={{"color",o.color},{"model",o.model},{"model_confidence",o.modelConfidence},{"cuda",o.cuda},{"detect",o.detect},{"overlay",o.overlay},{"roi_enabled",o.roiEnabled},{"ransac",o.ransac},{"show_candidates",o.showCandidates},{"show_center",o.showCenter},{"show_roi",o.showRoi},
         {"stage",o.stage},{"blur",o.blur},{"kernel",o.kernel},{"min_radius",o.minRadius},{"max_radius",o.maxRadius},{"min_distance",o.minDistance},{"canny_low",o.cannyLow},{"canny_high",o.cannyHigh},
         {"hough_edge",o.houghEdge},{"hough_votes",o.houghVotes},{"iterations",o.iterations},{"brightness",o.brightness},{"contrast",o.contrast},{"scale",o.scale},{"dp",o.dp},{"reach",o.reach},{"tolerance",o.tolerance},{"min_coverage",o.minCoverage},
         {"red_width",o.redWidth},{"blue_low",o.blueLow},{"blue_high",o.blueHigh},{"min_saturation",o.minSaturation},{"min_value",o.minValue},{"white_saturation",o.whiteSaturation},{"white_value",o.whiteValue},{"color_fraction",o.colorFraction},{"roi",nlohmann::json::array()}};
@@ -64,17 +64,18 @@ void to_json(nlohmann::json& j,const BallOptions& o){
 void from_json(const nlohmann::json& j,BallOptions& o){
     o=BallOptions{};
 #define READ(member,key) o.member=j.value(key,o.member)
-    READ(color,"color");READ(model,"model");READ(modelConfidence,"model_confidence");READ(detect,"detect");READ(overlay,"overlay");READ(roiEnabled,"roi_enabled");READ(ransac,"ransac");READ(showCandidates,"show_candidates");READ(showCenter,"show_center");READ(showRoi,"show_roi");
+    READ(color,"color");READ(model,"model");READ(modelConfidence,"model_confidence");READ(cuda,"cuda");READ(detect,"detect");READ(overlay,"overlay");READ(roiEnabled,"roi_enabled");READ(ransac,"ransac");READ(showCandidates,"show_candidates");READ(showCenter,"show_center");READ(showRoi,"show_roi");
     READ(stage,"stage");READ(blur,"blur");READ(kernel,"kernel");READ(minRadius,"min_radius");READ(maxRadius,"max_radius");READ(minDistance,"min_distance");READ(cannyLow,"canny_low");READ(cannyHigh,"canny_high");READ(houghEdge,"hough_edge");READ(houghVotes,"hough_votes");READ(iterations,"iterations");
     READ(brightness,"brightness");READ(contrast,"contrast");READ(scale,"scale");READ(dp,"dp");READ(reach,"reach");READ(tolerance,"tolerance");READ(minCoverage,"min_coverage");
     READ(redWidth,"red_width");READ(blueLow,"blue_low");READ(blueHigh,"blue_high");READ(minSaturation,"min_saturation");READ(minValue,"min_value");READ(whiteSaturation,"white_saturation");READ(whiteValue,"white_value");READ(colorFraction,"color_fraction");
 #undef READ
     if(j.contains("roi"))for(const auto& p:j.at("roi")){if(p.size()!=2)throw std::runtime_error("Invalid ROI coordinate.");o.roi.emplace_back(p[0].get<float>(),p[1].get<float>());}o.validate();
 }
-void to_json(nlohmann::json& j,const BallSettings& o){o.validate();j={{"run",o.run},{"overlay",o.overlay},{"model",o.model},{"model_confidence",o.modelConfidence},{"cameras",o.cameras}};}
+void to_json(nlohmann::json& j,const BallSettings& o){o.validate();j={{"run",o.run},{"overlay",o.overlay},{"model",o.model},{"model_confidence",o.modelConfidence},{"cuda",o.cuda},{"cuda_dlls",o.cudaDlls},{"cameras",o.cameras}};}
 void from_json(const nlohmann::json& j,BallSettings& o){o.run=j.value("run",false);o.overlay=j.value("overlay",true);o.cameras=j.value("cameras",std::map<std::string,BallOptions>{});
-    o.model=j.value("model",std::string{});o.modelConfidence=j.value("model_confidence",.25);
-    for(auto& [id,camera]:o.cameras){camera.model=o.model;camera.modelConfidence=o.modelConfidence;}   // one model for every camera
+    o.model=j.value("model",std::string{});o.modelConfidence=j.value("model_confidence",.25);o.cuda=j.value("cuda",true);
+    o.cudaDlls=j.value("cuda_dlls",std::string{});yoloCudaLibraryDirectory(std::filesystem::path(reinterpret_cast<const char8_t*>(o.cudaDlls.c_str())));   // before the first CUDA session
+    for(auto& [id,camera]:o.cameras){camera.model=o.model;camera.modelConfidence=o.modelConfidence;camera.cuda=o.cuda;}   // one model for every camera
     o.validate();}
 std::string classifyBallColor(const cv::Mat& bgr,const BallCircle& circle,const BallOptions& o){
     cv::Rect box(int(circle.center.x-circle.radius),int(circle.center.y-circle.radius),int(2*circle.radius+2),int(2*circle.radius+2));box&=cv::Rect(0,0,bgr.cols,bgr.rows);if(box.empty())return "Unknown";
@@ -91,7 +92,7 @@ std::string classifyBallColor(const cv::Mat& bgr,const BallCircle& circle,const 
 static BallDetection detectBallsWithModel(const cv::Mat& bgr,const BallOptions& o,std::stop_token stop){
     auto start=std::chrono::steady_clock::now();BallDetection result;
     cv::cvtColor(bgr,result.gray,cv::COLOR_BGR2GRAY);result.blurred=result.gray;result.edges=result.gray;
-    const auto detector=yoloDetectorFor(std::filesystem::path(reinterpret_cast<const char8_t*>(o.model.c_str())));checkStop(stop);
+    const auto detector=yoloDetectorFor(std::filesystem::path(reinterpret_cast<const char8_t*>(o.model.c_str())),o.cuda);checkStop(stop);
     const auto boxes=detector->detect(bgr,float(std::min(o.modelConfidence,.05)));checkStop(stop);   // candidates down to .05, balls from the setting
     std::vector<cv::Point2f> polygon;if(o.roiEnabled)for(auto p:o.roi)polygon.emplace_back(float(p.x*bgr.cols),float(p.y*bgr.rows));
     for(const auto& b:boxes){

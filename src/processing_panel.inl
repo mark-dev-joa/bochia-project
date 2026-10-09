@@ -14,13 +14,20 @@
     bool replayPlaying=false,replayDirty=false;
     Clock::time_point replayNext{};
     float replaySpeed=1;
-    struct BallJob {CameraFrame frame;BallDetection detection;uint64_t revision=0;};
+    struct BallJob {CameraFrame frame;BallDetection detection;uint64_t revision=0;double millis=0;};   // millis: the detection's wall time
+    struct BallStats {   // Detection time of one camera: a smoothed average and the completions of the last second, for the panel's frame-time line.
+        std::mutex lock;double smoothed=0;int samples=0;std::vector<Clock::time_point> completions;
+        void prune(Clock::time_point now){completions.erase(completions.begin(),std::find_if(completions.begin(),completions.end(),[&](Clock::time_point t){return now-t<=std::chrono::seconds(1);}));}
+        void note(double millis){std::lock_guard guard(lock);smoothed=samples++?smoothed*.8+millis*.2:millis;const auto now=Clock::now();completions.push_back(now);prune(now);}
+        std::pair<double,int> read(){std::lock_guard guard(lock);prune(Clock::now());return {smoothed,int(completions.size())};}
+    };
     struct BallRuntime {
         BackgroundTask<BallJob> task;
         std::optional<BallJob> result;
         BallOptions options;
         uint64_t revision=0,epoch=UINT64_MAX,submitted=0;
         const uchar* submittedPixels=nullptr;
+        std::shared_ptr<BallStats> stats=std::make_shared<BallStats>();   // shared with the running task, so it outlives a cancelled runtime
         std::string error;
     };
     std::map<std::string,std::unique_ptr<BallRuntime>> ballRuntime;
@@ -42,7 +49,7 @@
     }
     BallOptions& ballOptions(size_t i){auto& c=*cameras.at(i);auto [it,inserted]=settings.ball.cameras.try_emplace(c.device.serial);
         if(inserted){auto format=c.settings.find("PixelFormat");if(format!=c.settings.end())it->second.color=format->second.find("Bayer")!=std::string::npos||format->second.find("RGB")!=std::string::npos||format->second.find("BGR")!=std::string::npos;}
-        it->second.model=settings.ball.model;it->second.modelConfidence=settings.ball.modelConfidence;return it->second;}
+        it->second.model=settings.ball.model;it->second.modelConfidence=settings.ball.modelConfidence;it->second.cuda=settings.ball.cuda;return it->second;}
     void stopRecording(){for(auto& c:cameras)c->setRecorder({});if(recorder)recorder->stop();}
     void startRecording(){try{
         if(replay||reconnectTask.pending()||busy()||recordingBusy())return;
@@ -173,7 +180,8 @@
             auto frame=sourceFrame(int(i));
             if(frame.image.empty()||r.task.pending()||(r.submitted==frame.generation&&r.submittedPixels==frame.image.data))continue;
             r.submitted=frame.generation;r.submittedPixels=frame.image.data;auto revision=r.revision;
-            r.task.start([frame,option,revision](std::stop_token stop){return BallJob{frame,detectBalls(frame.image,option,stop),revision};});
+            r.task.start([frame,option,revision,stats=r.stats](std::stop_token stop){const auto started=Clock::now();BallJob job{frame,detectBalls(frame.image,option,stop),revision};
+                job.millis=std::chrono::duration<double,std::milli>(Clock::now()-started).count();stats->note(job.millis);return job;});
         }
         if(ballDirty&&Clock::now()-ballEdited>std::chrono::milliseconds(600))saveBallOptions();
     }
@@ -226,16 +234,33 @@
         if(ImGui::Begin("Ball Detection",&showProcessing)){
             ImGui::BeginDisabled(loadFailed||saveFuture.valid());auto before=settings.ball;
             ImGui::Checkbox("Run",&settings.ball.run);ImGui::SameLine();ImGui::Checkbox("Overlay",&settings.ball.overlay);
+            if(settings.ball.run&&!cameras.empty()){   // Time per frame: detection per camera (the cameras run in parallel), the frame as a whole and the rate reached.
+                std::string line;double slowest=0;int rate=1<<30,timed=0;
+                for(size_t i=0;i<cameras.size();++i){auto it=ballRuntime.find(cameras[i]->device.serial);if(it==ballRuntime.end()||!ballOptions(i).detect)continue;
+                    auto [millis,perSecond]=it->second->stats->read();if(millis<=0)continue;++timed;slowest=std::max(slowest,millis);rate=std::min(rate,perSecond);
+                    line+=(line.empty()?"":"   ")+cameraName(cameras[i]->device.serial)+" "+std::to_string(int(std::lround(millis)))+" ms";}
+                if(timed){ImGui::Text("검출 시간   %s",line.c_str());
+                    ImGui::Text("한 프레임 %.0f ms (카메라 %d대 병렬) → 최대 %.1f fps, 지금 %d fps",slowest,timed,1000/slowest,rate);ImGui::SameLine();ImGui::TextDisabled("스테레오 매칭·3D 계산은 제외");}
+                else ImGui::TextDisabled("검출 시간: 아직 처리한 프레임이 없습니다.");
+            }
             {   // The learned detector (trained on the labeler's labels) for every camera, in place of Hough + RANSAC (2026-10-09).
                 ImGui::SeparatorText("Model");
                 const bool usingModel=!settings.ball.model.empty();
                 if(usingModel){const auto file=fs::path(reinterpret_cast<const char8_t*>(settings.ball.model.c_str())).filename().u8string();ImGui::Text("ONNX: %s",std::string(file.begin(),file.end()).c_str());}
                 else ImGui::TextDisabled("ONNX 모델 없음 · Hough + RANSAC 사용");
-                auto applyModel=[&]{for(auto& [id,camera]:settings.ball.cameras){camera.model=settings.ball.model;camera.modelConfidence=settings.ball.modelConfidence;}};
+                auto applyModel=[&]{for(auto& [id,camera]:settings.ball.cameras){camera.model=settings.ball.model;camera.modelConfidence=settings.ball.modelConfidence;camera.cuda=settings.ball.cuda;}};
                 if(ImGui::Button("ONNX 모델 고르기…")){if(auto chosen=chooseModelFile();!chosen.empty()){const auto text=chosen.u8string();settings.ball.model=std::string(text.begin(),text.end());applyModel();ballMessage="모든 카메라가 모델로 공을 찾습니다.";}}
                 if(usingModel){ImGui::SameLine();if(ImGui::Button("모델 끄기")){settings.ball.model.clear();applyModel();}
                     float confidence=float(settings.ball.modelConfidence);ImGui::SetNextItemWidth(210);
                     if(ImGui::SliderFloat("Model Confidence",&confidence,.05f,.95f,"%.2f",ImGuiSliderFlags_AlwaysClamp)){settings.ball.modelConfidence=confidence;applyModel();}
+                    int device=settings.ball.cuda?0:1;ImGui::SetNextItemWidth(150);
+                    if(ImGui::Combo("실행 장치",&device,"CUDA (GPU)\0CPU\0")){settings.ball.cuda=device==0;applyModel();}
+                    ImGui::SameLine();
+                    if(auto loaded=yoloDetectorIfLoaded(fs::path(reinterpret_cast<const char8_t*>(settings.ball.model.c_str())),settings.ball.cuda))ImGui::TextDisabled("실행 중: %s",loaded->provider().c_str());
+                    else ImGui::TextDisabled("첫 프레임에서 모델을 올립니다");
+                    if(settings.ball.cuda){char folder[1024];std::snprintf(folder,sizeof folder,"%s",settings.ball.cudaDlls.c_str());ImGui::SetNextItemWidth(420);
+                        if(ImGui::InputText("CUDA DLL 폴더",folder,sizeof folder)){settings.ball.cudaDlls=folder;yoloCudaLibraryDirectory(fs::path(reinterpret_cast<const char8_t*>(settings.ball.cudaDlls.c_str())));}
+                        ImGui::TextDisabled("cudart·cublas·cudnn DLL이 프로그램 옆에 없을 때 그 폴더. 예: C:\\boccia-train\\.venv\\Lib\\site-packages\\torch\\lib");}
                     ImGui::TextDisabled("모델을 쓰면 Preprocess/Hough/RANSAC은 쓰지 않습니다. ROI와 색상 분류는 그대로입니다.");}
             }
             if(cameras.empty())ImGui::TextDisabled("카메라를 연결하거나 녹화 폴더를 여세요.");

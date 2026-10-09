@@ -6,39 +6,61 @@
 #include <map>
 #include <mutex>
 #include <stdexcept>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace fs = std::filesystem;
 
 struct YoloDetector::Impl {
-    explicit Impl(const fs::path& model)
-        : path(model), env(ORT_LOGGING_LEVEL_WARNING, "boccia-yolo"), options(makeOptions()), session(env, model.c_str(), options),
-          memory(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)) {
+    Impl(const fs::path& model, bool cuda)
+        : path(model), env(ORT_LOGGING_LEVEL_WARNING, "boccia-yolo"), memory(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)) {
+        if (cuda) {
+            // The CPU-only build of ONNX Runtime, a missing onnxruntime_providers_cuda.dll or missing CUDA/cuDNN DLLs all
+            // surface here; the detector then runs on the CPU and says why.
+            try { session = open(model, true); onCuda = true; provider = "CUDA"; }
+            catch (const std::exception& e) { provider = std::string("CPU (CUDA 사용 불가: ") + e.what() + ")"; }
+        }
+        if (!session) { session = open(model, false); if (provider.empty()) provider = "CPU"; }
         Ort::AllocatorWithDefaultOptions allocator;
-        inputName = session.GetInputNameAllocated(0, allocator).get();
-        outputName = session.GetOutputNameAllocated(0, allocator).get();
-        const auto shape = session.GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape();
+        inputName = session->GetInputNameAllocated(0, allocator).get();
+        outputName = session->GetOutputNameAllocated(0, allocator).get();
+        const auto shape = session->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape();
         if (shape.size() != 4 || shape[1] != 3) throw std::runtime_error("The model's input is not an image (1x3xHxW).");
         size = shape[2] > 0 ? int(shape[2]) : 1280;
         if (shape[3] > 0 && shape[3] != shape[2]) throw std::runtime_error("The model's input must be square.");
     }
-    static Ort::SessionOptions makeOptions() {
+    // 8 CPU threads (measured on an i7-13700K at 1280: 4 threads 62 ms, 8 threads 38 ms an image); CUDA device 0 when asked.
+    std::unique_ptr<Ort::Session> open(const fs::path& model, bool cuda) {
         Ort::SessionOptions options;
-        options.SetIntraOpNumThreads(4);
-        return options;
+        options.SetIntraOpNumThreads(8);
+        if (cuda) { OrtCUDAProviderOptions cudaOptions; cudaOptions.device_id = 0; options.AppendExecutionProvider_CUDA(cudaOptions); }
+        return std::make_unique<Ort::Session>(env, model.c_str(), options);
     }
     fs::path path;
     Ort::Env env;
-    Ort::SessionOptions options;
-    Ort::Session session;
     Ort::MemoryInfo memory;
-    std::string inputName, outputName;
+    std::unique_ptr<Ort::Session> session;
+    std::string inputName, outputName, provider;
+    bool onCuda = false;
     int size = 1280;
 };
 
-YoloDetector::YoloDetector(const fs::path& model) : impl_(std::make_unique<Impl>(model)) {}
+YoloDetector::YoloDetector(const fs::path& model, bool cuda) : impl_(std::make_unique<Impl>(model, cuda)) {
+    // The first CUDA run picks its convolution algorithms and takes seconds: done here rather than on the first frame.
+    if (impl_->onCuda) detect(cv::Mat(impl_->size, impl_->size, CV_8UC3, cv::Scalar(114, 114, 114)), .5f);
+}
 YoloDetector::~YoloDetector() = default;
 int YoloDetector::inputSize() const { return impl_->size; }
 const fs::path& YoloDetector::path() const { return impl_->path; }
+bool YoloDetector::onCuda() const { return impl_->onCuda; }
+const std::string& YoloDetector::provider() const { return impl_->provider; }
 
 namespace {
 float iou(const YoloBox& a, const YoloBox& b) {
@@ -68,7 +90,7 @@ std::vector<YoloBox> YoloDetector::detect(const cv::Mat& bgr, float confidence) 
     const int64_t shape[4] = {1, 3, size, size};
     Ort::Value tensor = Ort::Value::CreateTensor<float>(impl_->memory, input.data(), input.size(), shape, 4);
     const char* inputs[] = {impl_->inputName.c_str()}; const char* outputs[] = {impl_->outputName.c_str()};
-    auto results = impl_->session.Run(Ort::RunOptions{nullptr}, inputs, &tensor, 1, outputs, 1);
+    auto results = impl_->session->Run(Ort::RunOptions{nullptr}, inputs, &tensor, 1, outputs, 1);
     const auto info = results[0].GetTensorTypeAndShapeInfo();
     const auto dims = info.GetShape();
     const float* data = results[0].GetTensorData<float>();
@@ -102,14 +124,46 @@ std::vector<YoloBox> YoloDetector::detect(const cv::Mat& bgr, float confidence) 
     return boxes;
 }
 
-std::shared_ptr<const YoloDetector> yoloDetectorFor(const fs::path& model) {
-    static std::mutex lock; static std::map<std::wstring, std::shared_ptr<const YoloDetector>> detectors;
-    std::lock_guard guard(lock);
-    const auto key = fs::absolute(model).native();
+namespace {
+std::mutex& registryLock() { static std::mutex lock; return lock; }
+std::map<std::wstring, std::shared_ptr<const YoloDetector>>& registry() { static std::map<std::wstring, std::shared_ptr<const YoloDetector>> detectors; return detectors; }
+std::wstring registryKey(const fs::path& model, bool cuda) { return fs::absolute(model).wstring() + (cuda ? L"|cuda" : L"|cpu"); }
+}
+
+std::shared_ptr<const YoloDetector> yoloDetectorFor(const fs::path& model, bool cuda) {
+    std::lock_guard guard(registryLock());
+    const auto key = registryKey(model, cuda);
+    auto& detectors = registry();
     auto found = detectors.find(key);
     if (found != detectors.end()) return found->second;
     if (!fs::is_regular_file(model)) throw std::runtime_error("The detector model file is missing: " + model.string());
-    auto detector = std::make_shared<const YoloDetector>(model);
+    auto detector = std::make_shared<const YoloDetector>(model, cuda);
     detectors[key] = detector;
     return detector;
+}
+
+std::shared_ptr<const YoloDetector> yoloDetectorIfLoaded(const fs::path& model, bool cuda) {
+    std::lock_guard guard(registryLock());
+    auto& detectors = registry();
+    auto found = detectors.find(registryKey(model, cuda));
+    return found != detectors.end() ? found->second : nullptr;
+}
+
+void yoloCudaLibraryDirectory(const fs::path& directory) {
+#ifdef _WIN32
+    static std::mutex lock; static std::wstring current;
+    std::lock_guard guard(lock);
+    const std::wstring wanted = directory.empty() ? std::wstring{} : fs::absolute(directory).wstring();
+    if (wanted == current) return;
+    current = wanted;
+    SetDllDirectoryW(wanted.empty() ? nullptr : wanted.c_str());
+    if (!wanted.empty()) {   // cuDNN loads its own pieces by name later, so the folder goes on PATH as well
+        std::wstring path(32768, L'\0');
+        const DWORD length = GetEnvironmentVariableW(L"PATH", path.data(), DWORD(path.size()));
+        path.resize(length < path.size() ? length : 0);
+        if (path.find(wanted) == std::wstring::npos) SetEnvironmentVariableW(L"PATH", (wanted + L";" + path).c_str());
+    }
+#else
+    (void)directory;
+#endif
 }
