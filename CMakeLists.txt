@@ -134,12 +134,28 @@ add_custom_command(TARGET native_labeler_tests POST_BUILD
 add_test(NAME native_labeler_data_contracts COMMAND native_labeler_tests)
 
 # The labeler engine: the recording catalog, label store, review rules, export and EfficientSAM, built into the app.
-set(ONNXRUNTIME_ROOT "${DEPENDENCY_ROOT}/onnxruntime" CACHE PATH "ONNX Runtime (CPU) with include/ and lib/")
+# ONNX Runtime: the GPU build (the CUDA provider in its own DLLs; it runs on the CPU as well) when it has been unpacked
+# beside the CPU one as onnxruntime-gpu-cuda12, otherwise the CPU build. -DONNXRUNTIME_ROOT chooses explicitly.
+if(EXISTS "${DEPENDENCY_ROOT}/onnxruntime-gpu-cuda12/lib/onnxruntime.dll")
+  set(ONNXRUNTIME_DEFAULT "${DEPENDENCY_ROOT}/onnxruntime-gpu-cuda12")
+else()
+  set(ONNXRUNTIME_DEFAULT "${DEPENDENCY_ROOT}/onnxruntime")
+endif()
+set(ONNXRUNTIME_ROOT "${ONNXRUNTIME_DEFAULT}" CACHE PATH "ONNX Runtime with include/ and lib/ (the GPU build when present)")
 add_library(onnxruntime SHARED IMPORTED)
 set_target_properties(onnxruntime PROPERTIES
   IMPORTED_LOCATION "${ONNXRUNTIME_ROOT}/lib/onnxruntime.dll"
   IMPORTED_IMPLIB "${ONNXRUNTIME_ROOT}/lib/onnxruntime.lib"
   INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_ROOT}/include")
+# The GPU build keeps the CUDA provider in onnxruntime_providers_cuda.dll, reached through onnxruntime_providers_shared.dll:
+# both go beside every program that may ask for CUDA.
+foreach(provider onnxruntime_providers_shared onnxruntime_providers_cuda)
+  if(EXISTS "${ONNXRUNTIME_ROOT}/lib/${provider}.dll")
+    foreach(consumer boccia_calibration calibration_tests layout_tests stereo_tests origin_tests yolo_detector_tests)
+      add_custom_command(TARGET ${consumer} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_ROOT}/lib/${provider}.dll" "$<TARGET_FILE_DIR:${consumer}>")
+    endforeach()
+  endif()
+endforeach()
 add_library(labeler_engine STATIC src/labeler_util.cpp src/labeler_catalog.cpp src/labeler_assist.cpp src/labeler_sam.cpp src/labeler_store.cpp src/labeler_native.cpp src/labeler_export.cpp src/labeler_selection.cpp src/labeler_auto.cpp src/labeler_missing.cpp src/labeler_propagate.cpp src/labeler_occlusion.cpp src/labeler_engine.cpp)
 target_include_directories(labeler_engine PUBLIC src ${OpenCV_INCLUDE_DIRS} "${DEPENDENCY_ROOT}/nlohmann/include")
 target_link_libraries(labeler_engine PUBLIC native_labeler_model ${OpenCV_LIBS} libzstd_static bcrypt ws2_32 onnxruntime)

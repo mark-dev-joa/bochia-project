@@ -20,7 +20,9 @@ Copy-Item -LiteralPath (Join-Path $release 'opencv_world4110.dll') -Destination 
 # The learned ball detector: ONNX Runtime beside the program, the model under models/, its licences with the others.
 Copy-Item -LiteralPath (Join-Path $release 'onnxruntime.dll') -Destination $package
 # The GPU build of ONNX Runtime keeps the CUDA provider in its own DLLs; the CPU build has only the shared one.
-$onnxLib = Join-Path $DependencyRoot 'onnxruntime/lib'
+$onnxRoot = Join-Path $DependencyRoot 'onnxruntime-gpu-cuda12'   # the GPU build when unpacked beside the CPU one, as CMake prefers it
+if (-not (Test-Path -LiteralPath (Join-Path $onnxRoot 'lib/onnxruntime.dll'))) { $onnxRoot = Join-Path $DependencyRoot 'onnxruntime' }
+$onnxLib = Join-Path $onnxRoot 'lib'
 foreach ($provider in @('onnxruntime_providers_shared.dll', 'onnxruntime_providers_cuda.dll')) {
     if (Test-Path -LiteralPath (Join-Path $onnxLib $provider)) { Copy-Item -LiteralPath (Join-Path $onnxLib $provider) -Destination $package }
 }
@@ -34,7 +36,6 @@ if (Test-Path -LiteralPath $model) {
     New-Item -ItemType Directory -Path (Join-Path $package 'models') -Force | Out-Null
     Copy-Item -LiteralPath $model -Destination (Join-Path $package 'models/boccia-yolo26n.onnx')
 }
-$onnxRoot = Join-Path $DependencyRoot 'onnxruntime'
 Copy-Item -LiteralPath (Join-Path $onnxRoot 'LICENSE') -Destination (Join-Path $licenses 'ONNX-Runtime-LICENSE.txt')
 Copy-Item -LiteralPath (Join-Path $onnxRoot 'ThirdPartyNotices.txt') -Destination (Join-Path $licenses 'ONNX-Runtime-ThirdPartyNotices.txt')
 

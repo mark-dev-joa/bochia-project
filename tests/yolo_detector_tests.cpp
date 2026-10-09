@@ -5,6 +5,8 @@
 #include <onnxruntime_c_api.h>
 #include <opencv2/imgcodecs.hpp>
 #include <cstdlib>
+#include <chrono>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 
@@ -13,10 +15,16 @@ int main(int argc, char** argv) {
     try {
         const cv::Mat image = cv::imread(argv[2], cv::IMREAD_COLOR);
         if (image.empty()) throw std::runtime_error("cannot read the image");
+        if (const char* dlls = std::getenv("BOCCIA_CUDA_DLLS")) yoloCudaLibraryDirectory(dlls);   // where this machine keeps the CUDA runtime DLLs
         const auto detector = yoloDetectorFor(argv[1], false);
         const auto gpu = yoloDetectorFor(argv[1], true);   // CUDA when the GPU build and its DLLs are present, else the CPU with the reason
         std::cout << "cuda session: " << gpu->provider() << " · boxes at 0.25: " << gpu->detect(image, .25f).size() << "\n";
         if (gpu->detect(image, .25f).size() != detector->detect(image, .25f).size()) throw std::runtime_error("The CUDA session and the CPU session disagree on the balls.");
+        for (const auto& [name, session] : {std::pair{"cpu", detector}, std::pair{"cuda", gpu}}) {
+            const auto started = std::chrono::steady_clock::now();
+            for (int i = 0; i < 5; ++i) session->detect(image, .25f);
+            std::cout << name << " session (" << session->provider() << "): " << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count() / 5 << " ms per image\n";
+        }
         std::cout << "onnxruntime " << OrtGetApiBase()->GetVersionString() << " · model input " << detector->inputSize() << " · raw boxes at 0.25: " << detector->detect(image, .25f).size() << std::endl;
         BallOptions options; options.model = argv[1]; options.modelConfidence = .25; options.color = true;
         const BallDetection detection = detectBalls(image, options);
