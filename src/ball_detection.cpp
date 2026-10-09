@@ -1,5 +1,7 @@
 #include "ball_detection.hpp"
 #include "brightness.hpp"
+#include "yolo_detector.hpp"
+#include <filesystem>
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
 #include <chrono>
@@ -42,7 +44,7 @@ std::optional<BallCircle> refit(const BallCircle& seed,const cv::Mat& edges,cons
 }
 }
 void BallOptions::validate()const{
-    if(stage<0||stage>4||blur<0||blur>4||kernel<1||kernel>31||kernel%2==0||minRadius<1||maxRadius<minRadius||maxRadius>2000||minDistance<1||minDistance>4000||
+    if(!inRange(modelConfidence,.01,1)||stage<0||stage>4||blur<0||blur>4||kernel<1||kernel>31||kernel%2==0||minRadius<1||maxRadius<minRadius||maxRadius>2000||minDistance<1||minDistance>4000||
        cannyLow<0||cannyHigh<=cannyLow||cannyHigh>500||houghEdge<1||houghEdge>500||houghVotes<1||houghVotes>300||iterations<8||iterations>200||
        !inRange(brightness,-100,100)||!inRange(contrast,.25,3)||!inRange(scale,.25,1)||!inRange(dp,1,4)||!inRange(reach,1,4)||!inRange(tolerance,.5,10)||!inRange(minCoverage,0,1)||
        redWidth<1||redWidth>40||blueLow<0||blueHigh<=blueLow||blueHigh>179||minSaturation<0||minSaturation>255||minValue<0||minValue>255||whiteSaturation<0||whiteSaturation>255||whiteValue<0||whiteValue>255||!inRange(colorFraction,.1,1))
@@ -53,7 +55,7 @@ void BallOptions::validate()const{
 }
 void BallSettings::validate()const{if(cameras.size()>64)throw std::runtime_error("Too many ball detection profiles.");for(const auto& [id,o]:cameras){if(id.empty()||id.size()>256)throw std::runtime_error("Invalid ball camera identity.");o.validate();}}
 void to_json(nlohmann::json& j,const BallOptions& o){
-    j={{"color",o.color},{"detect",o.detect},{"overlay",o.overlay},{"roi_enabled",o.roiEnabled},{"ransac",o.ransac},{"show_candidates",o.showCandidates},{"show_center",o.showCenter},{"show_roi",o.showRoi},
+    j={{"color",o.color},{"model",o.model},{"model_confidence",o.modelConfidence},{"detect",o.detect},{"overlay",o.overlay},{"roi_enabled",o.roiEnabled},{"ransac",o.ransac},{"show_candidates",o.showCandidates},{"show_center",o.showCenter},{"show_roi",o.showRoi},
         {"stage",o.stage},{"blur",o.blur},{"kernel",o.kernel},{"min_radius",o.minRadius},{"max_radius",o.maxRadius},{"min_distance",o.minDistance},{"canny_low",o.cannyLow},{"canny_high",o.cannyHigh},
         {"hough_edge",o.houghEdge},{"hough_votes",o.houghVotes},{"iterations",o.iterations},{"brightness",o.brightness},{"contrast",o.contrast},{"scale",o.scale},{"dp",o.dp},{"reach",o.reach},{"tolerance",o.tolerance},{"min_coverage",o.minCoverage},
         {"red_width",o.redWidth},{"blue_low",o.blueLow},{"blue_high",o.blueHigh},{"min_saturation",o.minSaturation},{"min_value",o.minValue},{"white_saturation",o.whiteSaturation},{"white_value",o.whiteValue},{"color_fraction",o.colorFraction},{"roi",nlohmann::json::array()}};
@@ -62,7 +64,7 @@ void to_json(nlohmann::json& j,const BallOptions& o){
 void from_json(const nlohmann::json& j,BallOptions& o){
     o=BallOptions{};
 #define READ(member,key) o.member=j.value(key,o.member)
-    READ(color,"color");READ(detect,"detect");READ(overlay,"overlay");READ(roiEnabled,"roi_enabled");READ(ransac,"ransac");READ(showCandidates,"show_candidates");READ(showCenter,"show_center");READ(showRoi,"show_roi");
+    READ(color,"color");READ(model,"model");READ(modelConfidence,"model_confidence");READ(detect,"detect");READ(overlay,"overlay");READ(roiEnabled,"roi_enabled");READ(ransac,"ransac");READ(showCandidates,"show_candidates");READ(showCenter,"show_center");READ(showRoi,"show_roi");
     READ(stage,"stage");READ(blur,"blur");READ(kernel,"kernel");READ(minRadius,"min_radius");READ(maxRadius,"max_radius");READ(minDistance,"min_distance");READ(cannyLow,"canny_low");READ(cannyHigh,"canny_high");READ(houghEdge,"hough_edge");READ(houghVotes,"hough_votes");READ(iterations,"iterations");
     READ(brightness,"brightness");READ(contrast,"contrast");READ(scale,"scale");READ(dp,"dp");READ(reach,"reach");READ(tolerance,"tolerance");READ(minCoverage,"min_coverage");
     READ(redWidth,"red_width");READ(blueLow,"blue_low");READ(blueHigh,"blue_high");READ(minSaturation,"min_saturation");READ(minValue,"min_value");READ(whiteSaturation,"white_saturation");READ(whiteValue,"white_value");READ(colorFraction,"color_fraction");
@@ -80,8 +82,29 @@ std::string classifyBallColor(const cv::Mat& bgr,const BallCircle& circle,const 
         else if(p[1]>=o.minSaturation&&p[2]>=o.minValue){if(p[0]<=o.redWidth||p[0]>=180-o.redWidth)++counts[0];if(p[0]>=o.blueLow&&p[0]<=o.blueHigh)++counts[1];}}
     int best=int(std::max_element(counts,counts+3)-counts);return total>0&&counts[best]>=total*o.colorFraction?std::array<const char*,3>{"Red","Blue","White"}[best]:"Unknown";
 }
+// The learned detector (YOLO26 in ONNX, trained on the labeler's labels) in place of Hough + RANSAC: a box per ball, its
+// centre the ball's centre, half the shorter side the radius, its confidence as the coverage. The ROI and the colour
+// classification apply as before; the stage views show the grey image, since there is no blur or edge step.
+static BallDetection detectBallsWithModel(const cv::Mat& bgr,const BallOptions& o,std::stop_token stop){
+    auto start=std::chrono::steady_clock::now();BallDetection result;
+    cv::cvtColor(bgr,result.gray,cv::COLOR_BGR2GRAY);result.blurred=result.gray;result.edges=result.gray;
+    const auto detector=yoloDetectorFor(std::filesystem::path(reinterpret_cast<const char8_t*>(o.model.c_str())));checkStop(stop);
+    const auto boxes=detector->detect(bgr,float(std::min(o.modelConfidence,.05)));checkStop(stop);   // candidates down to .05, balls from the setting
+    std::vector<cv::Point2f> polygon;if(o.roiEnabled)for(auto p:o.roi)polygon.emplace_back(float(p.x*bgr.cols),float(p.y*bgr.rows));
+    for(const auto& b:boxes){
+        BallCircle circle{{(b.x1+b.x2)/2,(b.y1+b.y2)/2},std::min(b.x2-b.x1,b.y2-b.y1)/2,b.confidence};
+        if(!inside(polygon,circle.center))continue;
+        result.candidates.push_back(circle);
+        if(b.confidence<o.modelConfidence)continue;
+        if(o.color)circle.color=classifyBallColor(bgr,circle,o);
+        result.balls.push_back(circle);
+    }
+    result.milliseconds=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+    return result;
+}
 BallDetection detectBalls(const cv::Mat& bgr,const BallOptions& o,std::stop_token stop){
     o.validate();checkStop(stop);if(bgr.empty()||bgr.type()!=CV_8UC3)throw std::runtime_error("Ball detection requires an 8-bit BGR source.");
+    if(!o.model.empty())return detectBallsWithModel(bgr,o,stop);
     auto start=std::chrono::steady_clock::now();BallDetection result;cv::Mat processed=adjustDisplay(bgr,o.brightness,o.contrast),gray,blurred,edges;
     cv::cvtColor(processed,result.gray,cv::COLOR_BGR2GRAY);cv::resize(result.gray,gray,{},o.scale,o.scale,cv::INTER_AREA);
     switch(o.blur){case 0:blurred=gray;break;case 1:cv::medianBlur(gray,blurred,o.kernel);break;case 2:cv::GaussianBlur(gray,blurred,{o.kernel,o.kernel},0);break;case 3:cv::bilateralFilter(gray,blurred,o.kernel,75,75);break;default:cv::blur(gray,blurred,{o.kernel,o.kernel});}

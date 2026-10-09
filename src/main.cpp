@@ -46,6 +46,16 @@ static fs::path chooseFolder(){
         dialog->Release();}
     if(SUCCEEDED(initialized))CoUninitialize();return result;
 }
+// The ball detector model (ONNX) for the processing panel.
+static fs::path chooseModelFile(){
+    std::vector<wchar_t> buffer(4096,0);OPENFILENAMEW ofn{};ofn.lStructSize=sizeof(ofn);
+    ofn.hwndOwner=static_cast<HWND>(ImGui::GetWindowViewport()->PlatformHandleRaw);
+    ofn.lpstrFile=buffer.data();ofn.nMaxFile=DWORD(buffer.size());ofn.lpstrTitle=L"공 검출 모델 선택 (ONNX)";
+    ofn.lpstrFilter=L"ONNX model\0*.onnx\0All files\0*.*\0";
+    ofn.Flags=OFN_EXPLORER|OFN_FILEMUSTEXIST|OFN_NOCHANGEDIR;
+    if(!GetOpenFileNameW(&ofn))return {};
+    return fs::path(buffer.data());
+}
 static std::vector<fs::path> chooseImages(){
     std::vector<wchar_t> buffer(65536,0);OPENFILENAMEW ofn{};ofn.lStructSize=sizeof(ofn);
     ofn.hwndOwner=static_cast<HWND>(ImGui::GetWindowViewport()->PlatformHandleRaw);

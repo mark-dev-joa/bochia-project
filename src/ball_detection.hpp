@@ -14,6 +14,8 @@ struct BallOptions {
     double brightness=0,contrast=1,scale=.5,dp=1,reach=1.5,tolerance=2,minCoverage=.5;
     int redWidth=12,blueLow=90,blueHigh=135,minSaturation=80,minValue=40,whiteSaturation=60,whiteValue=160;
     double colorFraction=.35;
+    std::string model;            // A YOLO detector exported to ONNX; empty means Hough + RANSAC below. Applies before every other setting.
+    double modelConfidence=.25;   // The model's confidence a ball needs.
     std::vector<cv::Point2f> roi; // Normalized source image coordinates.
     void validate()const;
     bool operator==(const BallOptions&)const=default;

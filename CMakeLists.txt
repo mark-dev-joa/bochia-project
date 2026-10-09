@@ -38,9 +38,9 @@ if(MSVC)
   target_compile_options(glfw PRIVATE /utf-8)
   target_compile_options(imgui PRIVATE /utf-8)
 endif()
-add_library(calibration_core src/calibration.cpp src/settings.cpp src/auto_capture.cpp src/ui_layout.cpp src/brightness.cpp src/stereo.cpp src/rig.cpp src/world_origin.cpp src/scene3d.cpp src/ball_detection.cpp src/recording.cpp)
+add_library(calibration_core src/calibration.cpp src/settings.cpp src/auto_capture.cpp src/ui_layout.cpp src/brightness.cpp src/stereo.cpp src/rig.cpp src/world_origin.cpp src/scene3d.cpp src/ball_detection.cpp src/yolo_detector.cpp src/recording.cpp)
 target_include_directories(calibration_core PUBLIC src ${OpenCV_INCLUDE_DIRS} "${DEPENDENCY_ROOT}/nlohmann/include")
-target_link_libraries(calibration_core PUBLIC ${OpenCV_LIBS} libzstd_static)
+target_link_libraries(calibration_core PUBLIC ${OpenCV_LIBS} libzstd_static onnxruntime)   # the learned ball detector (yolo_detector.cpp)
 add_executable(boccia_calibration WIN32 src/main.cpp src/camera.cpp src/scene_renderer.cpp)
 target_include_directories(boccia_calibration PRIVATE "${IMV_ROOT}/Development/Include/IMV")
 target_link_libraries(boccia_calibration PRIVATE calibration_core imgui "${IMV_ROOT}/Development/Lib/x64/MVSDKmd.lib" opengl32 comdlg32 ole32 shell32)
@@ -60,8 +60,14 @@ add_test(NAME ui_layout COMMAND layout_tests)
 add_executable(stereo_tests tests/stereo_tests.cpp)
 target_link_libraries(stereo_tests PRIVATE calibration_core)
 add_test(NAME stereo_calibration COMMAND stereo_tests)
+add_executable(yolo_detector_tests tests/yolo_detector_tests.cpp)
+target_link_libraries(yolo_detector_tests PRIVATE calibration_core)
 add_executable(origin_tests tests/origin_tests.cpp)
 target_link_libraries(origin_tests PRIVATE calibration_core)
+# Every program linking calibration_core loads onnxruntime.dll at start, so it sits next to each of them.
+foreach(consumer boccia_calibration calibration_tests layout_tests stereo_tests origin_tests yolo_detector_tests)
+  add_custom_command(TARGET ${consumer} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:onnxruntime>" "$<TARGET_FILE_DIR:${consumer}>")
+endforeach()
 add_test(NAME world_origin COMMAND origin_tests)
 add_executable(scene_tests tests/scene_tests.cpp)
 target_link_libraries(scene_tests PRIVATE calibration_core)
@@ -92,7 +98,10 @@ if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.26")
   set(SDK_COPY_COMMAND copy_directory_if_different)
 endif()
 add_custom_command(TARGET boccia_calibration POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E ${SDK_COPY_COMMAND} "${IMV_ROOT}/Runtime/x64" "$<TARGET_FILE_DIR:boccia_calibration>")
+  COMMAND ${CMAKE_COMMAND} -E ${SDK_COPY_COMMAND} "${IMV_ROOT}/Runtime/x64" "$<TARGET_FILE_DIR:boccia_calibration>"
+  # The SDK ships a 2017 VC++ runtime (msvcp140 14.16); next to the programs it would shadow the system's current one and
+  # ONNX Runtime 1.30 crashes in it. The programs use the system runtime; the package script deploys a current redist.
+  COMMAND ${CMAKE_COMMAND} -E rm -f "$<TARGET_FILE_DIR:boccia_calibration>/msvcp140.dll" "$<TARGET_FILE_DIR:boccia_calibration>/vcruntime140.dll" "$<TARGET_FILE_DIR:boccia_calibration>/vcruntime140_1.dll" "$<TARGET_FILE_DIR:boccia_calibration>/concrt140.dll")
 add_custom_command(TARGET boccia_calibration POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${zstd_SOURCE_DIR}/LICENSE" "$<TARGET_FILE_DIR:boccia_calibration>/LICENSE-zstd.txt")
 

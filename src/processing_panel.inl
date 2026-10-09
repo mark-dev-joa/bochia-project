@@ -242,6 +242,15 @@
                 ImGui::SameLine();if(ImGui::Button("Reset ROI")){o.roi.clear();roiCamera=-1;roiFrame={};roiPoints.clear();}
                 auto slider=[&](const char* name,double& value,float lo,float hi,const char* format="%.2f"){float f=float(value);ImGui::SetNextItemWidth(210);if(ImGui::SliderFloat(name,&f,lo,hi,format,ImGuiSliderFlags_AlwaysClamp))value=f;};
                 auto integer=[&](const char* name,int& value,int lo,int hi){ImGui::SetNextItemWidth(210);ImGui::SliderInt(name,&value,lo,hi,"%d",ImGuiSliderFlags_AlwaysClamp);};
+                // A learned detector, trained on the labeler's labels, in place of the Hough + RANSAC settings below (2026-10-09).
+                ImGui::SeparatorText("Model");
+                {const bool usingModel=!o.model.empty();
+                    if(usingModel){const auto file=fs::path(reinterpret_cast<const char8_t*>(o.model.c_str())).filename().u8string();ImGui::TextDisabled("ONNX: %s",std::string(file.begin(),file.end()).c_str());}
+                    else ImGui::TextDisabled("ONNX 모델 없음 · Hough + RANSAC 사용");
+                    if(ImGui::Button("ONNX 모델 고르기…")){if(auto chosen=chooseModelFile();!chosen.empty()){const auto text=chosen.u8string();const std::string utf8(text.begin(),text.end());for(size_t i=0;i<cameras.size();++i)ballOptions(i).model=utf8;ballMessage="모든 카메라가 모델로 공을 찾습니다.";}}
+                    if(usingModel){ImGui::SameLine();if(ImGui::Button("모델 끄기"))for(size_t i=0;i<cameras.size();++i)ballOptions(i).model.clear();
+                        slider("Model Confidence",o.modelConfidence,.05f,.95f);ImGui::TextDisabled("모델을 쓰면 아래 Preprocess/Hough/RANSAC은 쓰지 않습니다. ROI와 색상 분류는 그대로입니다.");}}
+                ImGui::BeginDisabled(!o.model.empty());
                 ImGui::SeparatorText("Preprocess");slider("Brightness",o.brightness,-100,100,"%.0f");slider("Contrast",o.contrast,.25f,3);slider("Scale",o.scale,.25f,1);
                 ImGui::SetNextItemWidth(210);ImGui::Combo("Blur",&o.blur,"None\0Median\0Gaussian\0Bilateral\0Box\0");int kernel=(o.kernel-1)/2;integer("Kernel",kernel,0,15);o.kernel=kernel*2+1;
                 ImGui::SameLine();ImGui::TextDisabled("%d px",o.kernel);integer("Canny Low",o.cannyLow,0,499);integer("Canny High",o.cannyHigh,o.cannyLow+1,500);o.cannyHigh=std::max(o.cannyHigh,o.cannyLow+1);
@@ -249,6 +258,7 @@
                 integer("Min Distance (px)",o.minDistance,1,1000);slider("dp",o.dp,1,4);integer("Edge Threshold",o.houghEdge,1,500);integer("Votes",o.houghVotes,1,300);
                 ImGui::SeparatorText("RANSAC");ImGui::Checkbox("Refine Circle",&o.ransac);ImGui::BeginDisabled(!o.ransac);
                 integer("Iterations",o.iterations,8,200);slider("Search Radius",o.reach,1,4);slider("Tolerance (px)",o.tolerance,.5f,10);slider("Min Coverage",o.minCoverage,0,1);ImGui::EndDisabled();
+                ImGui::EndDisabled();   // the model
                 if(o.color){ImGui::SeparatorText("Color / HSV");integer("Red Hue Width",o.redWidth,1,40);integer("Blue Hue Low",o.blueLow,0,178);integer("Blue Hue High",o.blueHigh,o.blueLow+1,179);o.blueHigh=std::max(o.blueHigh,o.blueLow+1);
                     integer("Min Saturation",o.minSaturation,0,255);integer("Min Value",o.minValue,0,255);integer("White Max S",o.whiteSaturation,0,255);integer("White Min V",o.whiteValue,0,255);slider("Color Fraction",o.colorFraction,.1f,1);}
                 ImGui::Separator();if(!o.color&&ImGui::Button("Copy to Other Mono")){auto copy=o;for(size_t i=0;i<cameras.size();++i)if(i!=size_t(ballCamera)&&!ballOptions(i).color){auto roi=ballOptions(i).roi;bool enabled=ballOptions(i).detect,overlay=ballOptions(i).overlay;ballOptions(i)=copy;ballOptions(i).roi=roi;ballOptions(i).detect=enabled;ballOptions(i).overlay=overlay;}}
