@@ -3,6 +3,7 @@
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <map>
 #include <mutex>
 #include <stdexcept>
@@ -18,29 +19,71 @@
 
 namespace fs = std::filesystem;
 
+namespace {
+// The fp16 twin of a model file, <stem>-fp16<ext>, when it exists beside it.
+fs::path fp16Sibling(const fs::path& model) {
+    const fs::path twin = model.parent_path() / (model.stem().native() + fs::path("-fp16").native() + model.extension().native());
+    return fs::is_regular_file(twin) ? twin : fs::path{};
+}
+}
+
 struct YoloDetector::Impl {
     Impl(const fs::path& model, bool cuda)
         : path(model), env(ORT_LOGGING_LEVEL_WARNING, "boccia-yolo"), memory(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)) {
         if (cuda) {
             // The CPU-only build of ONNX Runtime, a missing onnxruntime_providers_cuda.dll or missing CUDA/cuDNN DLLs all
-            // surface here; the detector then runs on the CPU and says why.
-            try { session = open(model, true); onCuda = true; provider = "CUDA"; }
-            catch (const std::exception& e) { provider = std::string("CPU (CUDA 사용 불가: ") + e.what() + ")"; }
+            // surface here; the detector then runs on the CPU with the chosen (fp32) model and says why.
+            const fs::path half = fp16Sibling(model);
+            try {
+                session = open(half.empty() ? model : half, true);
+                onCuda = true; provider = half.empty() ? "CUDA" : "CUDA (fp16)"; if (!half.empty()) path = half;
+            } catch (const std::exception& e) { provider = std::string("CPU (CUDA 사용 불가: ") + e.what() + ")"; }
         }
         if (!session) { session = open(model, false); if (provider.empty()) provider = "CPU"; }
         Ort::AllocatorWithDefaultOptions allocator;
         inputName = session->GetInputNameAllocated(0, allocator).get();
         outputName = session->GetOutputNameAllocated(0, allocator).get();
-        const auto shape = session->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape();
-        if (shape.size() != 4 || shape[1] != 3) throw std::runtime_error("The model's input is not an image (1x3xHxW).");
-        size = shape[2] > 0 ? int(shape[2]) : 1280;
-        if (shape[3] > 0 && shape[3] != shape[2]) throw std::runtime_error("The model's input must be square.");
+        const auto info = session->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo();
+        const auto shape = info.GetShape();
+        if (shape.size() != 4) throw std::runtime_error("The model's input is not an image.");
+        if (info.GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8) {   // bytes, [1,S,S,3] RGB (the -u8 variants)
+            if (shape[3] != 3) throw std::runtime_error("The model's byte input is not an RGB image (1xHxWx3).");
+            bytes = true; size = shape[1] > 0 ? int(shape[1]) : 1280;
+            if (shape[2] > 0 && shape[2] != shape[1]) throw std::runtime_error("The model's input must be square.");
+        } else if (info.GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {   // floats, [1,3,S,S]
+            if (shape[1] != 3) throw std::runtime_error("The model's input is not an image (1x3xHxW).");
+            size = shape[2] > 0 ? int(shape[2]) : 1280;
+            if (shape[3] > 0 && shape[3] != shape[2]) throw std::runtime_error("The model's input must be square.");
+        } else throw std::runtime_error("The model's input must be 8-bit or float.");
     }
     // 8 CPU threads (measured on an i7-13700K at 1280: 4 threads 62 ms, 8 threads 38 ms an image); CUDA device 0 when asked.
     std::unique_ptr<Ort::Session> open(const fs::path& model, bool cuda) {
         Ort::SessionOptions options;
         options.SetIntraOpNumThreads(8);
-        if (cuda) { OrtCUDAProviderOptions cudaOptions; cudaOptions.device_id = 0; options.AppendExecutionProvider_CUDA(cudaOptions); }
+        if (cuda) {
+            // Device 0 with the provider's defaults; BOCCIA_CUDA_OPTIONS="key=value;key=value" (the CUDA provider's option
+            // names, e.g. prefer_nhwc=1) overrides them for experiments.
+            const OrtApi& api = Ort::GetApi();
+            OrtCUDAProviderOptionsV2* raw = nullptr;
+            Ort::ThrowOnError(api.CreateCUDAProviderOptions(&raw));
+            std::unique_ptr<OrtCUDAProviderOptionsV2, decltype(api.ReleaseCUDAProviderOptions)> cudaOptions(raw, api.ReleaseCUDAProviderOptions);
+            std::vector<std::string> keys{"device_id"}, values{"0"};
+            if (const char* extra = std::getenv("BOCCIA_CUDA_OPTIONS")) {
+                std::string text(extra);
+                for (size_t start = 0; start < text.size();) {
+                    const size_t end = std::min(text.find(';', start), text.size()), equals = text.find('=', start);
+                    if (equals < end) { keys.push_back(text.substr(start, equals - start)); values.push_back(text.substr(equals + 1, end - equals - 1)); }
+                    start = end + 1;
+                }
+            }
+            std::vector<const char*> keyPointers, valuePointers;
+            for (size_t i = 0; i < keys.size(); ++i) { keyPointers.push_back(keys[i].c_str()); valuePointers.push_back(values[i].c_str()); }
+            Ort::ThrowOnError(api.UpdateCUDAProviderOptions(cudaOptions.get(), keyPointers.data(), valuePointers.data(), keys.size()));
+            options.AppendExecutionProvider_CUDA_V2(*cudaOptions);
+        }
+        if (const char* prefix = std::getenv("BOCCIA_ORT_PROFILE")) {   // per-node timings and providers, written as <prefix>_<time>.json when the session closes
+            const std::string text(prefix); options.EnableProfiling(fs::path(text).c_str());
+        }
         return std::make_unique<Ort::Session>(env, model.c_str(), options);
     }
     fs::path path;
@@ -48,7 +91,7 @@ struct YoloDetector::Impl {
     Ort::MemoryInfo memory;
     std::unique_ptr<Ort::Session> session;
     std::string inputName, outputName, provider;
-    bool onCuda = false;
+    bool onCuda = false, bytes = false;
     int size = 1280;
 };
 
@@ -81,14 +124,22 @@ std::vector<YoloBox> YoloDetector::detect(const cv::Mat& bgr, float confidence) 
     cv::Mat canvas(size, size, CV_8UC3, cv::Scalar(114, 114, 114));
     resized.copyTo(canvas(cv::Rect(padX, padY, width, height)));
     cv::Mat rgb; cv::cvtColor(canvas, rgb, cv::COLOR_BGR2RGB);
-    std::vector<float> input(size_t(3) * size * size);
-    for (int c = 0; c < 3; ++c) for (int y = 0; y < size; ++y) {
-        const uchar* row = rgb.ptr<uchar>(y);
-        float* out = input.data() + (size_t(c) * size + y) * size;
-        for (int x = 0; x < size; ++x) out[x] = row[x * 3 + c] / 255.f;
+    CV_Assert(rgb.isContinuous());
+    std::vector<float> input;
+    Ort::Value tensor{nullptr};
+    if (impl_->bytes) {   // the bytes go as they are; the model casts and scales them
+        const int64_t shape[4] = {1, size, size, 3};
+        tensor = Ort::Value::CreateTensor<uint8_t>(impl_->memory, rgb.data, size_t(3) * size * size, shape, 4);
+    } else {
+        input.resize(size_t(3) * size * size);
+        for (int c = 0; c < 3; ++c) for (int y = 0; y < size; ++y) {
+            const uchar* row = rgb.ptr<uchar>(y);
+            float* out = input.data() + (size_t(c) * size + y) * size;
+            for (int x = 0; x < size; ++x) out[x] = row[x * 3 + c] / 255.f;
+        }
+        const int64_t shape[4] = {1, 3, size, size};
+        tensor = Ort::Value::CreateTensor<float>(impl_->memory, input.data(), input.size(), shape, 4);
     }
-    const int64_t shape[4] = {1, 3, size, size};
-    Ort::Value tensor = Ort::Value::CreateTensor<float>(impl_->memory, input.data(), input.size(), shape, 4);
     const char* inputs[] = {impl_->inputName.c_str()}; const char* outputs[] = {impl_->outputName.c_str()};
     auto results = impl_->session->Run(Ort::RunOptions{nullptr}, inputs, &tensor, 1, outputs, 1);
     const auto info = results[0].GetTensorTypeAndShapeInfo();

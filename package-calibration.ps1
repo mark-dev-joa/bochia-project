@@ -31,10 +31,18 @@ if ($CudaDlls) {
         Get-ChildItem -LiteralPath $CudaDlls -File -Filter $pattern | Copy-Item -Destination $package
     }
 }
-$model = Join-Path $PSScriptRoot 'data/models/boccia/yolo26n-20261009.onnx'
-if (Test-Path -LiteralPath $model) {
-    New-Item -ItemType Directory -Path (Join-Path $package 'models') -Force | Out-Null
-    Copy-Item -LiteralPath $model -Destination (Join-Path $package 'models/boccia-yolo26n.onnx')
+# The models: the byte-input fp32 files (CPU and GPU). An fp16 sibling (<name>-fp16.onnx) would be picked on CUDA, but
+# tools/train/onnx_variants.py showed no gain from it on the RTX 5060 Ti, so none ships.
+$models = [ordered]@{
+    'data/models/boccia/yolo26n-20261009-u8.onnx' = 'models/boccia-yolo26n.onnx'
+    'data/models/boccia/yolo26s-20261009-u8.onnx' = 'models/boccia-yolo26s.onnx'
+}
+foreach ($entry in $models.GetEnumerator()) {
+    $model = Join-Path $PSScriptRoot $entry.Key
+    if (Test-Path -LiteralPath $model) {
+        New-Item -ItemType Directory -Path (Join-Path $package 'models') -Force | Out-Null
+        Copy-Item -LiteralPath $model -Destination (Join-Path $package $entry.Value)
+    }
 }
 Copy-Item -LiteralPath (Join-Path $onnxRoot 'LICENSE') -Destination (Join-Path $licenses 'ONNX-Runtime-LICENSE.txt')
 Copy-Item -LiteralPath (Join-Path $onnxRoot 'ThirdPartyNotices.txt') -Destination (Join-Path $licenses 'ONNX-Runtime-ThirdPartyNotices.txt')

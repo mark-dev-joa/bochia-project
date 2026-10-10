@@ -2,7 +2,8 @@
 score), run the way the calibration app runs it: letterbox to the model size with grey (114) padding, CPU.
 
 python onnx_predict.py <model.onnx> <export folder> <split> <out.json> [conf=0.05] [iou=0.5]
-Handles the NMS export ([1,N,6]: x1 y1 x2 y2 conf cls) and the raw export ([1,4+nc,N], greedy NMS at `iou`).
+Handles the float input ([1,3,S,S], /255 done here) and the byte input of the -u8 variants ([1,S,S,3] RGB), the NMS
+export ([1,N,6]: x1 y1 x2 y2 conf cls) and the raw export ([1,4+nc,N], greedy NMS at `iou`).
 """
 import json
 import pathlib
@@ -18,7 +19,9 @@ export = pathlib.Path(export)
 options = dict(item.split("=", 1) for item in sys.argv[5:])
 conf = float(options.get("conf", 0.05)); iou_nms = float(options.get("iou", 0.5))
 session = ort.InferenceSession(model, providers=["CPUExecutionProvider"])
-inp = session.get_inputs()[0]; size = inp.shape[2] if isinstance(inp.shape[2], int) else 1280
+inp = session.get_inputs()[0]; bytes_in = inp.type == "tensor(uint8)"
+size = inp.shape[1] if bytes_in else inp.shape[2]
+size = size if isinstance(size, int) else 1280
 gt = json.load(open(export / "annotations" / f"instances_detection_{split}.json", encoding="utf-8"))
 
 
@@ -44,7 +47,8 @@ for info in gt["images"]:
     h, w = image.shape[:2]; scale = min(size / w, size / h); nw, nh = round(w * scale), round(h * scale)
     canvas = np.full((size, size, 3), 114, np.uint8); px, py = (size - nw) // 2, (size - nh) // 2
     canvas[py:py + nh, px:px + nw] = cv2.resize(image, (nw, nh), interpolation=cv2.INTER_LINEAR)
-    blob = np.ascontiguousarray(canvas[:, :, ::-1].transpose(2, 0, 1)[None]).astype(np.float32) / 255
+    rgb = np.ascontiguousarray(canvas[:, :, ::-1])
+    blob = rgb[None] if bytes_in else np.ascontiguousarray(rgb.transpose(2, 0, 1)[None]).astype(np.float32) / 255
     output = session.run(None, {inp.name: blob})[0]
     if output.ndim == 3 and output.shape[2] == 6:
         rows = output[0]; boxes = rows[:, :4]; scores = rows[:, 4]
