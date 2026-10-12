@@ -22,6 +22,24 @@ Jekyll로 빌드하는 한국어 연구 노트. 전체 계산 흐름과 단계�
 
 `도구 → Triangulation`에서 `Pick Point`로 두 영상을 고정한 뒤 같은 지점을 양쪽에서 클릭하면 P1, P2…가 목록에 쌓인다. XYZ와 두 광선의 최단거리 오차를 mm로 표시하며, 좌표는 최단거리 선분의 중앙점이다. Raw·왜곡 보정·렉티피케이션을 지원한다. 바닥 원점이 있으면 모든 점을 3D View에 표시하고 목록에서 선택한 점의 두 광선·최단거리 선분·중앙점을 강조한다. `Edit` / `Delete`로 개별 점을 수정·삭제하고, `Live`로 화면 고정을 해제하며 `Clear All`로 목록을 비운다.
 
+## 이미지 드래그 앤 드롭 공 검출
+
+`start-image-ball-detector.cmd`를 실행하거나 `bin/release/image-detector/boccia_image_detector.exe`를 연 뒤 이미지 파일을 창에 드래그 앤 드롭한다. 학습한 보치아 YOLO26n 모델로 전체 이미지에서 공을 찾고 검출 박스·중심 좌표·신뢰도와 **검출 처리 시간(ms)**을 표시한다. PNG, JPG, BMP, TIFF, WebP 및 한글 파일명을 지원한다. `이미지 열기` 버튼도 사용할 수 있다.
+
+다른 PC에서는 [Boccia-Image-Detector-Windows-x64.zip](releases/Boccia-Image-Detector-Windows-x64.zip?raw=true)을 **전체 압축 해제**하고 `boccia_image_detector.exe`를 실행한다. 실행 파일·학습 모델·한국어 폰트·OpenCV·ONNX Runtime·VC++ 런타임을 포함하며 폴더 전체를 옮겨 사용한다. Windows 10/11 x64와 OpenGL 3.3 지원 그래픽 드라이버가 필요하다. 배포본은 CPU로 동작하며 Python, CUDA, 카메라 SDK 설치가 필요 없다.
+
+검출 시간은 원본 이미지의 전처리·모델 추론·결과 좌표 변환을 포함한다. 이미지 파일 읽기, 최초 모델 로딩·1회 워밍업, 화면 그리기는 제외하며 파일 읽기·모델 준비·전체 처리 시간은 따로 표시한다. 작은 화면 미리보기와 관계없이 좌표는 원본 이미지의 픽셀이다. `결과 이미지 저장`으로 박스가 표시된 PNG를 별도로 저장하며 원본 이미지는 덮어쓰지 않는다. GPU가 사용 불가능하면 CPU로 실행하고 실제 실행 장치를 표시한다. 신뢰도 또는 GPU 설정을 바꾼 뒤 `다시 검출`하면 새 설정으로 측정한다.
+
+배포본은 실행 파일 옆 `data/settings.json`의 상대 모델 경로와 CPU 설정을 읽는다. 개발 빌드에서는 기존 공 검출 설정을 사용할 수 있다. 이 프로그램은 해당 설정을 수정하지 않는다. 커밋된 학습 모델은 `data/models/boccia/yolo26n-20261012-1280x960-u8.onnx`다. 개별 빌드·실행:
+
+```powershell
+.\build-image-ball-detector.ps1
+.\run-image-ball-detector.ps1
+.\package-image-ball-detector.ps1 # 다른 PC로 전달할 ZIP 생성
+# 화면 없이 같은 검출 경로로 JSON과 결과 PNG를 저장할 수도 있다.
+.\bin\release\image-detector\boccia_image_detector.exe --headless --image '공 사진.png' --output 'output/result.json'
+```
+
 ## Windows 앱 빌드·패키징
 
 Visual Studio 2022의 C++ 빌드 도구, CMake, MV Viewer SDK와 OpenCV 4.11, Dear ImGui docking, GLFW, GLAD, nlohmann/json 소스가 필요하다. 기존 의존성 폴더의 구성은 [CMakeLists.txt](CMakeLists.txt)를 참고한다. Zstandard 1.5.7은 CMake가 검증된 해시로 다운로드해 정적으로 링크한다.

@@ -5,3 +5,5 @@
 *.dll binary
 *.png binary
 *.webp binary
+*.onnx binary
+*.ttf binary

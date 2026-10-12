@@ -27,19 +27,19 @@ int main(int argc, char** argv) {
             std::cout << name << " session (" << session->provider() << "): " << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count() / 5 << " ms per image\n";
         }
         {   // The preprocessing the detector does on the CPU before every run, timed on its own: letterbox, BGR to RGB, bytes to planar floats.
-            const int size = detector->inputSize();
-            const double scale = double(size) / std::max(image.cols, image.rows);
+            const auto target = detector->inputShape();
+            const double scale = std::min(double(target.width) / image.cols, double(target.height) / image.rows);
             const int width = int(std::lround(image.cols * scale)), height = int(std::lround(image.rows * scale));
             auto ms = [](auto f, int repeats = 5) { const auto t = std::chrono::steady_clock::now(); for (int i = 0; i < repeats; ++i) f(); return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count() / repeats; };
-            cv::Mat resized, canvas(size, size, CV_8UC3, cv::Scalar(114, 114, 114)), rgb;
-            const double letterbox = ms([&] { cv::resize(image, resized, {width, height}, 0, 0, cv::INTER_AREA); resized.copyTo(canvas(cv::Rect((size - width) / 2, (size - height) / 2, width, height))); cv::cvtColor(canvas, rgb, cv::COLOR_BGR2RGB); });
-            std::vector<float> input(size_t(3) * size * size);
-            const double scalar = ms([&] { for (int c = 0; c < 3; ++c) for (int y = 0; y < size; ++y) { const uchar* row = rgb.ptr<uchar>(y); float* out = input.data() + (size_t(c) * size + y) * size; for (int x = 0; x < size; ++x) out[x] = row[x * 3 + c] / 255.f; } });
-            cv::Mat planar(3, size * size, CV_32F, input.data()); cv::Mat asFloat; std::vector<cv::Mat> planes;
-            const double vectorised = ms([&] { rgb.convertTo(asFloat, CV_32FC3, 1 / 255.); for (int c = 0; c < 3; ++c) planes.push_back(cv::Mat(size, size, CV_32F, input.data() + size_t(c) * size * size)); cv::split(asFloat, planes); planes.clear(); });
+            cv::Mat resized, canvas(target, CV_8UC3, cv::Scalar(114, 114, 114)), rgb;
+            const double letterbox = ms([&] { cv::resize(image, resized, {width, height}, 0, 0, cv::INTER_AREA); resized.copyTo(canvas(cv::Rect((target.width - width) / 2, (target.height - height) / 2, width, height))); cv::cvtColor(canvas, rgb, cv::COLOR_BGR2RGB); });
+            std::vector<float> input(size_t(3) * target.width * target.height);
+            const double scalar = ms([&] { for (int c = 0; c < 3; ++c) for (int y = 0; y < target.height; ++y) { const uchar* row = rgb.ptr<uchar>(y); float* out = input.data() + (size_t(c) * target.height + y) * target.width; for (int x = 0; x < target.width; ++x) out[x] = row[x * 3 + c] / 255.f; } });
+            cv::Mat asFloat; std::vector<cv::Mat> planes;
+            const double vectorised = ms([&] { rgb.convertTo(asFloat, CV_32FC3, 1 / 255.); for (int c = 0; c < 3; ++c) planes.push_back(cv::Mat(target, CV_32F, input.data() + size_t(c) * target.width * target.height)); cv::split(asFloat, planes); planes.clear(); });
             std::cout << "preprocessing: letterbox+colour " << letterbox << " ms, bytes to floats scalar loop " << scalar << " ms, same with convertTo+split " << vectorised << " ms\n";
         }
-        std::cout << "onnxruntime " << OrtGetApiBase()->GetVersionString() << " · model input " << detector->inputSize() << " · raw boxes at 0.25: " << detector->detect(image, .25f).size() << std::endl;
+        std::cout << "onnxruntime " << OrtGetApiBase()->GetVersionString() << " · model input " << detector->inputShape() << " · raw boxes at 0.25: " << detector->detect(image, .25f).size() << std::endl;
         BallOptions options; options.model = argv[1]; options.modelConfidence = .25; options.color = true;
         const BallDetection detection = detectBalls(image, options);
         std::cout << detection.balls.size() << " balls in " << detection.milliseconds << " ms\n";

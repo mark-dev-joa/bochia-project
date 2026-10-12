@@ -7,6 +7,7 @@
 #include <map>
 #include <mutex>
 #include <stdexcept>
+#include <atomic>
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -20,6 +21,11 @@
 namespace fs = std::filesystem;
 
 namespace {
+std::atomic<int> configuredThreads{8};
+int inferenceThreads(){
+    const char* value=std::getenv("BOCCIA_ORT_THREADS");const int threads=value?std::atoi(value):configuredThreads.load();
+    if(threads<1||threads>32)throw std::runtime_error("Invalid ONNX Runtime thread count.");return threads;
+}
 // The fp16 twin of a model file, <stem>-fp16<ext>, when it exists beside it.
 fs::path fp16Sibling(const fs::path& model) {
     const fs::path twin = model.parent_path() / (model.stem().native() + fs::path("-fp16").native() + model.extension().native());
@@ -46,21 +52,24 @@ struct YoloDetector::Impl {
         const auto info = session->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo();
         const auto shape = info.GetShape();
         if (shape.size() != 4) throw std::runtime_error("The model's input is not an image.");
-        if (info.GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8) {   // bytes, [1,S,S,3] RGB (the -u8 variants)
+        if (shape[0] > 0 && shape[0] != 1) throw std::runtime_error("The detector requires a batch-one model.");
+        if (info.GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8) {   // bytes, [1,H,W,3] RGB (the -u8 variants)
             if (shape[3] != 3) throw std::runtime_error("The model's byte input is not an RGB image (1xHxWx3).");
-            bytes = true; size = shape[1] > 0 ? int(shape[1]) : 1280;
-            if (shape[2] > 0 && shape[2] != shape[1]) throw std::runtime_error("The model's input must be square.");
-        } else if (info.GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {   // floats, [1,3,S,S]
+            bytes = true; inputShape = {shape[2] > 0 ? int(shape[2]) : 1280, shape[1] > 0 ? int(shape[1]) : 1280};
+        } else if (info.GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {   // floats, [1,3,H,W]
             if (shape[1] != 3) throw std::runtime_error("The model's input is not an image (1x3xHxW).");
-            size = shape[2] > 0 ? int(shape[2]) : 1280;
-            if (shape[3] > 0 && shape[3] != shape[2]) throw std::runtime_error("The model's input must be square.");
+            inputShape = {shape[3] > 0 ? int(shape[3]) : 1280, shape[2] > 0 ? int(shape[2]) : 1280};
         } else throw std::runtime_error("The model's input must be 8-bit or float.");
     }
-    // 8 CPU threads (measured on an i7-13700K at 1280: 4 threads 62 ms, 8 threads 38 ms an image); CUDA device 0 when asked.
+    // Default 8 CPU threads; small ROI workloads can use a different startup
+    // count. CUDA device 0 when asked.
     std::unique_ptr<Ort::Session> open(const fs::path& model, bool cuda) {
         Ort::SessionOptions options;
-        options.SetIntraOpNumThreads(8);
+        options.SetIntraOpNumThreads(inferenceThreads());
         if (cuda) {
+            // The GPU session's idle CPU pool otherwise competes with the
+            // small CPU ROI detector between full-frame searches.
+            options.AddConfigEntry("session.intra_op.allow_spinning", "0");
             // Device 0 with the provider's defaults; BOCCIA_CUDA_OPTIONS="key=value;key=value" (the CUDA provider's option
             // names, e.g. prefer_nhwc=1) overrides them for experiments.
             const OrtApi& api = Ort::GetApi();
@@ -92,15 +101,16 @@ struct YoloDetector::Impl {
     std::unique_ptr<Ort::Session> session;
     std::string inputName, outputName, provider;
     bool onCuda = false, bytes = false;
-    int size = 1280;
+    cv::Size inputShape{1280, 1280};
 };
 
 YoloDetector::YoloDetector(const fs::path& model, bool cuda) : impl_(std::make_unique<Impl>(model, cuda)) {
     // The first CUDA run picks its convolution algorithms and takes seconds: done here rather than on the first frame.
-    if (impl_->onCuda) detect(cv::Mat(impl_->size, impl_->size, CV_8UC3, cv::Scalar(114, 114, 114)), .5f);
+    if (impl_->onCuda) detect(cv::Mat(impl_->inputShape, CV_8UC3, cv::Scalar(114, 114, 114)), .5f);
 }
 YoloDetector::~YoloDetector() = default;
-int YoloDetector::inputSize() const { return impl_->size; }
+int YoloDetector::inputSize() const { return std::max(impl_->inputShape.width, impl_->inputShape.height); }
+cv::Size YoloDetector::inputShape() const { return impl_->inputShape; }
 const fs::path& YoloDetector::path() const { return impl_->path; }
 bool YoloDetector::onCuda() const { return impl_->onCuda; }
 const std::string& YoloDetector::provider() const { return impl_->provider; }
@@ -115,29 +125,29 @@ float iou(const YoloBox& a, const YoloBox& b) {
 
 std::vector<YoloBox> YoloDetector::detect(const cv::Mat& bgr, float confidence) const {
     if (bgr.empty() || bgr.type() != CV_8UC3) throw std::runtime_error("The detector needs an 8-bit BGR image.");
-    const int size = impl_->size;
+    const auto target = impl_->inputShape;
     // Letterbox as the training did: scaled to fit, centred, grey borders; the boxes come back through the same numbers.
-    const double scale = double(size) / std::max(bgr.cols, bgr.rows);
+    const double scale = std::min(double(target.width) / bgr.cols, double(target.height) / bgr.rows);
     const int width = std::max(1, int(std::lround(bgr.cols * scale))), height = std::max(1, int(std::lround(bgr.rows * scale)));
-    const int padX = (size - width) / 2, padY = (size - height) / 2;
+    const int padX = (target.width - width) / 2, padY = (target.height - height) / 2;
     cv::Mat resized; cv::resize(bgr, resized, {width, height}, 0, 0, scale < 1 ? cv::INTER_AREA : cv::INTER_LINEAR);
-    cv::Mat canvas(size, size, CV_8UC3, cv::Scalar(114, 114, 114));
+    cv::Mat canvas(target, CV_8UC3, cv::Scalar(114, 114, 114));
     resized.copyTo(canvas(cv::Rect(padX, padY, width, height)));
     cv::Mat rgb; cv::cvtColor(canvas, rgb, cv::COLOR_BGR2RGB);
     CV_Assert(rgb.isContinuous());
     std::vector<float> input;
     Ort::Value tensor{nullptr};
     if (impl_->bytes) {   // the bytes go as they are; the model casts and scales them
-        const int64_t shape[4] = {1, size, size, 3};
-        tensor = Ort::Value::CreateTensor<uint8_t>(impl_->memory, rgb.data, size_t(3) * size * size, shape, 4);
+        const int64_t shape[4] = {1, target.height, target.width, 3};
+        tensor = Ort::Value::CreateTensor<uint8_t>(impl_->memory, rgb.data, size_t(3) * target.width * target.height, shape, 4);
     } else {
-        input.resize(size_t(3) * size * size);
-        for (int c = 0; c < 3; ++c) for (int y = 0; y < size; ++y) {
+        input.resize(size_t(3) * target.width * target.height);
+        for (int c = 0; c < 3; ++c) for (int y = 0; y < target.height; ++y) {
             const uchar* row = rgb.ptr<uchar>(y);
-            float* out = input.data() + (size_t(c) * size + y) * size;
-            for (int x = 0; x < size; ++x) out[x] = row[x * 3 + c] / 255.f;
+            float* out = input.data() + (size_t(c) * target.height + y) * target.width;
+            for (int x = 0; x < target.width; ++x) out[x] = row[x * 3 + c] / 255.f;
         }
-        const int64_t shape[4] = {1, 3, size, size};
+        const int64_t shape[4] = {1, 3, target.height, target.width};
         tensor = Ort::Value::CreateTensor<float>(impl_->memory, input.data(), input.size(), shape, 4);
     }
     const char* inputs[] = {impl_->inputName.c_str()}; const char* outputs[] = {impl_->outputName.c_str()};
@@ -178,7 +188,7 @@ std::vector<YoloBox> YoloDetector::detect(const cv::Mat& bgr, float confidence) 
 namespace {
 std::mutex& registryLock() { static std::mutex lock; return lock; }
 std::map<std::wstring, std::shared_ptr<const YoloDetector>>& registry() { static std::map<std::wstring, std::shared_ptr<const YoloDetector>> detectors; return detectors; }
-std::wstring registryKey(const fs::path& model, bool cuda) { return fs::absolute(model).wstring() + (cuda ? L"|cuda" : L"|cpu"); }
+std::wstring registryKey(const fs::path& model, bool cuda) { return fs::absolute(model).wstring() + (cuda ? L"|cuda" : L"|cpu")+L"|threads:"+std::to_wstring(inferenceThreads()); }
 }
 
 std::shared_ptr<const YoloDetector> yoloDetectorFor(const fs::path& model, bool cuda) {
@@ -218,3 +228,4 @@ void yoloCudaLibraryDirectory(const fs::path& directory) {
     (void)directory;
 #endif
 }
+void yoloCpuThreadCount(int threads){if(threads<1||threads>32)throw std::runtime_error("Invalid ONNX Runtime thread count.");configuredThreads.store(threads);}

@@ -47,6 +47,7 @@ Thumbs.db
 /output/
 # Reviewed Windows distribution is intentionally committed.
 !/releases/Boccia-Windows-x64.zip
+!/releases/Boccia-Image-Detector-Windows-x64.zip
 
 # Labeler v2 work builds here so it never collides with builds in /build/.
 /build-labeler/

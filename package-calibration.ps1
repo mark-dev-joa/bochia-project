@@ -16,6 +16,9 @@ $package = Join-Path $stageRoot 'Boccia-Windows-x64'
 $licenses = Join-Path $package 'licenses'
 New-Item -ItemType Directory -Path $licenses -Force | Out-Null
 Copy-Item -LiteralPath $executable -Destination $package
+if (Test-Path -LiteralPath (Join-Path $release 'boccia_image_detector.exe')) {
+    Copy-Item -LiteralPath (Join-Path $release 'boccia_image_detector.exe') -Destination $package
+}
 Copy-Item -LiteralPath (Join-Path $release 'opencv_world4110.dll') -Destination $package
 # The learned ball detector: ONNX Runtime beside the program, the model under models/, its licences with the others.
 Copy-Item -LiteralPath (Join-Path $release 'onnxruntime.dll') -Destination $package
@@ -35,6 +38,7 @@ if ($CudaDlls) {
 # tools/train/onnx_variants.py showed no gain from it on the RTX 5060 Ti, so none ships.
 $models = [ordered]@{
     'data/models/boccia/yolo26n-20261009-u8.onnx' = 'models/boccia-yolo26n.onnx'
+    'data/models/boccia/yolo26n-20261012-1280x960-u8.onnx' = 'models/boccia-yolo26n-1280x960.onnx'
     'data/models/boccia/yolo26s-20261009-u8.onnx' = 'models/boccia-yolo26s.onnx'
 }
 foreach ($entry in $models.GetEnumerator()) {
@@ -152,6 +156,7 @@ floor? 표시는 보정값과 바닥 원점의 불일치 가능성을 뜻합니�
 기존 data/settings.json과 data/ui-layout.json이 있다면 종료 상태에서 data/로 옮길 수 있습니다.
 
 사용법: CALIBRATION.md
+이미지 공 검출: boccia_image_detector.exe를 열고 이미지 파일을 창에 드래그 앤 드롭합니다. 학습한 모델로 공을 찾고 검출 처리 시간을 ms로 표시합니다.
 빌드 정보: build-info.json
 외부 라이브러리 고지: licenses/
 
