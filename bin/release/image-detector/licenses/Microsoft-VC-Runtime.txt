@@ -1,0 +1,1 @@
+﻿Microsoft Visual C++ x64 Runtime. Copyright Microsoft Corporation. Redistributed from Visual Studio VC/Redist/MSVC under its redistribution terms. https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files

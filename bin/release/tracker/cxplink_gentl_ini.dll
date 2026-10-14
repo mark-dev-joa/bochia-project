@@ -1,0 +1,76 @@
+[Interface]
+#pocxp power, 1:on,  0:off 2£ºdo nothing
+PocxpDefault=2
+
+#0:AAAA   1:AABB   2:AABC    3:ABCD
+CXP_Mode=0
+CXP_Mode_Enhanced=0
+
+#0:Default	   1:Auto     0x10048:CXP6_X1     0x20048:CXP6_X2      0x40048:CXP6_X4
+#0x10058:CXP12_X1   0x20058:CXP12_X2    0x40058:CXP12_X4
+CxpLinkConfiguration_A=1
+CxpLinkConfiguration_B=1
+CxpLinkConfiguration_C=1
+CxpLinkConfiguration_D=1
+
+[SystemInfo]
+#1:Open   0:Close  If open printf info
+OpenPrintf=0
+
+#0:Null   1:Debug   2:Info   3:Warning   4:Error   99£ºAll
+#url£º cti folder
+OpenLog=2
+
+#DEBUG: Buf Index log check £¬ 0:close   1:open
+OpenBufIndexLog=0
+
+#DEBUG: GenTL functions check£¬0:close   1:open
+OpenFuncLog=0
+
+#DEBUG: GenApi  port check£¬0:close   1:open
+OpenPortLog=0
+
+#1:true	0:false
+OpenUserSet=1
+
+open_userset_if_0=0
+open_userset_if_1=0
+open_userset_if_2=0
+open_userset_if_3=0
+open_userset_if_4=0
+open_userset_if_5=0
+open_userset_if_6=0
+open_userset_if_7=0
+
+open_userset_dev_0=0
+open_userset_dev_1=0
+open_userset_dev_2=0
+open_userset_dev_3=0
+open_userset_dev_4=0
+open_userset_dev_5=0
+open_userset_dev_6=0
+open_userset_dev_7=0
+open_userset_dev_8=0
+open_userset_dev_9=0
+open_userset_dev_10=0
+open_userset_dev_11=0
+open_userset_dev_12=0
+open_userset_dev_13=0
+open_userset_dev_14=0
+open_userset_dev_15=0
+open_userset_dev_16=0
+open_userset_dev_17=0
+open_userset_dev_18=0
+open_userset_dev_19=0
+open_userset_dev_20=0
+open_userset_dev_21=0
+open_userset_dev_22=0
+open_userset_dev_23=0
+open_userset_dev_24=0
+open_userset_dev_25=0
+open_userset_dev_26=0
+open_userset_dev_27=0
+open_userset_dev_28=0
+open_userset_dev_29=0
+open_userset_dev_30=0
+open_userset_dev_31=0

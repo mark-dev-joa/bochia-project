@@ -1,0 +1,8 @@
+﻿Microsoft Visual C++ Runtime (x64) ??app-local deployment
+Version: 14.44.35211.0
+Copyright Microsoft Corporation. All rights reserved.
+Distributed from the Visual Studio VC/Redist/MSVC x64 CRT directory.
+These DLLs are included beside the executable; no separate VC++ installer is required on Windows 10/11 x64.
+Keep these files together and update them when publishing future application packages.
+Redistribution information: https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files
+Distributable code list: https://aka.ms/vs/17/redist.txt

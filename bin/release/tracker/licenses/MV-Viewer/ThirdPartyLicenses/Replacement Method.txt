@@ -1,0 +1,24 @@
+·Replace library
+The dynamic library needs to be copied to a specific location in the installation directory.
+
+If installed on the D: drive, the directory structure will be as follows:
+     D:\MV Viewer
+       ├ Application
+       │  ├ x64			Qt5Core.dll,Qt5Concurrent.dll,Qt5Network.dll,Qt5Widgets.dll,Qt5Xml.dll,qwt.dll
+       │  │  ├ imageformats		qgif.dll,qicns.dll,qico.dll,qjpeg.dll,qsvg.dll,qtga.dll,qtiff.dll,qwbmp.dll,qwebp.dll
+       │  │  ├ platforms		qminimal.dll,qoffscreen.dll,qwindows.dll
+       │  │  └ AIHelper	        Qt5Core.dll,Qt5Gui.dll,Qt5Network.dll,Qt5Widgets.dll
+       │  │      └ platforms		qdirect2d.dll,qminimal.dll,qoffscreen.dll,qwindows.dll
+       │  │
+       │  └ win32			Qt5Core.dll,Qt5Concurrent.dll,Qt5Network.dll,Qt5Widgets.dll,Qt5Xml.dll,qwt.dll
+       │      ├ imageformats		qgif.dll,qicns.dll,qico.dll,qjpeg.dll,qsvg.dll,qtga.dll,qtiff.dll,qwbmp.dll,qwebp.dll
+       │      └ platforms		qminimal.dll,qoffscreen.dll,qwindows.dll
+       │
+       ├ Runtime
+           ├ x64			mvlog4cppmd.dll
+           │
+           └ win32			mvlog4cppmd.dll
+            
+If you want to replace library "Qt5Core.dll", just replace the library to the corresponding directory above.
+
+

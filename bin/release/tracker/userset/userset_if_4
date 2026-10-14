@@ -1,0 +1,8 @@
+{
+"saver":"flexio_1_0",
+"FirmwareMode":"AAAA",
+"DeviceSelector":0,
+"CxpLinkConfiguration":"Auto",
+"IfUserSetSelector":"UserSet1",
+"IfUserSetDefault":"UserSet1"
+}

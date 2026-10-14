@@ -1,0 +1,11 @@
+{
+  "model": "EfficientSAM-Ti",
+  "license": "Apache-2.0",
+  "upstream": "https://github.com/yformer/EfficientSAM",
+  "conversion_repository": "https://huggingface.co/spaces/yunyangx/EfficientSAM",
+  "revision": "d8dbb1eee73bfb3392aa6f6e8944aeb13f3f4036",
+  "files": {
+    "efficientsam_ti_encoder.onnx": "84ed466ffcc5c1f8d08409bc34a23bb364ab2c15e402cb12d4335a42be0e0951",
+    "efficientsam_ti_decoder.onnx": "a62f8fa5ea080447c0689418d69e58f1e83e0b7adf9c142e2bd9bcc8045c0b11"
+  }
+}

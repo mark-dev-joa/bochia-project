@@ -1,0 +1,1 @@
+Use the bundled model and ./data/settings.json beside this executable.

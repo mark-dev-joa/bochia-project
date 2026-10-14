@@ -7,3 +7,6 @@
 *.webp binary
 *.onnx binary
 *.ttf binary
+
+# Over GitHub's 100 MB limit: kept in Git LFS.
+bin/release/tracker/onnxruntime_providers_cuda.dll filter=lfs diff=lfs merge=lfs -text

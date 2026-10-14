@@ -1,0 +1,4162 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RegisterDescription
+    ModelName="FlexIoCxp"
+    VendorName="Cxp"
+    ToolTip="FlexIoCxp Sim Module Register Description"
+    StandardNameSpace="None"
+    SchemaMajorVersion="1"
+    SchemaMinorVersion="1"
+    SchemaSubMinorVersion="0"
+    MajorVersion="1"
+    MinorVersion="0"
+    SubMinorVersion="1"
+    ProductGuid="E1721338-3C33-4939-B60F-5FAFEA0AEF77"
+    VersionGuid="7474100C-0C41-45E6-8DEF-B1856E930810"
+    xmlns="http://www.genicam.org/GenApi/Version_1_1"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+<Category Name="Root" NameSpace="Standard">
+    <pFeature>InterfaceInformation</pFeature>
+    <pFeature>DeviceEnumeration</pFeature>
+    <pFeature>CoaXPress</pFeature>
+    <pFeature>CxpOverFiber</pFeature>
+    <pFeature>CoaXPressInfoCounters</pFeature>   
+    <!-- <pFeature>IfUserSetControl</pFeature> -->
+    <pFeature>StreamEnumeration</pFeature>
+    <pFeature>DeviceGlobalSetting</pFeature>	
+    <pFeature>CameraAndIlluminationControl</pFeature>
+    <pFeature>RotaryDecoderControl</pFeature>
+    <pFeature>CardioOutControl</pFeature>
+    <pFeature>FreeRunGrabberControl</pFeature>
+    <pFeature>ColorTransformationControl</pFeature>
+    <pFeature>IspFunc</pFeature>
+    <pFeature>LineFlush</pFeature>
+    <pFeature>StreamInfo</pFeature>
+  <pFeature>DeviceCompatibility</pFeature>
+  <pFeature>DeviceControl</pFeature>
+    <pFeature>DevUserSetControl</pFeature>
+</Category>
+
+  <Category Name="InterfaceInformation" NameSpace="Standard">
+    <pFeature>InterfaceID</pFeature>
+    <pFeature>InterfaceType</pFeature>
+    <pFeature>InterfaceVendorName</pFeature>
+    <pFeature>InterfaceModelName</pFeature>
+    <pFeature>InterfaceProductName</pFeature>
+    <pFeature>ProductCode</pFeature>
+    <pFeature>SerialNumber</pFeature>
+    <pFeature>PartNumber</pFeature>
+    <pFeature>FirmwareRevision</pFeature>
+	<pFeature>CardTemperature</pFeature>
+    <pFeature>BoardIndex</pFeature>
+    <pFeature>FirmwareMaxDevices</pFeature>
+    <pFeature>FirmwareMode</pFeature>
+
+
+  </Category>
+  <Category Name="DeviceEnumeration" NameSpace="Standard">
+    <pFeature>DeviceUpdateList</pFeature>
+    <pFeature>DeviceSelector</pFeature>
+    <pFeature>DeviceID</pFeature>
+    <pFeature>DeviceVendorName</pFeature>
+    <pFeature>DeviceModelName</pFeature>
+    <pFeature>DeviceAccessStatus</pFeature>
+    <pFeature>CxpLinkConfiguration</pFeature>
+  </Category>
+
+  <Category Name="CoaXPress" NameSpace="Standard">
+    <pFeature>CxpPoCxpAuto</pFeature>
+    <pFeature>CxpPoCxpTurnOff</pFeature>
+    <pFeature>CxpPoCxpStatus</pFeature>   
+    <pFeature>CxpConnectionCount</pFeature>
+    <!--<pFeature>CxpConnectionSelector</pFeature>-->
+    <pFeature>CxpPoCxpVoltageA</pFeature>
+    <pFeature>CxpPoCxpVoltageB</pFeature>
+    <pFeature>CxpPoCxpVoltageC</pFeature>
+    <pFeature>CxpPoCxpVoltageD</pFeature>
+    <pFeature>CxpPoCxpCurrentA</pFeature>
+    <pFeature>CxpPoCxpCurrentB</pFeature>
+    <pFeature>CxpPoCxpCurrentC</pFeature>
+    <pFeature>CxpPoCxpCurrentD</pFeature>
+  </Category>
+  
+  <Category Name="CxpOverFiber">
+    <pIsImplemented>Cof_IsImplemented</pIsImplemented>
+    <pFeature>CofHsupConnectionEn</pFeature>
+    <pFeature>CofFecEn</pFeature>
+  </Category>
+  
+  <Category Name="CoaXPressInfoCounters">
+    <!--<pIsAvailable>Cxp_IsAvailable</pIsAvailable>-->
+    <pFeature>CxpInfo_Update</pFeature>
+    <pFeature>CxpStreamDataPacketCrcError_A</pFeature>
+    <pFeature>CxpStreamDataPacketCrcError_B</pFeature>
+    <pFeature>CxpStreamDataPacketCrcError_C</pFeature>
+    <pFeature>CxpStreamDataPacketCrcError_D</pFeature>
+    <pFeature>CxpStreamDataPacketCrcError_Reset</pFeature>
+  </Category>
+
+  <Category Name="StreamEnumeration" NameSpace="Standard">
+    <pFeature>StreamSelector</pFeature>
+    <pFeature>StreamID</pFeature>
+  </Category>
+
+  <!--DeviceGlobalSetting配置-->
+  <Category Name="DeviceGlobalSetting">
+    <pFeature>CameraScanType</pFeature>
+    <pFeature>LineScanBufferHeight</pFeature>
+    <pFeature>AreaScanBufferUnitNum</pFeature>
+    <pFeature>AreaScanBufferHeight</pFeature>    
+  </Category>
+
+  <Category Name="CameraAndIlluminationControl">
+    <ToolTip>Camera and Illumination Controller features set</ToolTip>
+    <pFeature>TriggerType</pFeature>
+    <pFeature>DeviceTriggerMode</pFeature>
+    <pFeature>DeviceExposureTime</pFeature>
+    <!--<pFeature>DeviceFrameRate</pFeature>-->
+    <pFeature>DeviceFramePeriod</pFeature>
+    <pFeature>DeviceTriggerStart</pFeature>
+    <pFeature>DevicePulseNumber</pFeature>
+    <pFeature>DevicePulseClear</pFeature>
+    <pFeature>CardioInMask</pFeature>
+    <pFeature>CardioOutMask</pFeature>
+    <pFeature>CardioOutMaskOpen</pFeature>
+    <pFeature>TTL2_1_OutValue</pFeature>
+    <pFeature>CardioOutMode</pFeature>
+    <pFeature>CardioGlitchTime</pFeature>
+    <pFeature>SoftioTriggerReverse</pFeature>
+    <pFeature>HardioTriggerReverse</pFeature>
+    <pFeature>CardioOutReverse</pFeature>
+    <pFeature>SoftioTriggerDelay</pFeature>
+    <pFeature>HardioTriggerDelay</pFeature>
+    <pFeature>CardioOutDelay</pFeature>
+  </Category>
+
+<Category Name="RotaryDecoderControl">
+    <ToolTip>RotaryDecoder Control for linescan camera</ToolTip>
+    <pFeature>DecoderMode</pFeature>
+    <pFeature>DecoderPhaseSelect</pFeature>
+    <pFeature>DecoderMulti</pFeature>
+    <pFeature>DecoderDiv</pFeature>
+    <pFeature>DecoderMaxReverseNum</pFeature>
+
+    <pFeature>DecoderCountA</pFeature>
+    <pFeature>DecoderCountB</pFeature>
+    <pFeature>DecoderCountClear</pFeature>
+
+    <pFeature>DecoderReverseCount</pFeature>
+    <pFeature>DecoderReverseCountClear</pFeature>
+</Category>
+
+<!--HardOutput 设置 -->
+<Category Name="CardioOutControl">
+  <ToolTip>Output Control</ToolTip>
+  <pFeature>OutputBridgeMode</pFeature>
+  <pFeature>OutputBridgeFixedTime</pFeature>
+  <pFeature>OutputBridgeExtendTime</pFeature>
+</Category>
+
+<Category Name="FreeRunGrabberControl">
+    <ToolTip>Camera and Illumination Controller features set</ToolTip>
+    <pFeature>FRGrabberMode</pFeature>
+    <pFeature>FRGrabberLineModeEn</pFeature>
+    <pFeature>FRGrabberUnitNum</pFeature>
+    <pFeature>FRGrabberInMask</pFeature>
+    <pFeature>FRGrabberInReverse</pFeature>
+    <pFeature>FRGrabberInGlitchTime</pFeature>
+    <pFeature>FRGrabberRestart</pFeature>
+    <pFeature>FRGrabberReset</pFeature>
+</Category>
+
+  <Category Name="IspFunc">
+    <ToolTip>Tdi Set</ToolTip>   
+    <pFeature>IspSwitch</pFeature>
+    <pFeature>LineScanHeight</pFeature>
+    <!--<pFeature>IspCenterMergeMode</pFeature>-->
+  </Category>
+
+  <Category Name="LineFlush">
+    <ToolTip>Line Flush Set</ToolTip>
+    <pFeature>LineFlushMode</pFeature>
+    <pFeature>SoftFlushSend</pFeature>
+    <pFeature>FlushInMask</pFeature>
+    <pFeature>FlushInReverse</pFeature>
+    <pFeature>FlushInGlitchTime</pFeature>
+    <pFeature>LineFillCount</pFeature>
+    <pFeature>LineLostCount</pFeature>
+  </Category>
+
+  <!--Color and isp-->
+<Category Name="ColorTransformationControl">
+  <ToolTip>Color Transformation Set</ToolTip>
+  <pFeature>IspBayerEnable</pFeature>
+  <pFeature>IspOutputFormat</pFeature>
+</Category>
+
+
+<Category Name="StreamInfo">
+    <pFeature>TriggerSend</pFeature>
+    <pFeature>TriggerAck</pFeature>
+    <pFeature>PcieLevel</pFeature>
+	<pFeature>CxpOnline</pFeature>
+	<pFeature>FrameCapture</pFeature>
+    <pFeature>FrameAbandon</pFeature>
+    <pFeature>CameraFPS</pFeature>
+  </Category>
+
+  <!--Device Compatibility-->
+  <Category Name="DeviceCompatibility">
+    <pFeature>CxpTriggerDelayUnit</pFeature>
+    <pFeature>CxpCtrlPktPayloadSize</pFeature>
+  </Category>
+
+  <!-- Device Control -->
+  <Category Name="DeviceControl">
+    <pFeature>Timestamp</pFeature>
+  </Category>
+  
+<Integer Name="node_0">
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <Value>1</Value>
+  </Integer>
+  <String Name="InterfaceID" NameSpace="Standard">
+    <ToolTip>GenTL Producer wide unique identifier of the selected interface</ToolTip>
+    <Description>GenTL Producer wide unique identifier of the selected interface.</Description>
+    <DisplayName>Interface ID</DisplayName>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>node_1</pValue>
+</String>
+<Enumeration Name="InterfaceType" NameSpace="Standard">
+    <ToolTip>Identifies the transport layer technology of the interface</ToolTip>
+    <Description>Identifies the transport layer technology of the interface.</Description>
+    <DisplayName>Interface Type</DisplayName>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <EnumEntry Name="CXP" NameSpace="Standard">
+        <ToolTip>CoaXPress</ToolTip>
+        <Description>This enumeration value indicates CoaXPress transport layer technology.</Description>
+        <DisplayName>CoaXPress</DisplayName>
+        <Value>0</Value>
+    </EnumEntry>
+    <Value>0</Value>
+</Enumeration>
+
+  <String Name="InterfaceVendorName">
+    <ToolTip>Name of the Interface vendor</ToolTip>
+    <Description>Name of the Interface vendor.</Description>
+    <DisplayName>Interface Vendor Name</DisplayName>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>InterfaceVendorNameReg</pValue>
+  </String> 
+  <String Name="InterfaceModelName">
+    <ToolTip>Name of the Interface model</ToolTip>
+    <Description>Name of the Interface model.</Description>
+    <DisplayName>Interface Model Name</DisplayName>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>InterfaceModelNameReg</pValue>
+  </String>
+  <String Name="InterfaceProductName">
+    <ToolTip>Name of the Interface device</ToolTip>
+    <Description>Name of the Interface device.</Description>
+    <DisplayName>Interface device Name</DisplayName>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>InterfaceProductNameReg</pValue>
+  </String>
+  
+
+  <StringReg Name="InterfaceVendorNameReg">
+    <Address>0x2e000effff0001</Address>
+    <pLength>IFVnrLen</pLength>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+  </StringReg>
+  <IntReg Name="IFVnrLen">
+    <Address>0x2e000effff0001</Address>
+    <Address>0x80</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <StringReg Name="InterfaceModelNameReg">
+    <Address>0x2e000fffff0001</Address>
+    <pLength>IFMnrLen</pLength>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+  </StringReg>
+  <IntReg Name="IFMnrLen">
+    <Address>0x2e000fffff0001</Address>
+    <Address>0x80</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <StringReg Name="InterfaceProductNameReg">
+    <Address>0x2e0010ffff0001</Address>
+    <pLength>IFDnrLen</pLength>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+  </StringReg>
+  <IntReg Name="IFDnrLen">
+    <Address>0x2e0010ffff0001</Address>
+    <Address>0x80</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  
+<Command Name="DeviceUpdateList" NameSpace="Standard">
+    <ToolTip>Updates the internal device list</ToolTip>
+    <Description>Updates the internal device list.</Description>
+    <DisplayName>Device Update List</DisplayName>
+    <ImposedAccessMode>WO</ImposedAccessMode>
+    <pValue>node_3</pValue>
+    <CommandValue>1</CommandValue>
+</Command>
+<Integer Name="DeviceSelector" NameSpace="Standard">
+    <ToolTip>Selector for the different devices on this interface</ToolTip>
+    <Description>Selector for the different devices on this interface.</Description>
+    <DisplayName>Device Selector</DisplayName>
+    <pIsAvailable>DeviceCount</pIsAvailable>
+    <pValue>node_25</pValue>
+    <Min>0</Min>
+    <pMax>node_4</pMax>
+    <pSelected>DeviceID</pSelected>
+    <pSelected>DeviceVendorName</pSelected>
+    <pSelected>DeviceModelName</pSelected>
+    <pSelected>DeviceAccessStatus</pSelected>
+    <pSelected>CxpLinkConfiguration</pSelected>
+</Integer>
+<String Name="DeviceID" NameSpace="Standard">
+    <ToolTip>Interface wide unique identifier of the selected device</ToolTip>
+    <Description>Interface wide unique identifier of the selected device.</Description>
+    <DisplayName>Device ID</DisplayName>
+    <pIsAvailable>DeviceCount</pIsAvailable>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>node_6</pValue>
+</String>
+<String Name="DeviceVendorName" NameSpace="Standard">
+    <ToolTip>Name of the device vendor</ToolTip>
+    <Description>Name of the device vendor.</Description>
+    <DisplayName>Device Vendor Name</DisplayName>
+    <pIsAvailable>DeviceCount</pIsAvailable>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>node_9</pValue>
+</String>
+<String Name="DeviceModelName" NameSpace="Standard">
+    <ToolTip>Name of the device model</ToolTip>
+    <Description>Name of the device model.</Description>
+    <DisplayName>Device Model Name</DisplayName>
+    <pIsAvailable>DeviceCount</pIsAvailable>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>node_12</pValue>
+</String>
+<Enumeration Name="DeviceAccessStatus" NameSpace="Standard">
+    <ToolTip>Gives the device's access status at the moment of the last execution of DeviceUpdateList</ToolTip>
+    <Description>Gives the device's access status at the moment of the last execution of DeviceUpdateList.</Description>
+    <DisplayName>Device Access Status</DisplayName>
+    <pIsAvailable>DeviceCount</pIsAvailable>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <EnumEntry Name="Unknown" NameSpace="Standard">
+        <ToolTip>Unknown access</ToolTip>
+        <Description>Unknown access.</Description>
+        <DisplayName>Unknown</DisplayName>
+        <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="ReadWrite" NameSpace="Standard">
+        <ToolTip>Available to be opened with full access</ToolTip>
+        <Description>Available to be opened with full access.</Description>
+        <DisplayName>ReadWrite</DisplayName>
+        <Value>1</Value>
+    </EnumEntry>
+    <EnumEntry Name="ReadOnly" NameSpace="Standard">
+        <ToolTip>Available to be opened with read-only access</ToolTip>
+        <Description>Available to be opened with read-only access.</Description>
+        <DisplayName>ReadOnly</DisplayName>
+        <Value>2</Value>
+    </EnumEntry>
+    <EnumEntry Name="NoAccess" NameSpace="Standard">
+        <ToolTip>Not reachable</ToolTip>
+        <Description>Not reachable.</Description>
+        <DisplayName>NoAccess</DisplayName>
+        <Value>3</Value>
+    </EnumEntry>
+    <EnumEntry Name="Busy" NameSpace="Standard">
+        <ToolTip>Already opened by another entity</ToolTip>
+        <Description>Already opened by another entity.</Description>
+        <DisplayName>Busy</DisplayName>
+        <Value>4</Value>
+    </EnumEntry>
+    <EnumEntry Name="OpenReadWrite" NameSpace="Standard">
+        <ToolTip>Opened with read-write access</ToolTip>
+        <Description>Opened with read-write access.</Description>
+        <DisplayName>OpenReadWrite</DisplayName>
+        <Value>5</Value>
+    </EnumEntry>
+    <EnumEntry Name="OpenReadOnly" NameSpace="Standard">
+        <ToolTip>Opened with read-only access</ToolTip>
+        <Description>Opened with read-only access.</Description>
+        <DisplayName>OpenReadOnly</DisplayName>
+        <Value>6</Value>
+    </EnumEntry>
+    <pValue>node_15</pValue>
+</Enumeration>
+<StringReg Name="node_1">
+    <Address>0x2e0009ffff0001</Address>
+    <pLength>node_2</pLength>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+</StringReg>
+<IntReg Name="node_2">
+    <Address>0x2e0009ffff0001</Address>
+    <Address>0x80</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+</IntReg>
+<IntReg Name="node_3">
+    <Address>0x2e0001ffff0001</Address>
+    <Length>1</Length>
+    <AccessMode>WO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+</IntReg>
+<IntReg Name="DeviceCount">
+    <ToolTip>Device Count</ToolTip>
+    <Description>Device Count.</Description>
+    <DisplayName>Device Count</DisplayName>
+    <Address>0x2e0002ffff0001</Address>
+    <Length>2</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Signed</Sign>
+    <Endianess>LittleEndian</Endianess>
+</IntReg>
+<IntSwissKnife Name="node_4">
+    <pVariable Name="C">DeviceCount</pVariable>
+    <Formula>C-1</Formula>
+</IntSwissKnife>
+<IntSwissKnife Name="node_5">
+    <pVariable Name="S">DeviceSelector</pVariable>
+    <Formula><![CDATA[(S<<12)]]></Formula>
+</IntSwissKnife>
+<StringReg Name="node_6">
+    <Address>0x2e000affff0001</Address>
+    <pAddress>node_5</pAddress>
+    <pLength>node_7</pLength>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+</StringReg>
+<IntReg Name="node_7">
+    <Address>0x2e000affff0001</Address>
+    <pAddress>node_5</pAddress>
+    <Address>0x80</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+</IntReg>
+<IntSwissKnife Name="node_8">
+    <pVariable Name="S">DeviceSelector</pVariable>
+    <Formula><![CDATA[(S<<12)]]></Formula>
+</IntSwissKnife>
+<StringReg Name="node_9">
+    <Address>0x2e0003ffff0001</Address>
+    <pAddress>node_8</pAddress>
+    <pLength>node_10</pLength>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+</StringReg>
+<IntReg Name="node_10">
+    <Address>0x2e0003ffff0001</Address>
+    <pAddress>node_8</pAddress>
+    <Address>0x80</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+</IntReg>
+<IntSwissKnife Name="node_11">
+    <pVariable Name="S">DeviceSelector</pVariable>
+    <Formula><![CDATA[(S<<12)]]></Formula>
+</IntSwissKnife>
+<StringReg Name="node_12">
+    <Address>0x2e0004ffff0001</Address>
+    <pAddress>node_11</pAddress>
+    <pLength>node_13</pLength>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+</StringReg>
+<IntReg Name="node_13">
+    <Address>0x2e0004ffff0001</Address>
+    <pAddress>node_11</pAddress>
+    <Address>0x80</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+</IntReg>
+<IntSwissKnife Name="node_14">
+    <pVariable Name="S">DeviceSelector</pVariable>
+    <Formula><![CDATA[(S<<12)]]></Formula>
+</IntSwissKnife>
+<IntReg Name="node_15">
+    <Address>0x2e0005ffff0001</Address>
+    <pAddress>node_14</pAddress>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Signed</Sign>
+    <Endianess>LittleEndian</Endianess>
+</IntReg>
+<String Name="ProductCode">
+    <ToolTip>Product Code</ToolTip>
+    <Description>Product Code.</Description>
+    <DisplayName>Product Code</DisplayName>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>node_16</pValue>
+</String>
+<String Name="SerialNumber">
+    <ToolTip>Serial Number</ToolTip>
+    <Description>Serial Number.</Description>
+    <DisplayName>Serial Number</DisplayName>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>node_18</pValue>
+</String>
+<String Name="PartNumber">
+    <ToolTip>Part Number</ToolTip>
+    <Description>Part Number.</Description>
+    <DisplayName>Part Number</DisplayName>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>node_20</pValue>
+</String>
+
+  <String Name="FirmwareRevision">
+    <ToolTip>Firmware Revision</ToolTip>
+    <Description>Firmware Revision.</Description>
+    <DisplayName>Firmware Revision</DisplayName>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>node_22</pValue>
+  </String>
+  
+  <Float Name="CardTemperature">
+    <ToolTip>Card Temperature</ToolTip>
+    <Description>Card Temperature.</Description>
+    <DisplayName>Card Temperature</DisplayName>
+    <pValue>CardTemperatureReg</pValue>
+</Float>
+
+<FloatReg Name="CardTemperatureReg">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x40</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Endianess>LittleEndian</Endianess>
+</FloatReg>
+
+  <Integer Name="BoardIndex">
+    <ToolTip>Board Index num</ToolTip>
+    <Description>Board Index num</Description>
+    <DisplayName>Board Index num</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <pValue>node_24</pValue>
+    <Min>0</Min>
+    <Max>15</Max>
+  </Integer>
+
+  <Enumeration Name="FirmwareMode">
+    <ToolTip>Selects the CoaXPress physical connection to get info</ToolTip>
+    <Description>Selects the CoaXPress physical connection to get info.</Description>
+    <DisplayName>Host Connection Selector</DisplayName>
+    <EnumEntry Name="AAAA">
+      <ToolTip>CoaXPress physical host connection AAAA</ToolTip>
+      <Description>CoaXPress physical host connection AAAA.</Description>
+	  <pIsAvailable>SwiFirmwareAAAA</pIsAvailable>
+      <Value>0x0</Value>
+    </EnumEntry>
+    <EnumEntry Name="AABB">
+      <ToolTip>CoaXPress physical host connection AABB</ToolTip>
+      <Description>CoaXPress physical host connection AABB.</Description>
+      <pIsAvailable>SwiFirmwareAABB</pIsAvailable>
+      <Value>0x1</Value>
+    </EnumEntry>
+    <EnumEntry Name="AABC">
+      <ToolTip>CoaXPress physical host connection AABC</ToolTip>
+      <Description>CoaXPress physical host connection AABC.</Description>
+      <pIsAvailable>SwiFirmwareAABC</pIsAvailable>
+      <Value>0x2</Value>
+    </EnumEntry>
+    <EnumEntry Name="ABCD">
+      <ToolTip>CoaXPress physical host connection ABCD</ToolTip>
+      <Description>CoaXPress physical host connection ABCD.</Description>
+      <pIsAvailable>SwiFirmwareABCD</pIsAvailable>
+      <Value>0x3</Value>
+    </EnumEntry>
+	<EnumEntry Name="AA">
+      <ToolTip>CoaXPress physical host connection AA</ToolTip>
+      <Description>CoaXPress physical host connection AA.</Description>
+	  <pIsAvailable>SwiFirmwareAA</pIsAvailable>
+      <Value>0x4</Value>
+    </EnumEntry>
+	<EnumEntry Name="AB">
+      <ToolTip>CoaXPress physical host connection AB</ToolTip>
+      <Description>CoaXPress physical host connection AB.</Description>
+	  <pIsAvailable>SwiFirmwareAB</pIsAvailable>
+      <Value>0x5</Value>
+    </EnumEntry>
+	<EnumEntry Name="A">
+      <ToolTip>CoaXPress physical host connection A</ToolTip>
+      <Description>CoaXPress physical host connection A.</Description>
+	  <pIsAvailable>SwiFirmwareA</pIsAvailable>
+      <Value>0x6</Value>
+    </EnumEntry>
+    <pValue>FirmwareModeReg</pValue>
+  </Enumeration>
+
+  <IntSwissKnife Name="node_firmware_mode">
+    <pVariable Name="FM">FirmwareMaxDevices</pVariable>
+    <Formula><![CDATA[(FM>1)?1:0]]></Formula>
+  </IntSwissKnife>
+  
+  <IntSwissKnife Name="SwiFirmwareAAAA">
+    <pVariable Name="FM">FirmwareLinkMode</pVariable>
+	<pVariable Name="DVN">node_firmware_mode</pVariable>
+    <Formula><![CDATA[(FM=0)?DVN:(FM&0x1)]]></Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="SwiFirmwareAABB">
+    <pVariable Name="FM">FirmwareLinkMode</pVariable>
+	<pVariable Name="DVN">node_firmware_mode</pVariable>
+    <Formula><![CDATA[(FM=0)?DVN:(FM&0x2)]]></Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="SwiFirmwareAABC">
+    <pVariable Name="FM">FirmwareLinkMode</pVariable>
+	<pVariable Name="DVN">node_firmware_mode</pVariable>
+    <Formula><![CDATA[(FM=0)?DVN:(FM&0x4)]]></Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="SwiFirmwareABCD">
+    <pVariable Name="FM">FirmwareLinkMode</pVariable>
+	<pVariable Name="DVN">node_firmware_mode</pVariable>
+    <Formula><![CDATA[(FM=0)?DVN:(FM&0x8)]]></Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="SwiFirmwareAA">
+    <pVariable Name="FM">FirmwareLinkMode</pVariable>
+    <Formula><![CDATA[(FM=0)?0:(FM&0x10)]]></Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="SwiFirmwareAB">
+    <pVariable Name="FM">FirmwareLinkMode</pVariable>
+    <Formula><![CDATA[(FM=0)?0:(FM&0x20)]]></Formula>
+  </IntSwissKnife>
+   <IntSwissKnife Name="SwiFirmwareA">
+    <pVariable Name="FM">FirmwareLinkMode</pVariable>
+    <Formula><![CDATA[(FM=0)?0:(FM&0x40)]]></Formula>
+  </IntSwissKnife>
+  
+  <IntReg Name="FirmwareLinkMode">
+    <pAddress>OffsetReset</pAddress>
+    <Address>0x1F</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+	</IntReg>
+
+  <IntReg Name="FirmwareMaxDevices">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x20</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+</IntReg>
+
+<IntReg Name="FirmwareModeReg">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x30</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>IfUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+</IntReg>
+
+  <StringReg Name="node_16">
+    <Address>0x2e0006ffff0001</Address>
+    <pLength>node_17</pLength>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+  </StringReg>
+  <IntReg Name="node_17">
+    <Address>0x2e0006ffff0001</Address>
+    <Address>0x10</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <StringReg Name="node_18">
+    <Address>0x2e0007ffff0001</Address>
+    <pLength>node_19</pLength>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+  </StringReg>
+  <IntReg Name="node_19">
+    <Address>0x2e0007ffff0001</Address>
+    <Address>0x10</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  
+  <StringReg Name="node_20">
+    <Address>0x2e0008ffff0001</Address>
+    <pLength>node_21</pLength>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+  </StringReg>
+  <IntReg Name="node_21">
+    <Address>0x2e0008ffff0001</Address>
+    <Address>0x10</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <StringReg Name="node_22">
+    <Address>0x2e000bffff0001</Address>
+    <pLength>node_23</pLength>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+  </StringReg>
+  <IntReg Name="node_23">
+    <Address>0x2e000bffff0001</Address>
+    <Address>0x10</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <IntReg Name="node_24">
+    <Address>0x2e000cffff0001</Address>
+    <Length>1</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <IntReg Name="node_25">
+    <Address>0x2e000dffff0001</Address>
+    <Length>2</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>IfUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  
+  <Command Name="CxpPoCxpAuto" NameSpace="Standard">
+    <ToolTip>Activate automatic control of the Power over CoaXPress (PoCXP)</ToolTip>
+    <Description>Activate automatic control of the Power over CoaXPress (PoCXP).</Description>
+    <DisplayName>PoCXP Auto</DisplayName>
+    <ImposedAccessMode>WO</ImposedAccessMode>
+    <pValue>PoCxpReg</pValue>
+    <CommandValue>0</CommandValue>
+  </Command>
+
+  <Command Name="CxpPoCxpTurnOff" NameSpace="Standard">
+    <ToolTip>Disable Power over CoaXPress (PoCXP)</ToolTip>
+    <Description>Disable Power over CoaXPress (PoCXP).</Description>
+    <DisplayName>PoCXP Turn Off</DisplayName>
+    <ImposedAccessMode>WO</ImposedAccessMode>
+    <pValue>PoCxpReg</pValue>
+    <CommandValue>0xAA</CommandValue>
+  </Command>
+
+  <IntReg Name="PoCxpReg">
+    <Address>0x300</Address>
+    <Length>4</Length>
+    <AccessMode>WO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Signed</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Enumeration Name="CxpPoCxpStatus">
+    <ToolTip>CoaXPress Power Status(PoCXP)</ToolTip>
+    <Description>CoaXPress Power Status (PoCXP).</Description>
+    <DisplayName>PoCXP Status</DisplayName>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <EnumEntry Name="PowerOn">
+      <ToolTip>CoaXPress Power On</ToolTip>
+      <Description>CoaXPress Power On.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <EnumEntry Name="PowerOff">
+      <ToolTip>CoaXPress Power Off</ToolTip>
+      <Description>CoaXPress Power Off.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <pValue>PoCxpStatusSwiss</pValue>
+  </Enumeration>
+
+  <IntSwissKnife Name="PoCxpStatusSwiss">
+    <pVariable Name="V">CxpPoCxpStatusReg</pVariable>
+    <Formula><![CDATA[(V=0)?0:1]]></Formula>
+  </IntSwissKnife>
+  
+  <IntReg Name="CxpPoCxpStatusReg">
+    <Address>0x0300</Address>
+    <Address>0x20</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>PoCxpReg</pInvalidator>
+    <Sign>Signed</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  
+
+  <Enumeration Name="CxpLinkConfiguration" NameSpace="Standard">
+    <ToolTip>CoaXPress link configuration</ToolTip>
+    <Description>CoaXPress link configuration.</Description>
+    <DisplayName>CoaXPress Link Configuration</DisplayName>
+    <!--<pIsLocked>node_20</pIsLocked>-->
+    <EnumEntry Name="Default" NameSpace="Standard">
+      <ToolTip>Default</ToolTip>
+      <Description>Default.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="Auto" NameSpace="Standard">
+      <ToolTip>Auto</ToolTip>
+      <Description>Auto.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP1_X1" NameSpace="Standard">
+      <ToolTip>1 connection @1.250 Gbps</ToolTip>
+      <Description>1 connection @1.250 Gbps.</Description>
+      <Value>0x10028</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP2_X1" NameSpace="Standard">
+      <ToolTip>1 connection @2.500 Gbps</ToolTip>
+      <Description>1 connection @2.500 Gbps.</Description>
+      <Value>0x10030</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP3_X1" NameSpace="Standard">
+      <ToolTip>1 connection @3.125 Gbps</ToolTip>
+      <Description>1 connection @3.125 Gbps.</Description>
+      <Value>0x10038</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP5_X1" NameSpace="Standard">
+      <ToolTip>1 connection @5.000 Gbps</ToolTip>
+      <Description>1 connection @5.000 Gbps.</Description>
+      <Value>0x10040</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP6_X1" NameSpace="Standard">
+      <ToolTip>1 connection @6.250 Gbps</ToolTip>
+      <Description>1 connection @6.250 Gbps.</Description>
+      <Value>0x10048</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP10_X1" NameSpace="Standard">
+      <ToolTip>1 connection @10.000 Gbps</ToolTip>
+      <Description>1 connection @10.000 Gbps.</Description>
+      <Value>0x10050</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP12_X1" NameSpace="Standard">
+      <ToolTip>1 connection @12.500 Gbps</ToolTip>
+      <Description>1 connection @12.500 Gbps.</Description>
+      <!--<pIsAvailable>node_49</pIsAvailable>-->
+      <Value>0x10058</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP1_X2" NameSpace="Standard">
+      <ToolTip>2 connections @1.250 Gbps</ToolTip>
+      <Description>2 connections @1.250 Gbps.</Description>
+      <Value>0x20028</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP2_X2" NameSpace="Standard">
+        <ToolTip>2 connections @2.500 Gbps</ToolTip>
+        <Description>2 connections @2.500 Gbps.</Description>
+        <Value>0x20030</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP3_X2" NameSpace="Standard">
+      <ToolTip>2 connections @3.125 Gbps</ToolTip>
+      <Description>2 connections @3.125 Gbps.</Description>
+      <Value>0x20038</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP5_X2" NameSpace="Standard">
+        <ToolTip>2 connections @5.000 Gbps</ToolTip>
+        <Description>2 connections @5.000 Gbps.</Description>
+        <Value>0x20040</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP6_X2" NameSpace="Standard">
+      <ToolTip>2 connections @6.250 Gbps</ToolTip>
+      <Description>2 connections @6.250 Gbps.</Description>
+      <Value>0x20048</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP10_X2" NameSpace="Standard">
+      <ToolTip>2 connections @10.000 Gbps</ToolTip>
+      <Description>2 connections @10.000 Gbps.</Description>
+      <Value>0x20050</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP12_X2" NameSpace="Standard">
+      <ToolTip>2 connections @12.500 Gbps</ToolTip>
+      <Description>2 connections @12.500 Gbps.</Description>
+      <Value>0x20058</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP1_X3" NameSpace="Standard">
+      <ToolTip>3 connections @1.250 Gbps</ToolTip>
+      <Description>3 connections @1.250 Gbps.</Description>
+      <Value>0x30028</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP2_X3" NameSpace="Standard">
+        <ToolTip>3 connections @2.500 Gbps</ToolTip>
+        <Description>3 connections @2.500 Gbps.</Description>
+        <Value>0x30030</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP3_X3" NameSpace="Standard">
+      <ToolTip>3 connections @3.125 Gbps</ToolTip>
+      <Description>3 connections @3.125 Gbps.</Description>
+      <Value>0x30038</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP5_X3" NameSpace="Standard">
+        <ToolTip>3 connections @5.000 Gbps</ToolTip>
+        <Description>3 connections @5.000 Gbps.</Description>
+        <Value>0x30040</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP6_X3" NameSpace="Standard">
+      <ToolTip>3 connections @6.250 Gbps</ToolTip>
+      <Description>3 connections @6.250 Gbps.</Description>
+      <Value>0x30048</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP10_X3" NameSpace="Standard">
+      <ToolTip>3 connections @10.000 Gbps</ToolTip>
+      <Description>3 connections @10.000 Gbps.</Description>
+      <Value>0x30050</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP12_X3" NameSpace="Standard">
+      <ToolTip>3 connections @12.500 Gbps</ToolTip>
+      <Description>3 connections @12.500 Gbps.</Description>
+      <Value>0x30058</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP1_X4" NameSpace="Standard">
+      <ToolTip>4 connections @1.250 Gbps</ToolTip>
+      <Description>4 connections @1.250 Gbps.</Description>
+      <Value>0x40028</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP2_X4" NameSpace="Standard">
+        <ToolTip>4 connections @2.500 Gbps</ToolTip>
+        <Description>4 connections @2.500 Gbps.</Description>
+        <Value>0x40030</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP3_X4" NameSpace="Standard">
+      <ToolTip>4 connections @3.125 Gbps</ToolTip>
+      <Description>4 connections @3.125 Gbps.</Description>
+      <Value>0x40038</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP5_X4" NameSpace="Standard">
+        <ToolTip>4 connections @5.000 Gbps</ToolTip>
+        <Description>4 connections @5.000 Gbps.</Description>
+        <Value>0x40040</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP6_X4" NameSpace="Standard">
+      <ToolTip>4 connections @6.250 Gbps</ToolTip>
+      <Description>4 connections @6.250 Gbps.</Description>
+      <Value>0x40048</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP10_X4" NameSpace="Standard">
+      <ToolTip>4 connections @10.000 Gbps</ToolTip>
+      <Description>4 connections @10.000 Gbps.</Description>
+      <Value>0x40050</Value>
+    </EnumEntry>
+    <EnumEntry Name="CXP12_X4" NameSpace="Standard">
+      <ToolTip>4 connections @12.500 Gbps</ToolTip>
+      <Description>4 connections @12.500 Gbps.</Description>
+      <Value>0x40058</Value>
+    </EnumEntry>
+    <pValue>CxpLinkConfigurationReg</pValue>
+  </Enumeration>
+  <IntReg Name="CxpLinkConfigurationReg">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x10</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>IfUserSetLoadReg</pInvalidator>
+    <Sign>Signed</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  
+  <IntReg Name="CxpConnectionCount">
+    <ToolTip>CoaXPress Host Connection Count</ToolTip>
+    <Description>CoaXPress Host Connection Count.</Description>
+    <DisplayName>CoaXPress Host Connection Count</DisplayName>
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x0100</Address>
+    <Length>8</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+    <Sign>Signed</Sign>
+    <Endianess>LittleEndian</Endianess>
+</IntReg>
+  
+
+  <IntSwissKnife Name="node_a">
+    <pVariable Name="V">CxpConnectionCount</pVariable>
+    <Formula><![CDATA[(0<V)?1:0]]></Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="node_b">
+    <pVariable Name="V">CxpConnectionCount</pVariable>
+    <Formula><![CDATA[(1<V)?1:0]]></Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="node_c">
+    <pVariable Name="V">CxpConnectionCount</pVariable>
+    <Formula><![CDATA[(2<V)?1:0]]></Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="node_d">
+    <pVariable Name="V">CxpConnectionCount</pVariable>
+    <Formula><![CDATA[(3<V)?1:0]]></Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="node_e">
+    <pVariable Name="V">CxpConnectionCount</pVariable>
+    <Formula><![CDATA[(4<V)?1:0]]></Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="node_f">
+    <pVariable Name="V">CxpConnectionCount</pVariable>
+    <Formula><![CDATA[(5<V)?1:0]]></Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="node_g">
+    <pVariable Name="V">CxpConnectionCount</pVariable>
+    <Formula><![CDATA[(6<V)?1:0]]></Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="node_h">
+    <pVariable Name="V">CxpConnectionCount</pVariable>
+    <Formula><![CDATA[(7<V)?1:0]]></Formula>
+  </IntSwissKnife>
+
+  <Enumeration Name="CxpConnectionSelector">
+    <ToolTip>Selects the CoaXPress physical connection to get info</ToolTip>
+    <Description>Selects the CoaXPress physical connection to get info.</Description>
+    <DisplayName>Host Connection Selector</DisplayName>
+    <EnumEntry Name="A">
+      <ToolTip>CoaXPress physical host connection A</ToolTip>
+      <Description>CoaXPress physical host connection A.</Description>
+      <pIsAvailable>node_a</pIsAvailable>
+      <Value>1</Value>
+    </EnumEntry>
+    <EnumEntry Name="B">
+      <ToolTip>CoaXPress physical host connection B</ToolTip>
+      <Description>CoaXPress physical host connection B.</Description>
+      <pIsAvailable>node_b</pIsAvailable>
+      <Value>2</Value>
+    </EnumEntry>
+    <EnumEntry Name="C">
+      <ToolTip>CoaXPress physical host connection C</ToolTip>
+      <Description>CoaXPress physical host connection C.</Description>
+      <pIsAvailable>node_c</pIsAvailable>
+      <Value>3</Value>
+    </EnumEntry>
+    <EnumEntry Name="D">
+      <ToolTip>CoaXPress physical host connection D</ToolTip>
+      <Description>CoaXPress physical host connection D.</Description>
+      <pIsAvailable>node_d</pIsAvailable>
+      <Value>4</Value>
+    </EnumEntry>
+    <EnumEntry Name="E">
+      <ToolTip>CoaXPress physical host connection E</ToolTip>
+      <Description>CoaXPress physical host connection E.</Description>
+      <pIsAvailable>node_e</pIsAvailable>
+      <Value>5</Value>
+    </EnumEntry>
+    <EnumEntry Name="F">
+      <ToolTip>CoaXPress physical host connection F</ToolTip>
+      <Description>CoaXPress physical host connection F.</Description>
+      <pIsAvailable>node_f</pIsAvailable>
+      <Value>6</Value>
+    </EnumEntry>
+    <EnumEntry Name="G">
+      <ToolTip>CoaXPress physical host connection G</ToolTip>
+      <Description>CoaXPress physical host connection G.</Description>
+      <pIsAvailable>node_g</pIsAvailable>
+      <Value>7</Value>
+    </EnumEntry>
+    <EnumEntry Name="H">
+      <ToolTip>CoaXPress physical host connection H</ToolTip>
+      <Description>CoaXPress physical host connection H.</Description>
+      <pIsAvailable>node_h</pIsAvailable>
+      <Value>8</Value>
+    </EnumEntry>
+    <Value>1</Value>
+    <!--<pSelected>CxpPoCxpVoltageA</pSelected>
+    <pSelected>CxpPoCxpVoltageB</pSelected>
+    <pSelected>CxpPoCxpVoltageC</pSelected>
+    <pSelected>CxpPoCxpVoltageD</pSelected>
+    <pSelected>CxpPoCxpCurrentA</pSelected>
+    <pSelected>CxpPoCxpCurrentB</pSelected>
+    <pSelected>CxpPoCxpCurrentC</pSelected>
+    <pSelected>CxpPoCxpCurrentD</pSelected>-->
+  </Enumeration>
+  
+<Float Name="CxpPoCxpCurrentA">
+    <ToolTip>Return the current delivered by the PoCXP Transmitter Unit on the selected connection</ToolTip>
+    <Description>Return the current delivered by the PoCXP Transmitter Unit on the selected connection.</Description>
+    <DisplayName>PoCXP Current</DisplayName>
+    <pValue>CurrentRegA</pValue>
+</Float>
+  <Float Name="CxpPoCxpCurrentB">
+    <ToolTip>Return the current delivered by the PoCXP Transmitter Unit on the selected connection</ToolTip>
+    <Description>Return the current delivered by the PoCXP Transmitter Unit on the selected connection.</Description>
+    <DisplayName>PoCXP Current</DisplayName>
+    <pValue>CurrentRegB</pValue>
+  </Float>
+  <Float Name="CxpPoCxpCurrentC">
+    <ToolTip>Return the current delivered by the PoCXP Transmitter Unit on the selected connection</ToolTip>
+    <Description>Return the current delivered by the PoCXP Transmitter Unit on the selected connection.</Description>
+    <DisplayName>PoCXP Current</DisplayName>
+    <pValue>CurrentRegC</pValue>
+  </Float>
+  <Float Name="CxpPoCxpCurrentD">
+    <ToolTip>Return the current delivered by the PoCXP Transmitter Unit on the selected connection</ToolTip>
+    <Description>Return the current delivered by the PoCXP Transmitter Unit on the selected connection.</Description>
+    <DisplayName>PoCXP Current</DisplayName>
+    <pValue>CurrentRegD</pValue>
+  </Float>
+<Float Name="CxpPoCxpVoltageA">
+    <ToolTip>Return the voltage measured at the output of the PoCXP Transmitter Unit on the selected connection</ToolTip>
+    <Description>Return the voltage measured at the output of the PoCXP Transmitter Unit on the selected connection.</Description>
+    <DisplayName>PoCXP Voltage</DisplayName>
+    <pValue>VoltageRegA</pValue>
+</Float>
+  <Float Name="CxpPoCxpVoltageB">
+    <ToolTip>Return the voltage measured at the output of the PoCXP Transmitter Unit on the selected connection</ToolTip>
+    <Description>Return the voltage measured at the output of the PoCXP Transmitter Unit on the selected connection.</Description>
+    <DisplayName>PoCXP Voltage</DisplayName>
+    <pValue>VoltageRegB</pValue>
+  </Float>
+  <Float Name="CxpPoCxpVoltageC">
+    <ToolTip>Return the voltage measured at the output of the PoCXP Transmitter Unit on the selected connection</ToolTip>
+    <Description>Return the voltage measured at the output of the PoCXP Transmitter Unit on the selected connection.</Description>
+    <DisplayName>PoCXP Voltage</DisplayName>
+    <pValue>VoltageRegC</pValue>
+  </Float>
+  <Float Name="CxpPoCxpVoltageD">
+    <ToolTip>Return the voltage measured at the output of the PoCXP Transmitter Unit on the selected connection</ToolTip>
+    <Description>Return the voltage measured at the output of the PoCXP Transmitter Unit on the selected connection.</Description>
+    <DisplayName>PoCXP Voltage</DisplayName>
+    <pValue>VoltageRegD</pValue>
+  </Float>
+  
+<FloatReg Name="CurrentRegA">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x0400</Address>
+    <Address>0x00</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Endianess>LittleEndian</Endianess>
+</FloatReg>
+  <FloatReg Name="CurrentRegB">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x0400</Address>
+    <Address>0x01</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Endianess>LittleEndian</Endianess>
+  </FloatReg>
+  <FloatReg Name="CurrentRegC">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x0400</Address>
+    <Address>0x02</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Endianess>LittleEndian</Endianess>
+  </FloatReg>
+  <FloatReg Name="CurrentRegD">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x0400</Address>
+    <Address>0x03</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Endianess>LittleEndian</Endianess>
+  </FloatReg>
+  
+<FloatReg Name="VoltageRegA">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x0300</Address>
+    <Address>0x00</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Endianess>LittleEndian</Endianess>
+</FloatReg>
+  <FloatReg Name="VoltageRegB">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x0300</Address>
+    <Address>0x01</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Endianess>LittleEndian</Endianess>
+  </FloatReg>
+  <FloatReg Name="VoltageRegC">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x0300</Address>
+    <Address>0x02</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Endianess>LittleEndian</Endianess>
+  </FloatReg>
+  <FloatReg Name="VoltageRegD">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x0300</Address>
+    <Address>0x03</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Endianess>LittleEndian</Endianess>
+  </FloatReg>
+
+  <!--<Command Name="PocxpStatusUpdate">
+    <ToolTip>Updates pocxp</ToolTip>
+    <Description>Updates pocxp.</Description>
+    <DisplayName>Updates Pocxp</DisplayName>
+    <ImposedAccessMode>WO</ImposedAccessMode>
+    <pValue>PoCxpReg</pValue>
+    <CommandValue>1</CommandValue>
+    <pSelected>CxpPoCxpVoltageA</pSelected>
+    <pSelected>CxpPoCxpVoltageB</pSelected>
+    <pSelected>CxpPoCxpVoltageC</pSelected>
+    <pSelected>CxpPoCxpVoltageD</pSelected>
+    <pSelected>CxpPoCxpCurrentA</pSelected>
+    <pSelected>CxpPoCxpCurrentB</pSelected>
+    <pSelected>CxpPoCxpCurrentC</pSelected>
+    <pSelected>CxpPoCxpCurrentD</pSelected>
+</Command>-->
+
+
+
+  <!--Cof -->
+  <IntReg Name="Cof_IsImplemented">
+    <pAddress>CofBase</pAddress>
+    <Address>0x01</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>  
+  
+  <Boolean Name="CofHsupConnectionEn">
+    <ToolTip>Enable the Hsup Connection.</ToolTip>
+    <Description>Enable the Hsup Connection.</Description>
+    <DisplayName>CofHsupConnectionEn</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <Streamable>Yes</Streamable>
+    <pValue>CofHsupConnectionEnReg</pValue>
+  </Boolean>
+  <IntReg Name="CofHsupConnectionEnReg">
+    <pAddress>CofBase</pAddress>
+    <Address>0x10</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Boolean Name="CofFecEn">
+    <ToolTip>Enable the Hsup Connection.</ToolTip>
+    <Description>Enable the Hsup Connection.</Description>
+    <DisplayName>CofHsupConnectionEn</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <Streamable>Yes</Streamable>
+    <pValue>CofFecEnReg</pValue>
+  </Boolean>
+  <IntReg Name="CofFecEnReg">
+    <pAddress>CofBase</pAddress>
+    <Address>0x11</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <!--Cof over-->
+  
+  <!--CoaXPressInfo Counters -->
+  <Integer Name="CxpStreamDataPacketCrcError_A">
+    <ToolTip>Reports the count of connection lock losses on the selected Host connection</ToolTip>
+    <Description>Reports the count of connection lock losses on the selected Host connection.</Description>
+    <DisplayName>CoaXPress Link A Lock Loss Count</DisplayName>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>CxpStreamDataPacketCrcError_A_Reg</pValue>
+  </Integer>
+  <Integer Name="CxpStreamDataPacketCrcError_B">
+    <ToolTip>Reports the count of connection lock losses on the selected Host connection</ToolTip>
+    <Description>Reports the count of connection lock losses on the selected Host connection.</Description>
+    <DisplayName>CoaXPress Link B Lock Loss Count</DisplayName>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>CxpStreamDataPacketCrcError_B_Reg</pValue>
+  </Integer>
+  <Integer Name="CxpStreamDataPacketCrcError_C">
+    <ToolTip>Reports the count of connection lock losses on the selected Host connection</ToolTip>
+    <Description>Reports the count of connection lock losses on the selected Host connection.</Description>
+    <DisplayName>CoaXPress Link C Lock Loss Count</DisplayName>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>CxpStreamDataPacketCrcError_C_Reg</pValue>
+  </Integer>
+  <Integer Name="CxpStreamDataPacketCrcError_D">
+    <ToolTip>Reports the count of connection lock losses on the selected Host connection</ToolTip>
+    <Description>Reports the count of connection lock losses on the selected Host connection.</Description>
+    <DisplayName>CoaXPress Link D Lock Loss Count</DisplayName>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>CxpStreamDataPacketCrcError_D_Reg</pValue>
+  </Integer>
+
+  <IntReg Name="CxpStreamDataPacketCrcError_A_Reg">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x1010</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <pInvalidator>CxpInfo_UpdateReg</pInvalidator>
+    <pInvalidator>CxpStreamDataPacketCrcError_ResetReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <IntReg Name="CxpStreamDataPacketCrcError_B_Reg">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x1020</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <pInvalidator>CxpInfo_UpdateReg</pInvalidator>
+    <pInvalidator>CxpStreamDataPacketCrcError_ResetReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <IntReg Name="CxpStreamDataPacketCrcError_C_Reg">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x1030</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <pInvalidator>CxpInfo_UpdateReg</pInvalidator>
+    <pInvalidator>CxpStreamDataPacketCrcError_ResetReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <IntReg Name="CxpStreamDataPacketCrcError_D_Reg">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x1040</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <pInvalidator>CxpInfo_UpdateReg</pInvalidator>
+    <pInvalidator>CxpStreamDataPacketCrcError_ResetReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Command Name="CxpInfo_Update">
+    <ToolTip>CoaXPress Stream Data Packet Crc Error Count Update</ToolTip>
+    <Description>CoaXPress Stream Data Packet Crc Error Count Update.</Description>
+    <DisplayName>CoaXPress Stream Data Packet Crc Error Count Update</DisplayName>
+    <ImposedAccessMode>WO</ImposedAccessMode>
+    <pValue>CxpInfo_UpdateReg</pValue>
+    <CommandValue>0xFF</CommandValue>
+  </Command>
+  <IntReg Name="CxpInfo_UpdateReg">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x1000</Address>
+    <Length>4</Length>
+    <AccessMode>WO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Command Name="CxpStreamDataPacketCrcError_Reset">
+    <ToolTip>CoaXPress Stream Data Packet Crc Error Count Reset</ToolTip>
+    <Description>CoaXPress Stream Data Packet Crc Error Count Reset.</Description>
+    <DisplayName>CoaXPress Stream Data Packet Crc Error Count Reset</DisplayName>
+    <ImposedAccessMode>WO</ImposedAccessMode>
+    <pValue>CxpStreamDataPacketCrcError_ResetReg</pValue>
+    <CommandValue>0xFF</CommandValue>
+  </Command>
+  <IntReg Name="CxpStreamDataPacketCrcError_ResetReg">
+    <pAddress>CxpPoCxpBase</pAddress>
+    <Address>0x10FF</Address>
+    <Length>4</Length>
+    <AccessMode>WO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <!--CoaXPressInfo Counters over-->
+
+  <!--IfUserSetControl -->
+<Group Comment="IfUserSetControl">
+  <Category Name="IfUserSetControl">
+    <ToolTip>Category that contains the User Set control features.</ToolTip>
+    <Description>Category that contains the User Set control features.</Description>
+    <DisplayName>User Set Control</DisplayName>
+    <pIsImplemented>IfUser_IsImplemented</pIsImplemented>
+    <pFeature>IfUserSetSelector</pFeature>
+    <pFeature>IfUserSetLoad</pFeature>
+    <pFeature>IfUserSetSave</pFeature>
+    <pFeature>IfUserSetDefault</pFeature>
+  </Category>
+
+  <IntReg Name="IfUser_IsImplemented">
+    <pAddress>IfUserSetBase</pAddress>
+    <Address>0xFFFF</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Enumeration Name="IfUserSetSelector">
+    <ToolTip>Selects the feature User Set to load, save or configure.</ToolTip>
+    <Description>Selects the feature User Set to load, save or configure.</Description>
+    <DisplayName>User Set Selector</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <Streamable>Yes</Streamable>
+    <EnumEntry Name="Default">
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="UserSet1">
+      <Value>1</Value>
+    </EnumEntry>
+    <pValue>IfUserSetSelectorReg</pValue>
+  </Enumeration>
+  <IntReg Name="IfUserSetSelectorReg">
+     <pAddress>IfUserSetBase</pAddress>
+    <Address>0x0000</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+    <pInvalidator>IfUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Command Name="IfUserSetLoad">
+    <ToolTip>Loads the User Set specified by IfUserSetSelector to the device and makes it active.</ToolTip>
+    <Description>Loads the User Set specified by IfUserSetSelector to the device and makes it active.</Description>
+    <DisplayName>User Set Load</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <pIsAvailable>IfUserSetLoadAvailExpr</pIsAvailable>
+    <pValue>IfUserSetLoadReg</pValue>
+    <CommandValue>1</CommandValue>
+  </Command>
+  <IntReg Name="IfUserSetLoadReg">
+    <pAddress>IfUserSetBase</pAddress>
+    <Address>0x0004</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteAround</Cachable>
+    <pInvalidator>IfUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <IntSwissKnife Name="IfUserSetLoadAvailExpr">
+    <pVariable Name="VAR_USERSETSELECTOR">IfUserSetSelectorReg</pVariable>
+    <pVariable Name="VAR_USERSET1VALID">IfUserSet1ValidReg</pVariable>
+    <pVariable Name="VAR_USERSET2VALID">IfUserSet2ValidReg</pVariable>
+    <Formula><![CDATA[ (VAR_USERSETSELECTOR=0) || ((VAR_USERSETSELECTOR=1) && (VAR_USERSET1VALID=1)) || ((VAR_USERSETSELECTOR=2) && (VAR_USERSET2VALID=1)) ]]></Formula>
+  </IntSwissKnife>
+
+  <Command Name="IfUserSetSave">
+    <ToolTip>Save the User Set specified by IfUserSetSelector to the non-volatile memory of the device.</ToolTip>
+    <Description>Save the User Set specified by IfUserSetSelector to the non-volatile memory of the device.</Description>
+    <DisplayName>User Set Save</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <pIsAvailable>IfUserSetSaveAvailExpr</pIsAvailable>
+    <pValue>IfUserSetSaveReg</pValue>
+    <CommandValue>1</CommandValue>
+  </Command>
+  <IntReg Name="IfUserSetSaveReg">
+    <pAddress>IfUserSetBase</pAddress>
+    <Address>0x0008</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteAround</Cachable>
+    <pInvalidator>IfUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <IntSwissKnife Name="IfUserSetSaveAvailExpr">
+    <pVariable Name="VAR_USERSETSELECTOR">IfUserSetSelectorReg</pVariable>
+    <pVariable Name="VAR_USERSETSAVEAVAILABLE">IfUserSetSaveAvailableReg</pVariable>
+    <Formula><![CDATA[ (VAR_USERSETSELECTOR <> 0) && (VAR_USERSETSAVEAVAILABLE = 1) ]]></Formula>
+  </IntSwissKnife>
+  <!--<Boolean Name="UserSetSaveAvailable">
+    <Visibility>Invisible</Visibility>
+    <pValue>IfUserSetSaveAvailableReg</pValue>
+  </Boolean>-->
+  <IntReg Name="IfUserSetSaveAvailableReg">
+    <pAddress>IfUserSetBase</pAddress>
+    <Address>0x0020</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <pInvalidator>IfUserSetSelector</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Enumeration Name="IfUserSetDefault" NameSpace="Standard">
+    <ToolTip>Selects the feature User Set to load and make active by default when the device is reset.</ToolTip>
+    <Description>Selects the feature User Set to load and make active by default when the device is reset.</Description>
+    <DisplayName>User Set Default</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <EnumEntry Name="Default" NameSpace="Standard">
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="UserSet1" NameSpace="Standard">
+      <pIsAvailable>IfUserSetDefaultUserSet1AvailExpr</pIsAvailable>
+      <Value>1</Value>
+    </EnumEntry>
+    <EnumEntry Name="UserSet2" NameSpace="Standard">
+      <pIsAvailable>IfUserSetDefaultUserSet2AvailExpr</pIsAvailable>
+      <Value>2</Value>
+    </EnumEntry>
+    <pValue>IfUserSetDefaultReg</pValue>
+  </Enumeration>
+  <IntReg Name="IfUserSetDefaultReg">
+    <pAddress>IfUserSetBase</pAddress>
+    <Address>0x000C</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+    <pInvalidator>IfUserSetLoadReg</pInvalidator>
+    <pInvalidator>IfUserSetSaveReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <IntSwissKnife Name="IfUserSetDefaultUserSet1AvailExpr">
+    <pVariable Name="VAR_USERSET1VALID">IfUserSet1ValidReg</pVariable>
+    <Formula><![CDATA[ VAR_USERSET1VALID = 1 ]]></Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="IfUserSetDefaultUserSet2AvailExpr">
+    <pVariable Name="VAR_USERSET2VALID">IfUserSet2ValidReg</pVariable>
+    <Formula><![CDATA[ VAR_USERSET2VALID = 1 ]]></Formula>
+  </IntSwissKnife>
+
+  <Integer Name="IfUserSet1Valid">
+    <Visibility>Invisible</Visibility>
+    <Streamable>Yes</Streamable>
+    <pValue>IfUserSet1ValidReg</pValue>
+    <Inc>1</Inc>
+    <Representation>Linear</Representation>
+  </Integer>
+  <IntReg Name="IfUserSet1ValidReg">
+    <pAddress>IfUserSetBase</pAddress>
+    <Address>0x0010</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+    <pInvalidator>IfUserSetLoadReg</pInvalidator>
+    <pInvalidator>IfUserSetSelectorReg</pInvalidator>
+    <pInvalidator>IfUserSetSaveReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Integer Name="IfUserSet2Valid">
+    <Visibility>Invisible</Visibility>
+    <Streamable>Yes</Streamable>
+    <pValue>IfUserSet2ValidReg</pValue>
+    <Inc>1</Inc>
+    <Representation>Linear</Representation>
+  </Integer>
+  <IntReg Name="IfUserSet2ValidReg">
+    <pAddress>IfUserSetBase</pAddress>
+    <Address>0x0014</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>WriteThrough</Cachable>
+    <pInvalidator>IfUserSetLoadReg</pInvalidator>
+    <pInvalidator>IfUserSetSelectorReg</pInvalidator>
+    <pInvalidator>IfUserSetSaveReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+</Group>
+  <Integer Name="node_device_0">
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <Value>1</Value>
+  </Integer>
+  <Port Name="InterfacePort" NameSpace="Standard">
+    <ToolTip>The port through which the Device module is accessed</ToolTip>
+    <Description>The port through which the Device module is accessed.</Description>
+    <DisplayName>TL Device Port</DisplayName>
+  </Port> 
+
+  <String Name="DeviceDescription">
+    <ToolTip>Description of the device</ToolTip>
+    <Description>Description of the device.</Description>
+    <DisplayName>Device Description</DisplayName>
+    <pIsAvailable>node_device_10</pIsAvailable>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>node_device_8</pValue>
+  </String>
+  
+
+  <Integer Name="StreamSelector" NameSpace="Standard">
+    <ToolTip>Selector for the different stream channels</ToolTip>
+    <Description>Selector for the different stream channels.</Description>
+    <DisplayName>Stream Selector</DisplayName>
+    <pIsAvailable>node_device_11</pIsAvailable>
+    <Value>0</Value>
+    <Min>0</Min>
+    <pMax>node_device_12</pMax>
+    <pSelected>StreamID</pSelected>
+  </Integer>
+  <String Name="StreamID" NameSpace="Standard">
+    <ToolTip>Device unique ID for the stream</ToolTip>
+    <Description>Device unique ID for the stream.</Description>
+    <DisplayName>Stream ID</DisplayName>
+    <pIsAvailable>node_device_11</pIsAvailable>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>node_device_14</pValue>
+  </String>
+
+  <!--DeviceGlobalSetting配置-->
+  <Enumeration Name="CameraScanType">
+    <ToolTip>Camera Scan Type</ToolTip>
+    <Description>Camera Scan Type.</Description>
+    <DisplayName>CameraScanType</DisplayName>
+    <pIsLocked>TLParamsLocked</pIsLocked>
+  <EnumEntry Name="UnSelected">
+      <ToolTip>CxpTriggerBoth Edge</ToolTip>
+      <Description>CxpTriggerBoth Edge.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+	<EnumEntry Name="AreaScan">
+      <ToolTip>AreaScanType Edge</ToolTip>
+      <Description>AreaScanType Edge.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <EnumEntry Name="LineScan">
+      <ToolTip>LineScanType Edge</ToolTip>
+      <Description>LineScanType Edge.</Description>
+      <Value>2</Value>
+  </EnumEntry>
+  <pValue>CameraScanTypeReg</pValue>
+	<pSelected>LineScanBufferHeight</pSelected>
+  <pSelected>AreaScanBufferUnitNum</pSelected>
+  <pSelected>AreaScanBufferHeight</pSelected>
+	<pSelected>FRGrabberLineModeEn</pSelected>
+	<pSelected>IspSwitch</pSelected>
+	<pSelected>LineScanHeight</pSelected>	
+</Enumeration>
+<IntReg Name="CameraScanTypeReg">
+    <pAddress>CxpConfBase</pAddress>
+    <Address>0x10</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <IntSwissKnife Name="swi_scan_type">
+    <pVariable Name="S">CameraScanType</pVariable>
+    <Formula><![CDATA[(S=2)?1:0]]></Formula>
+  </IntSwissKnife>
+
+  <IntSwissKnife Name="swi_area_type">
+    <pVariable Name="S">CameraScanType</pVariable>
+    <Formula><![CDATA[(S<>2)?1:0]]></Formula>
+  </IntSwissKnife>
+
+  <IntSwissKnife Name="swi_uint_en">
+    <pVariable Name="S">AreaScanBufferUnitNum</pVariable>
+    <Formula><![CDATA[(S>0)?1:0]]></Formula>
+  </IntSwissKnife>
+
+  <IntSwissKnife Name="swi_scan_type2">
+    <pVariable Name="S">CameraScanType</pVariable>
+    <Formula><![CDATA[(S>0)?1:0]]></Formula>
+  </IntSwissKnife>
+
+  <Integer Name="LineScanBufferHeight">
+    <ToolTip>Height of the image output.</ToolTip>
+    <Description>Height of the image output.</Description>
+    <DisplayName>LineScanHeight</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <pIsAvailable>swi_scan_type</pIsAvailable>
+    <pIsLocked>TLParamsLocked</pIsLocked>
+    <ImposedAccessMode>RW</ImposedAccessMode>
+    <Streamable>Yes</Streamable>
+    <pValue>LineScanBufferHeightReg</pValue>
+    <Min>2</Min>
+    <Max>1000000</Max>
+    <Inc>2</Inc>
+  </Integer>
+  <IntReg Name="LineScanBufferHeightReg">
+    <pAddress>CxpConfBase</pAddress>
+    <Address>0x20</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Integer Name="AreaScanBufferUnitNum">
+    <ToolTip>AreaScanBuffer Unit Num.</ToolTip>
+    <Description>AreaScanBuffer Unit Num.</Description>
+    <DisplayName>AreaScanBuffer UnitNum</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <pIsAvailable>swi_area_type</pIsAvailable>
+    <pIsLocked>TLParamsLocked</pIsLocked>
+    <ImposedAccessMode>RW</ImposedAccessMode>
+    <Streamable>Yes</Streamable>
+    <pValue>AreaScanBufferUnitNumReg</pValue>
+    <Min>1</Min>
+    <Max>100000</Max>
+    <Inc>1</Inc>
+  </Integer>
+  <IntReg Name="AreaScanBufferUnitNumReg">
+    <pAddress>CxpConfBase</pAddress>
+    <Address>0x11</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Integer Name="AreaScanBufferHeight">
+    <ToolTip>AreaScanBuffer Height.</ToolTip>
+    <Description>AreaScanBuffer Height.</Description>
+    <DisplayName>AreaScanBuffer Height</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <pIsAvailable>swi_uint_en</pIsAvailable>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <Streamable>Yes</Streamable>
+    <pValue>AreaScanBufferHeightReg</pValue>
+    <Min>1</Min>
+    <Max>1000000</Max>
+    <Inc>1</Inc>
+  </Integer>
+  <IntReg Name="AreaScanBufferHeightReg">
+    <pAddress>CxpConfBase</pAddress>
+    <Address>0x12</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+ 
+  <!--DeviceGlobalSetting end-->
+  <Enumeration Name="TriggerType">
+    <ToolTip>Trigger Type</ToolTip>
+    <Description>Trigger Type.</Description>
+    <DisplayName>Trigger Type</DisplayName>
+    <EnumEntry Name="CxpTriggerBothEdge">
+      <ToolTip>CxpTriggerBoth Edge</ToolTip>
+      <Description>CxpTriggerBoth Edge.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="CxpTriggerRiseEdgeOnly">
+      <ToolTip>CxpTriggerRiseEdgeOnly</ToolTip>
+      <Description>CxpTriggerRiseEdgeOnly.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <EnumEntry Name="CxpTriggerFallEdgeOnly">
+      <ToolTip>CxpTriggerFallEdgeOnly</ToolTip>
+      <Description>CxpTriggerFallEdgeOnly.</Description>
+      <Value>2</Value>
+    </EnumEntry>
+    <pValue>TriggerTypeReg</pValue>
+  </Enumeration>
+  <IntReg Name="TriggerTypeReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x0B</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+<Enumeration Name="DeviceTriggerMode">
+    <ToolTip>Camera Control Method</ToolTip>
+    <Description>Camera Control Method.</Description>
+    <DisplayName>Camera Control Method</DisplayName>
+    <EnumEntry Name="Null">
+      <ToolTip>Not Controlled</ToolTip>
+      <Description>Not Controlled.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="Software">
+      <ToolTip>Software Grabber-controlled cycle start with pulse number and exposure time</ToolTip>
+      <Description>Software Grabber-controlled cycle start with pulse number and exposure time.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <EnumEntry Name="Hardware">
+      <ToolTip>Externally-controlled cycle start with pulse number and exposure time</ToolTip>
+      <Description>Externally-controlled cycle start with pulse number and exposure time.</Description>
+      <Value>2</Value>
+    </EnumEntry>
+  <EnumEntry Name="HardwareLevel">
+    <ToolTip>Externally-controlled cycle start with IO Level</ToolTip>
+    <Description>Externally-controlled cycle start with  IO Level.</Description>
+    <Value>3</Value>
+  </EnumEntry>
+    <EnumEntry Name="HardwareTrigger">
+      <ToolTip>Externally-controlled cycle start with pulse number and exposure time</ToolTip>
+      <Description>Externally-controlled cycle start with pulse number and exposure time.</Description>
+      <Value>4</Value>
+    </EnumEntry>
+    <pValue>node_487</pValue>
+</Enumeration>
+
+ <Float Name="DeviceExposureTime">
+<ToolTip>Exposure Time</ToolTip>
+<Description>Exposure Time.</Description>
+<DisplayName>Exposure Time</DisplayName>
+<pValue>node_489</pValue>
+<Min>0.5</Min>
+<Max>32000000</Max>
+</Float>
+
+<!--<Converter Name="FrameRate_Converter">
+<FormulaTo>1000000/FROM</FormulaTo>
+<FormulaFrom>1000000/TO</FormulaFrom>
+<pValue>node_device_2</pValue>
+<Slope>Varying</Slope>
+</Converter>-->
+
+  <!--<Integer Name="DeviceFrameRate">
+<ToolTip>Frame Rate</ToolTip>
+<Description>Frame Rate.</Description>
+<DisplayName>Frame Rate</DisplayName>
+<Visibility>Beginner</Visibility>
+<pValue>AcquisitionFrameRate_Converter</pValue>
+<Min>1</Min>
+<Max>100000</Max>
+<Unit>Hz</Unit>
+</Integer>-->
+
+  <!--<Converter Name="AcquisitionFrameRate_Converter">
+      <FormulaTo>1000000/FROM</FormulaTo>
+      <FormulaFrom>1000000/TO</FormulaFrom>
+      <pValue>node_488</pValue>
+      <Slope>Varying</Slope>
+</Converter>-->
+  
+<Float Name="DeviceFramePeriod">
+      <ToolTip>Controls the acquisition rate (in 1us steps) at which the frames are captured.</ToolTip>
+      <Description>Controls the acquisition rate (in 1us steps) at which the frames are captured.</Description>
+      <Visibility>Beginner</Visibility>
+      <pValue>AcquisitionFramePeriod_Converter</pValue>
+      <Min>1</Min>
+      <Max>32000000</Max>
+      <Inc>0.01</Inc>
+      <Unit>us</Unit>
+      <Representation>Linear</Representation>
+  </Float>
+
+  <Converter Name="AcquisitionFramePeriod_Converter">
+    <FormulaTo>FROM</FormulaTo>
+    <FormulaFrom>TO</FormulaFrom>
+    <pValue>node_488</pValue>
+    <Slope>Varying</Slope>
+  </Converter>
+
+  <Command Name="DeviceTriggerStart">
+    <ToolTip>Starts the trigger of the device.</ToolTip>
+    <Description>Starts gentl device timer.</Description>
+    <DisplayName>Device Trigger Start</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <pValue>DeviceTriggerStartReg</pValue>
+    <CommandValue>1</CommandValue>
+  </Command>
+  <IntReg Name="DeviceTriggerStartReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x05</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+  <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+<Integer Name="DevicePulseNumber">
+<ToolTip>Pulse NUmber</ToolTip>
+<Description>PulseNUmber</Description>
+<DisplayName>Pulse NUmber</DisplayName>
+<Visibility>Beginner</Visibility>
+<pValue>node_491</pValue>
+<Min>0</Min>
+<Max>2147483647</Max>
+</Integer>
+
+  <Command Name="DevicePulseClear">
+    <ToolTip>DevicePulseClear.</ToolTip>
+    <Description>DevicePulseClear.</Description>
+    <DisplayName>DevicePulseClear</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <pValue>DevicePulseClearReg</pValue>
+    <CommandValue>1</CommandValue>
+  </Command>
+  <IntReg Name="DevicePulseClearReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x09</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+
+  <Enumeration Name="CardioInMask">
+<ToolTip>io_mask</ToolTip>
+<Description>io_mask.</Description>
+<DisplayName>io_mask</DisplayName>
+<EnumEntry Name="NULL">
+  <ToolTip>NULL</ToolTip>
+  <Description>NULL.</Description>
+  <Value>0xFF</Value>
+</EnumEntry>
+<EnumEntry Name="IIN11">
+<ToolTip>IIN11</ToolTip>
+<Description>IIN11.</Description>
+<Value>0</Value>
+</EnumEntry>
+<EnumEntry Name="IIN12">
+<ToolTip>IIN12</ToolTip>
+<Description>IIN12.</Description>
+<Value>1</Value>
+</EnumEntry>
+<EnumEntry Name="IIN13">
+<ToolTip>IIN13</ToolTip>
+<Description>IIN13.</Description>
+<Value>2</Value>
+</EnumEntry>
+<EnumEntry Name="IIN14">
+<ToolTip>IIN14</ToolTip>
+<Description>IIN14.</Description>
+<Value>3</Value>
+</EnumEntry>
+<EnumEntry Name="EXT_IIN11">
+<ToolTip>EXT_IIN11</ToolTip>
+<Description>EXT_IIN11.</Description>
+<Value>4</Value>
+</EnumEntry>
+<EnumEntry Name="EXT_IIN12">
+<ToolTip>EXT_IIN12</ToolTip>
+<Description>EXT_IIN12.</Description>
+<Value>5</Value>
+</EnumEntry>
+<EnumEntry Name="EXT_IIN13">
+<ToolTip>EXT_IIN13</ToolTip>
+<Description>EXT_IIN13.</Description>
+<Value>6</Value>
+</EnumEntry>
+<EnumEntry Name="EXT_IIN14">
+<ToolTip>EXT_IIN14</ToolTip>
+<Description>EXT_IIN14.</Description>
+<Value>7</Value>
+</EnumEntry>
+<!--<EnumEntry Name="DIN11">
+<ToolTip>DIN11</ToolTip>
+<Description>DIN11.</Description>
+<Value>8</Value>
+</EnumEntry>
+<EnumEntry Name="DIN12">
+<ToolTip>DIN12</ToolTip>
+<Description>DIN12.</Description>
+<Value>9</Value>
+</EnumEntry>-->
+<EnumEntry Name="TTLIO11" >
+<ToolTip>TTLIO11</ToolTip>
+<Description>TTLIO11.</Description>
+<Value>10</Value>
+</EnumEntry>
+<EnumEntry Name="TTLIO12">
+<ToolTip>TTLIO12</ToolTip>
+<Description>TTLIO12.</Description>
+<Value>11</Value>
+</EnumEntry>
+
+<EnumEntry Name="ENCODER_IIN11_12">
+<ToolTip>ENCODER_IIN11/12</ToolTip>
+<Description>ENCODER_IIN11+ENCODER_IIN12</Description>
+<Value>0x80010000</Value>
+</EnumEntry>
+<EnumEntry Name="ENCODER_IIN13_14">
+<ToolTip>ENCODER_IIN13/14</ToolTip>
+<Description>ENCODER_IIN13+ENCODER_IIN14.</Description>
+<Value>0x80020000</Value>
+</EnumEntry>
+<EnumEntry Name="ENCODER_EXT_IIN11_12">
+<ToolTip>ENCODER_EXT_IIN11/12</ToolTip>
+<Description>ENCODER_EXT_IIN11+ENCODER_EXT_IIN12.</Description>
+<Value>0x80040000</Value>
+</EnumEntry>
+<EnumEntry Name="ENCODER_EXT_IIN13_14">
+<ToolTip>ENCODER_EXT_IIN13/14</ToolTip>
+<Description>ENCODER_EXT_IIN13+ENCODER_EXT_IIN14.</Description>
+<Value>0x80080000</Value>
+</EnumEntry>
+<EnumEntry Name="ENCODER_TTLIO11_12">
+  <ToolTip>ENCODER TTLIO11/12</ToolTip>
+  <Description>TTLIO11+12.</Description>
+  <Value>0x80200000</Value>
+</EnumEntry>
+<pValue>node_490</pValue>
+</Enumeration>
+
+<Enumeration Name="CardioOutMask">
+    <ToolTip>choise cardio out mode</ToolTip>
+    <Description>choise cardio out mode.</Description>
+    <DisplayName>Cardio_Out_Mode</DisplayName>
+    <EnumEntry Name="NULL">
+      <ToolTip>NULL</ToolTip>
+      <Description>NULL.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="IOUT11">
+      <ToolTip>IOUT11</ToolTip>
+      <Description>IOUT11.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <EnumEntry Name="IOUT12">
+      <ToolTip>IOUT12</ToolTip>
+      <Description>IOUT12.</Description>
+      <Value>2</Value>
+    </EnumEntry>
+    <EnumEntry Name="IOUT11_IOUT12">
+      <ToolTip>IOUT11 and IOUT12</ToolTip>
+      <Description>IOUT11 and IOUT12.</Description>
+      <Value>3</Value>
+    </EnumEntry>
+    <EnumEntry Name="TTLIO11">
+      <ToolTip>TTL1_OUT</ToolTip>
+      <Description>TTL1_OUT.</Description>
+      <Value>4</Value>
+    </EnumEntry>
+    <EnumEntry Name="TTLIO12">
+      <ToolTip>TTL2_OUT</ToolTip>
+      <Description>TTL2_OUT.</Description>
+      <Value>8</Value>
+    </EnumEntry>
+    <EnumEntry Name="TTLIO11_TTLIO12">
+      <ToolTip>TTL1_OUT and TTL2_OUT</ToolTip>
+      <Description>TTL1_OUT and TTL2_OUT.</Description>
+      <Value>12</Value>
+    </EnumEntry>
+    <EnumEntry Name="ALL">
+      <ToolTip>IOUT11 + IOUT12 + TTL1_OUT + TTL2_OUT</ToolTip>
+      <Description>IOUT11 + IOUT12 + TTL1_OUT + TTL2_OUT.</Description>
+      <Value>15</Value>
+    </EnumEntry>
+    <pValue>CardioOutMaskReg</pValue>
+  </Enumeration>
+
+  <Enumeration Name="CardioOutMaskOpen">
+    <ToolTip>io_mask</ToolTip>
+    <Description>io_mask.</Description>
+    <DisplayName>io_mask</DisplayName>
+    <EnumEntry Name="NULL">
+      <ToolTip>NULL</ToolTip>
+      <Description>NULL.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="TTLIO11">
+      <ToolTip>TTL1</ToolTip>
+      <Description>TTL1.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <EnumEntry Name="TTLIO12">
+      <ToolTip>TTL2</ToolTip>
+      <Description>TTL2.</Description>
+      <Value>2</Value>
+    </EnumEntry>
+    <EnumEntry Name="TTLIO11_TTLIO12">
+      <ToolTip>TTL1 and TTL2</ToolTip>
+      <Description>TTL1 and TTL2.</Description>
+      <Value>3</Value>
+    </EnumEntry>
+    <EnumEntry Name="AllOutWithValue">
+      <ToolTip>TTL1 and TTL2 With Value</ToolTip>
+      <Description>TTL1 and TTL2 With Value.</Description>
+      <Value>0x80000003</Value>
+    </EnumEntry>
+    <pValue>CardioOutMaskOpenReg</pValue>
+  </Enumeration>
+
+  <IntReg Name="CardioOutMaskOpenReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x20</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Enumeration Name="TTL2_1_OutValue">
+    <ToolTip>Cardio Out Mode</ToolTip>
+    <Description>Cardio Out Mode.</Description>
+    <DisplayName>Cardio Out Mode</DisplayName>
+    <EnumEntry Name="LowLow">
+      <ToolTip>NULL</ToolTip>
+      <Description>NULL.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="LowHigh">
+      <ToolTip>TTL1</ToolTip>
+      <Description>TTL1.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <EnumEntry Name="HighLow">
+      <ToolTip>TTL2</ToolTip>
+      <Description>TTL2.</Description>
+      <Value>2</Value>
+    </EnumEntry>
+    <EnumEntry Name="HighHigh">
+      <ToolTip>TTL1 and TTL2</ToolTip>
+      <Description>TTL1 and TTL2.</Description>
+      <Value>3</Value>
+    </EnumEntry>
+    <pValue>TTL2_1_OutValueReg</pValue>
+  </Enumeration>
+
+  <IntReg Name="TTL2_1_OutValueReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x21</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Enumeration Name="CardioOutMode">
+    <ToolTip>Cardio Out Mode</ToolTip>
+    <Description>Cardio Out Mode.</Description>
+    <DisplayName>Cardio Out Mode</DisplayName>
+    <EnumEntry Name="Software_trigger_out">
+      <ToolTip>Software</ToolTip>
+      <Description>Software.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="Hardware_trigger_out">
+      <ToolTip>Hardware</ToolTip>
+      <Description>Hardware.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <EnumEntry Name="Rotary_decoder_out">
+      <ToolTip>Rotary_decoder_out</ToolTip>
+      <Description>Rotary_decoder_out.</Description>
+      <Value>3</Value>
+    </EnumEntry>
+    <EnumEntry Name="Camera_trigger">
+      <ToolTip>Camera_trigger</ToolTip>
+      <Description>Camera_trigger.</Description>
+      <Value>4</Value>
+    </EnumEntry>
+    <EnumEntry Name="Grabber_in">
+      <ToolTip>Grabber_in</ToolTip>
+      <Description>Grabber_in.</Description>
+      <Value>5</Value>
+    </EnumEntry>
+    <EnumEntry Name="Software_trigger_start">
+      <ToolTip>Software_trigger_start</ToolTip>
+      <Description>Software_trigger_start.</Description>
+      <Value>6</Value>
+    </EnumEntry>
+    <pValue>CardioOutModeReg</pValue>
+  </Enumeration>
+  
+  <Float Name="CardioGlitchTime">
+      <ToolTip>use glitch time</ToolTip>
+      <Description>use glitch time.</Description>
+      <Visibility>Beginner</Visibility>
+      <pValue>CardioGlitchTimeReg</pValue>
+      <Min>0</Min>
+      <Max>10000</Max>
+      <Unit>us</Unit>
+  </Float>
+  
+  <Enumeration Name="SoftioTriggerReverse">
+    <ToolTip>Softwate trigger reverse</ToolTip>
+    <Description>Softwate trigger reverse.</Description>
+    <DisplayName>Softwate trigger reverse</DisplayName>
+    <EnumEntry Name="OFF">
+      <ToolTip>off reverse</ToolTip>
+      <Description>off.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="ON">
+      <ToolTip>on reverse</ToolTip>
+      <Description>on.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <pValue>SoftioTriggerReverseReg</pValue>
+  </Enumeration>
+  
+   <Enumeration Name="HardioTriggerReverse">
+    <ToolTip>Hardware trigger reverse</ToolTip>
+    <Description>Hardware trigger reverse.</Description>
+    <DisplayName>Hardware trigger reverse</DisplayName>
+    <EnumEntry Name="OFF">
+      <ToolTip>off reverse</ToolTip>
+      <Description>off.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="ON">
+      <ToolTip>on reverse</ToolTip>
+      <Description>on.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <pValue>HardioTriggerReverseReg</pValue>
+  </Enumeration>
+
+  <Enumeration Name="CardioOutReverse">
+    <ToolTip>Cardio Out Reverse</ToolTip>
+    <Description>Cardio Out Reverse.</Description>
+    <DisplayName>Cardio Out Reverse</DisplayName>
+    <EnumEntry Name="OFF">
+      <ToolTip>off reverse</ToolTip>
+      <Description>off.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="ON">
+      <ToolTip>on reverse</ToolTip>
+      <Description>on.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <pValue>CardioOutReverseReg</pValue>
+  </Enumeration>
+
+  <Float Name="SoftioTriggerDelay">
+    <ToolTip>Softio Trigger Delay</ToolTip>
+    <Description>Soft io Trigger Delay.</Description>
+    <Visibility>Beginner</Visibility>
+    <pValue>SoftioTriggerDelayReg</pValue>
+    <Min>0</Min>
+    <Max>1000000</Max>
+    <Unit>us</Unit>
+  </Float>
+
+  <Float Name="HardioTriggerDelay">
+    <ToolTip>Hardio Trigger Delay</ToolTip>
+    <Description>Hard io Trigger Delay.</Description>
+    <Visibility>Beginner</Visibility>
+    <pValue>HardioTriggerDelayReg</pValue>
+    <Min>0</Min>
+    <Max>1000000</Max>
+    <Unit>us</Unit>
+  </Float>
+
+  <Float Name="CardioOutDelay">
+    <ToolTip>Cardio Out Delay</ToolTip>
+    <Description>Cardio Out Delay.</Description>
+    <Visibility>Beginner</Visibility>
+    <pValue>CardioOutDelayReg</pValue>
+    <Min>0</Min>
+    <Max>1000000</Max>
+    <Unit>us</Unit>
+  </Float>
+
+  <Integer Name="LineScanHeight">
+    <ToolTip>Height of the image output.</ToolTip>
+    <Description>Height of the image output.</Description>
+    <DisplayName>LineScanHeight</DisplayName>
+    <Visibility>Beginner</Visibility>   
+    <pIsAvailable>Region0Avail</pIsAvailable>
+    <pIsLocked>swi_scan_type</pIsLocked>
+    <ImposedAccessMode>RW</ImposedAccessMode>   
+    <Streamable>Yes</Streamable>    
+    <pValue>LineScanHeightReg</pValue>
+    <Min>2</Min>
+    <Max>1000000</Max>
+    <Inc>2</Inc>
+  </Integer>
+
+  <IntReg Name="LineScanHeightReg">
+    <Address>0x20000000</Address>
+    <Address>0x05</Address>
+    <Length>4</Length>   
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <IntSwissKnife Name="Region0Avail">
+    <pVariable Name="ROI_COUNT">IspSwitchReg</pVariable>
+    <Formula><![CDATA[(ROI_COUNT>0) && (ROI_COUNT<2)]]></Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="Region1Avail">
+    <pVariable Name="ROI_COUNT">IspSwitchReg</pVariable>
+    <Formula><![CDATA[ ROI_COUNT > 0 ? 1 : 0 ]]></Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="Region2Avail">
+    <pVariable Name="ROI_COUNT">IspSwitchReg</pVariable>
+    <Formula><![CDATA[ ROI_COUNT > 1 ? 1 : 0 ]]></Formula>
+  </IntSwissKnife>
+ 
+  <Enumeration Name="IspSwitch">
+    <ToolTip>Isp Function Mode</ToolTip>
+    <Description>Isp Function Mode.</Description>
+    <DisplayName>Isp Function Mode</DisplayName>
+    <pIsLocked>swi_scan_type</pIsLocked>
+    <EnumEntry Name="NULL">
+      <ToolTip>NULL mode</ToolTip>
+      <Description>NULL.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="LineScanFunc">
+      <ToolTip>LineScanFunc mode</ToolTip>
+      <Description>LineScanFunc.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <pValue>IspSwitchReg</pValue>
+  </Enumeration>
+  <IntReg Name="IspSwitchReg">
+    <Address>0x20000000</Address>
+    <Address>0x04</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <!-- LineFlush -->
+  <Enumeration Name="LineFlushMode">
+    <ToolTip>Line Flush Mode</ToolTip>
+    <Description>Line Flush Mode.</Description>
+    <DisplayName>Line Flush Mode</DisplayName>
+    <pIsAvailable>swi_scan_type</pIsAvailable>
+    <EnumEntry Name="SoftFlush">
+      <ToolTip>SoftFlushSend</ToolTip>
+      <Description>SoftFlushSend.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="HardInFallingFlush">
+      <ToolTip>HardIO Flush Fall</ToolTip>
+      <Description>HardIO Flush Fall.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <pValue>LineFlushModeReg</pValue>
+  </Enumeration>
+  <IntReg Name="LineFlushModeReg">
+    <pAddress>OffsetDataStream</pAddress>
+    <Address>0x61</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  
+  <Command Name="SoftFlushSend">
+  <ToolTip>Soft Flush Send.</ToolTip>
+  <Description>Soft Flush Send.</Description>
+  <DisplayName>Soft Flush Send</DisplayName>
+  <Visibility>Beginner</Visibility>
+  <pIsAvailable>swi_scan_type</pIsAvailable>
+  <pValue>SoftFlushSendReg</pValue>
+  <CommandValue>1</CommandValue>
+</Command>
+<IntReg Name="SoftFlushSendReg">
+  <pAddress>OffsetDataStream</pAddress>
+  <Address>0x62</Address>
+  <Length>4</Length>
+  <AccessMode>WO</AccessMode>
+  <pPort>InterfacePort</pPort>
+  <Cachable>NoCache</Cachable>
+  <pInvalidator>DevUserSetLoadReg</pInvalidator>
+  <Sign>Unsigned</Sign>
+  <Endianess>LittleEndian</Endianess>
+</IntReg>
+  
+  <Integer Name="LineFillCount">
+    <ToolTip>Line FillCount</ToolTip>
+    <Description>Line FillCount.</Description>
+    <DisplayName>Line FillCount</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>LineFillCountReg</pValue>
+    <Min>0</Min>
+    <Max>2147483647</Max>
+  </Integer>
+  <IntReg Name="LineFillCountReg">
+    <pAddress>OffsetDataStream</pAddress>
+    <Address>0x63</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  
+  <Integer Name="LineLostCount">
+    <ToolTip>Line FillCount</ToolTip>
+    <Description>Line FillCount.</Description>
+    <DisplayName>Line FillCount</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>LineLostCountReg</pValue>
+    <Min>0</Min>
+    <Max>2147483647</Max>
+  </Integer>
+  <IntReg Name="LineLostCountReg">
+    <pAddress>OffsetDataStream</pAddress>
+    <Address>0x64</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+    
+      
+<Enumeration Name="FlushInMask">
+<ToolTip>Flush in_mask</ToolTip>
+<Description>Flush in_mask.</Description>
+<DisplayName>FlushInMask</DisplayName>
+<pIsAvailable>swi_scan_type</pIsAvailable>
+<EnumEntry Name="NULL">
+  <ToolTip>NULL</ToolTip>
+  <Description>NULL.</Description>
+  <Value>0x0000</Value>
+</EnumEntry>
+<EnumEntry Name="IIN11">
+<ToolTip>IIN11</ToolTip>
+<Description>IIN11.</Description>
+<Value>0x0001</Value>
+</EnumEntry>
+<EnumEntry Name="IIN12">
+<ToolTip>IIN12</ToolTip>
+<Description>IIN12.</Description>
+<Value>0x0002</Value>
+</EnumEntry>
+<EnumEntry Name="IIN13">
+<ToolTip>IIN13</ToolTip>
+<Description>IIN13.</Description>
+<Value>0x0004</Value>
+</EnumEntry>
+<EnumEntry Name="IIN14">
+<ToolTip>IIN14</ToolTip>
+<Description>IIN14.</Description>
+<Value>0x0008</Value>
+</EnumEntry>
+<EnumEntry Name="EXT_IIN11">
+<ToolTip>EXT_IIN11</ToolTip>
+<Description>EXT_IIN11.</Description>
+<Value>0x0010</Value>
+</EnumEntry>
+<EnumEntry Name="EXT_IIN12">
+<ToolTip>EXT_IIN12</ToolTip>
+<Description>EXT_IIN12.</Description>
+<Value>0x0020</Value>
+</EnumEntry>
+<EnumEntry Name="EXT_IIN13">
+<ToolTip>EXT_IIN13</ToolTip>
+<Description>EXT_IIN13.</Description>
+<Value>0x0040</Value>
+</EnumEntry>
+<EnumEntry Name="EXT_IIN14">
+<ToolTip>EXT_IIN14</ToolTip>
+<Description>EXT_IIN14.</Description>
+<Value>0x0080</Value>
+</EnumEntry>
+<!--<EnumEntry Name="DIN11">
+<ToolTip>DIN11</ToolTip>
+<Description>DIN11.</Description>
+<Value>0x0100</Value>
+</EnumEntry>
+<EnumEntry Name="DIN12">
+<ToolTip>DIN12</ToolTip>
+<Description>DIN12.</Description>
+<Value>0x0200</Value>
+</EnumEntry>-->
+<EnumEntry Name="TTLIO11" >
+<ToolTip>TTLIO11</ToolTip>
+<Description>TTLIO11.</Description>
+<Value>0x0400</Value>
+</EnumEntry>
+<EnumEntry Name="TTLIO12">
+<ToolTip>TTLIO12</ToolTip>
+<Description>TTLIO12.</Description>
+<Value>0x0800</Value>
+</EnumEntry>
+<pValue>FlushInMaskReg</pValue>
+</Enumeration>
+
+<IntReg Name="FlushInMaskReg">
+  <pAddress>OffsetIoTrigger</pAddress>
+  <Address>0x90</Address>
+  <Length>4</Length>
+  <AccessMode>RW</AccessMode>
+  <pPort>InterfacePort</pPort>
+  <Cachable>NoCache</Cachable>
+  <pInvalidator>DevUserSetLoadReg</pInvalidator>
+  <Sign>Unsigned</Sign>
+  <Endianess>LittleEndian</Endianess>
+</IntReg>
+
+<Enumeration Name="FlushInReverse">
+    <ToolTip>Flush In Reverse</ToolTip>
+    <Description>Flush In Reverse.</Description>
+    <DisplayName>Flush In Reverse</DisplayName>
+    <pIsAvailable>swi_scan_type</pIsAvailable>
+    <EnumEntry Name="OFF">
+      <ToolTip>off reverse</ToolTip>
+      <Description>off.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="ON">
+      <ToolTip>on reverse</ToolTip>
+      <Description>on.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <pValue>FlushInReverseReg</pValue>
+  </Enumeration>
+
+<IntReg Name="FlushInReverseReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x91</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Float Name="FlushInGlitchTime">
+      <ToolTip>use glitch time</ToolTip>
+      <Description>use glitch time.</Description>
+      <Visibility>Beginner</Visibility>
+    <pIsAvailable>swi_scan_type</pIsAvailable>
+      <pValue>CovrFlushInGlitchReg</pValue>
+      <Min>0</Min>
+      <Max>10000</Max>
+      <Unit>us</Unit>
+  </Float>
+
+  <Converter Name="CovrFlushInGlitchReg">
+      <FormulaTo>FROM*125</FormulaTo>
+      <FormulaFrom>TO/125</FormulaFrom>
+      <pValue>FlushInGlitchReg</pValue>
+      <Slope>Varying</Slope>
+  </Converter>
+  
+  <IntReg Name="FlushInGlitchReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x92</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <!-- LineFlush end-->
+
+
+  <Boolean Name="IspBayerEnable">
+    <ToolTip>Enable the edge enhancer.</ToolTip>
+    <Description>Enable the edge enhancer.</Description>
+    <DisplayName>Edge Enhancer Enable</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <Streamable>Yes</Streamable>
+    <pValue>pIspBayerEnableReg</pValue>
+  </Boolean>
+  <IntReg Name="pIspBayerEnableReg">
+    <Address>0x2080</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Enumeration Name="IspOutputFormat">
+    <ToolTip>Camera Control Method</ToolTip>
+    <Description>Camera Control Method.</Description>
+    <DisplayName>Camera Control Method</DisplayName>
+    <EnumEntry Name="BGR">
+      <ToolTip>Not Controlled</ToolTip>
+      <Description>Not Controlled.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="RGB">
+      <ToolTip>Software Grabber-controlled cycle start with pulse number and exposure time</ToolTip>
+      <Description>Software Grabber-controlled cycle start with pulse number and exposure time.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <pValue>pIspOutputFormatReg</pValue>
+  </Enumeration>
+
+  <IntReg Name="pIspOutputFormatReg">
+    <Address>0x2081</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+	<pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+
+  <StringReg Name="node_device_1">
+    <Address>0x3e0001ffff0001</Address>
+    <pLength>node_device_2</pLength>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+  </StringReg>
+  <IntReg Name="node_device_2">
+    <Address>0x3e0001ffff0001</Address>
+    <Address>0x80</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <StringReg Name="node_device_3">
+    <Address>0x3e0002ffff0001</Address>
+    <pLength>node_device_4</pLength>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+  </StringReg>
+  <IntReg Name="node_device_4">
+    <Address>0x3e0002ffff0001</Address>
+    <Address>0x80</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <StringReg Name="node_device_5">
+    <Address>0x3e0003ffff0001</Address>
+    <pLength>node_device_6</pLength>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+  </StringReg>
+  <IntReg Name="node_device_6">
+    <Address>0x3e0003ffff0001</Address>
+    <Address>0x80</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <IntReg Name="node_device_7">
+    <Address>0x3e0004ffff0001</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Signed</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <StringReg Name="node_device_8">
+    <Address>0x3e0005ffff0001</Address>
+    <pLength>node_device_9</pLength>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+  </StringReg>
+  <IntReg Name="node_device_9">
+    <Address>0x3e0005ffff0001</Address>
+    <Address>0x80</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <IntReg Name="node_device_10">
+    <Address>0x3e0006ffff0001</Address>
+    <Length>1</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <IntReg Name="node_device_11">
+    <Address>0x3e0007ffff0001</Address>
+    <Length>2</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Signed</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <IntSwissKnife Name="node_device_12">
+    <pVariable Name="C">node_device_11</pVariable>
+    <Formula>C-1</Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="node_device_13">
+    <pVariable Name="S">StreamSelector</pVariable>
+    <Formula><![CDATA[(S<<12)]]></Formula>
+  </IntSwissKnife>
+  <StringReg Name="node_device_14">
+    <Address>0x3e0008ffff0001</Address>
+    <pAddress>node_device_13</pAddress>
+    <pLength>node_device_15</pLength>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+  </StringReg>
+  <IntReg Name="node_device_15">
+    <Address>0x3e0008ffff0001</Address>
+    <pAddress>node_device_13</pAddress>
+    <Address>0x80</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <IntReg Name="node_487">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x00</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+  <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <FloatReg Name="node_488">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x03</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+   <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Endianess>LittleEndian</Endianess>
+  </FloatReg>
+
+  <FloatReg Name="node_489">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x02</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+  <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Endianess>LittleEndian</Endianess>
+  </FloatReg>
+
+  <IntReg Name="node_490">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x10</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+  <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <IntReg Name="node_491">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x04</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+  <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+
+
+  <IntReg Name="CardioOutMaskReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x54</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <IntReg Name="CardioOutModeReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x11</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <FloatReg Name="CardioGlitchTimeReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x40</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Endianess>LittleEndian</Endianess>
+  </FloatReg>
+
+  <IntReg Name="SoftioTriggerReverseReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x01</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <IntReg Name="HardioTriggerReverseReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x08</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <IntReg Name="CardioOutReverseReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x53</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <FloatReg Name="SoftioTriggerDelayReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x50</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Endianess>LittleEndian</Endianess>
+  </FloatReg>
+
+  <FloatReg Name="HardioTriggerDelayReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x51</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Endianess>LittleEndian</Endianess>
+  </FloatReg>
+
+  <FloatReg Name="CardioOutDelayReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x52</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Endianess>LittleEndian</Endianess>
+  </FloatReg>
+
+
+
+  <Integer Name="TriggerSend">
+    <ToolTip>trigger send num</ToolTip>
+    <Description>trigger send num.</Description>
+    <DisplayName>TriggerSend</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>TriggerSendReg</pValue>
+    <Min>0</Min>
+    <Max>2147483647</Max>
+  </Integer>
+
+  <IntReg Name="TriggerSendReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x30</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Integer Name="TriggerAck">
+    <ToolTip>trigger ack num</ToolTip>
+    <Description>trigger ack num.</Description>
+    <DisplayName>TriggerAck</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>TriggerAckReg</pValue>
+    <Min>0</Min>
+    <Max>2147483647</Max>
+  </Integer>
+
+  <IntReg Name="TriggerAckReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x31</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Integer Name="PcieLevel">
+    <ToolTip>Pcie Level</ToolTip>
+    <Description>Pcie Level.</Description>
+    <DisplayName>Pcie Level</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>PcieLevelReg</pValue>
+    <Min>0</Min>
+    <Max>100</Max>
+  </Integer>
+
+  <IntReg Name="PcieLevelReg">
+    <Address>0x3e0009ffff0001</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  
+  <Boolean Name="CxpOnline">
+	<ToolTip>CxpOnline.</ToolTip>
+	<Description>CxpOnline.</Description>
+	<DisplayName>CxpOnline</DisplayName>
+	<Visibility>Beginner</Visibility>
+	<ImposedAccessMode>RO</ImposedAccessMode>
+	<pValue>CxpOnlineReg</pValue>
+  </Boolean>
+  <IntReg Name="CxpOnlineReg">
+	<pAddress>CxpConfBase</pAddress>
+	<Address>0x30</Address>
+	<Length>4</Length>
+	<AccessMode>RO</AccessMode>
+	<pPort>InterfacePort</pPort>
+	<Cachable>NoCache</Cachable>
+	<Sign>Unsigned</Sign>
+	<Endianess>LittleEndian</Endianess>
+  </IntReg>
+  
+  <Integer Name="FrameCapture">
+    <ToolTip>Frame Capture</ToolTip>
+    <Description>Frame Capture.</Description>
+    <DisplayName>Frame Capture</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>FrameCaptureReg</pValue>
+    <Min>0</Min>
+    <Max>10000000000000000</Max>
+  </Integer>
+
+  <IntReg Name="FrameCaptureReg">
+    <pAddress>CxpConfBase</pAddress>
+    <Address>0x110</Address>
+    <Length>8</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Integer Name="FrameAbandon">
+    <ToolTip>Frame Abandon</ToolTip>
+    <Description>Frame Abandon.</Description>
+    <DisplayName>Frame Abandon</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>FrameAbandonReg</pValue>
+    <Min>0</Min>
+    <Max>2147483647</Max>
+  </Integer>
+
+  <IntReg Name="FrameAbandonReg">
+    <pAddress>OffsetDataStream</pAddress>
+    <Address>0x20</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Integer Name="CameraFPS">
+    <ToolTip>Frame Abandon</ToolTip>
+    <Description>Frame Abandon.</Description>
+    <DisplayName>Frame Abandon</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>CameraFPSReg</pValue>
+    <Min>0</Min>
+    <Max>2147483647</Max>
+  </Integer>
+
+  <IntReg Name="CameraFPSReg">
+    <pAddress>OffsetDataStream</pAddress>
+    <Address>0x21</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <!--<Boolean Name="FRGrabberLineModeEn">
+    <ToolTip>Enable the Line grabber .</ToolTip>
+    <Description>Enable the Line grabber.</Description>
+    <DisplayName>Line grabber Enable</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <Streamable>Yes</Streamable>
+    <pValue>pIspBayerEnableReg</pValue>
+  </Boolean>-->
+  
+  <IntSwissKnife Name="FRGrabberLocked">
+      <pVariable Name="FRLOCK">node_487</pVariable>
+      <Formula><![CDATA[ (FRLOCK<0) || (FRLOCK>1) ]]>
+      </Formula>
+    </IntSwissKnife>
+  <IntSwissKnife Name="FRModeLocked">
+      <pVariable Name="FRMODELOCK">GrabberModeReg</pVariable>
+      <Formula><![CDATA[ (FRMODELOCK>=0) && (FRMODELOCK<2) ]]>
+      </Formula>
+    </IntSwissKnife>
+  
+  
+  
+
+  <Enumeration Name="FRGrabberLineModeEn">
+    <ToolTip>Isp Function Mode</ToolTip>
+    <Description>Isp Function Mode.</Description>
+    <DisplayName>Isp Function Mode</DisplayName>
+    <pIsLocked>swi_scan_type2</pIsLocked>
+    <EnumEntry Name="FALSE">
+      <ToolTip>NULL mode</ToolTip>
+      <Description>NULL.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="TRUE">
+      <ToolTip>LineScanFunc mode</ToolTip>
+      <Description>LineScanFunc.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <pValue>GrabberLineModeEnReg</pValue>
+  </Enumeration>
+  
+  <IntReg Name="GrabberLineModeEnReg">
+    <pAddress>OffsetDataStream</pAddress>
+    <Address>0x16</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>  
+  
+  <Enumeration Name="OutputBridgeMode">
+    <ToolTip>OutputBridgeMode</ToolTip>
+    <Description>OutputBridgeMode.</Description>
+    <DisplayName>OutputBridgeMode</DisplayName>
+    <EnumEntry Name="Bypass">
+      <ToolTip>Bypass</ToolTip>
+      <Description>Bypass.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="FixTime">
+      <ToolTip>FixTime</ToolTip>
+      <Description>FixTime.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <EnumEntry Name="ExtendTime">
+      <ToolTip>ExtendTime</ToolTip>
+      <Description>ExtendTime.</Description>
+      <Value>2</Value>
+    </EnumEntry>
+    <pValue>OutputBridgeModeReg</pValue>
+  </Enumeration>
+  <IntReg Name="OutputBridgeModeReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x55</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Float Name="OutputBridgeFixedTime">
+    <ToolTip>OutputBridge FixedTime</ToolTip>
+    <Description>OutputBridge FixedTime.</Description>
+    <DisplayName>OutputBridge FixedTime</DisplayName>
+    <pValue>OutputBridgeFixedTimeSwitch</pValue>
+    <Min>0</Min>
+    <Max>100000</Max>
+    <Unit>us</Unit>
+  </Float>
+  <Converter Name="OutputBridgeFixedTimeSwitch">
+    <pVariable Name="BASE">SwitchBase</pVariable>
+    <FormulaTo>(FROM/BASE)*1000</FormulaTo>
+    <FormulaFrom>(TO/1000)*BASE</FormulaFrom>
+    <pValue>OutputBridgeFixedTimeReg</pValue>
+    <Slope>Varying</Slope>
+  </Converter>
+  <IntReg Name="OutputBridgeFixedTimeReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x56</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Float Name="OutputBridgeExtendTime">
+    <ToolTip>OutputBridgeExtendTime</ToolTip>
+    <Description>OutputBridgeExtendTime.</Description>
+    <DisplayName>OutputBridgeExtendTime</DisplayName>
+    <pValue>OutputBridgeExtendTimeSwitch</pValue>
+    <Min>0</Min>
+    <Max>100000</Max>
+    <Unit>us</Unit>
+  </Float>
+  <Converter Name="OutputBridgeExtendTimeSwitch">
+    <pVariable Name="BASE">SwitchBase</pVariable>
+    <FormulaTo>(FROM/BASE)*1000</FormulaTo>
+    <FormulaFrom>(TO/1000)*BASE</FormulaFrom>
+    <pValue>OutputBridgeExtendTimeReg</pValue>
+    <Slope>Varying</Slope>
+  </Converter>
+  <IntReg Name="OutputBridgeExtendTimeReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x57</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Enumeration Name="FRGrabberMode">
+    <ToolTip>Isp Function Mode</ToolTip>
+    <Description>Isp Function Mode.</Description>
+    <DisplayName>Isp Function Mode</DisplayName>
+    <!-- <pIsLocked>FRGrabberLocked</pIsLocked>-->
+    <EnumEntry Name="Continue">
+      <ToolTip>NULL mode</ToolTip>
+      <Description>NULL.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="Stopped">
+      <ToolTip>LineScanFunc mode</ToolTip>
+      <Description>LineScanFunc.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <EnumEntry Name="IO_Level">
+      <ToolTip>LineScanFunc mode</ToolTip>
+      <Description>LineScanFunc.</Description>
+      <Value>2</Value>
+    </EnumEntry>
+    <EnumEntry Name="Soft_Trigger">
+      <ToolTip>LineScanFunc mode</ToolTip>
+      <Description>LineScanFunc.</Description>
+      <Value>3</Value>
+    </EnumEntry>
+    <EnumEntry Name="Hard_Trigger">
+      <ToolTip>LineScanFunc mode</ToolTip>
+      <Description>LineScanFunc.</Description>
+      <Value>4</Value>
+    </EnumEntry>
+    <pValue>GrabberModeReg</pValue>
+  </Enumeration>
+  <IntReg Name="GrabberModeReg">
+    <pAddress>OffsetDataStream</pAddress>
+    <Address>0x17</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Integer Name="FRGrabberUnitNum">
+    <ToolTip>Frame Abandon</ToolTip>
+    <Description>Frame Abandon.</Description>
+    <DisplayName>Frame Abandon</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <!-- <pIsLocked>FRGrabberLocked</pIsLocked>-->
+    <pIsLocked>FRModeLocked</pIsLocked>
+    <ImposedAccessMode>RW</ImposedAccessMode>
+    <pValue>GrabberFrameNumReg</pValue>
+    <Min>0</Min>
+    <Max>2147483647</Max>
+  </Integer>
+
+  <IntReg Name="GrabberFrameNumReg">
+    <pAddress>OffsetDataStream</pAddress>
+    <Address>0x1A</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+<Enumeration Name="FRGrabberInMask">
+<ToolTip>FRGrabber in_mask</ToolTip>
+<Description>FRGrabber in_mask.</Description>
+<DisplayName>FRGrabberInMask</DisplayName>
+<EnumEntry Name="NULL">
+  <ToolTip>NULL</ToolTip>
+  <Description>NULL.</Description>
+  <Value>0x0000</Value>
+</EnumEntry>
+<EnumEntry Name="IIN11">
+<ToolTip>IIN11</ToolTip>
+<Description>IIN11.</Description>
+<Value>0x0001</Value>
+</EnumEntry>
+<EnumEntry Name="IIN12">
+<ToolTip>IIN12</ToolTip>
+<Description>IIN12.</Description>
+<Value>0x0002</Value>
+</EnumEntry>
+<EnumEntry Name="IIN13">
+<ToolTip>IIN13</ToolTip>
+<Description>IIN13.</Description>
+<Value>0x0004</Value>
+</EnumEntry>
+<EnumEntry Name="IIN14">
+<ToolTip>IIN14</ToolTip>
+<Description>IIN14.</Description>
+<Value>0x0008</Value>
+</EnumEntry>
+<EnumEntry Name="EXT_IIN11">
+<ToolTip>EXT_IIN11</ToolTip>
+<Description>EXT_IIN11.</Description>
+<Value>0x0010</Value>
+</EnumEntry>
+<EnumEntry Name="EXT_IIN12">
+<ToolTip>EXT_IIN12</ToolTip>
+<Description>EXT_IIN12.</Description>
+<Value>0x0020</Value>
+</EnumEntry>
+<EnumEntry Name="EXT_IIN13">
+<ToolTip>EXT_IIN13</ToolTip>
+<Description>EXT_IIN13.</Description>
+<Value>0x0040</Value>
+</EnumEntry>
+<EnumEntry Name="EXT_IIN14">
+<ToolTip>EXT_IIN14</ToolTip>
+<Description>EXT_IIN14.</Description>
+<Value>0x0080</Value>
+</EnumEntry>
+<!--<EnumEntry Name="DIN11">
+<ToolTip>DIN11</ToolTip>
+<Description>DIN11.</Description>
+<Value>0x0100</Value>
+</EnumEntry>
+<EnumEntry Name="DIN12">
+<ToolTip>DIN12</ToolTip>
+<Description>DIN12.</Description>
+<Value>0x0200</Value>
+</EnumEntry>-->
+<EnumEntry Name="TTLIO11" >
+<ToolTip>TTLIO11</ToolTip>
+<Description>TTLIO11.</Description>
+<Value>0x0400</Value>
+</EnumEntry>
+<EnumEntry Name="TTLIO12">
+<ToolTip>TTLIO12</ToolTip>
+<Description>TTLIO12.</Description>
+<Value>0x0800</Value>
+</EnumEntry>
+<pValue>FRGrabberInMaskReg</pValue>
+</Enumeration>
+
+<IntReg Name="FRGrabberInMaskReg">
+  <pAddress>OffsetIoTrigger</pAddress>
+  <Address>0x80</Address>
+  <Length>4</Length>
+  <AccessMode>RW</AccessMode>
+  <pPort>InterfacePort</pPort>
+  <Cachable>NoCache</Cachable>
+  <pInvalidator>DevUserSetLoadReg</pInvalidator>
+  <Sign>Unsigned</Sign>
+  <Endianess>LittleEndian</Endianess>
+</IntReg>
+
+<Enumeration Name="FRGrabberInReverse">
+    <ToolTip>FRGrabber In Reverse</ToolTip>
+    <Description>FRGrabber In Reverse.</Description>
+    <DisplayName>FRGrabber In Reverse</DisplayName>
+    <EnumEntry Name="OFF">
+      <ToolTip>off reverse</ToolTip>
+      <Description>off.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="ON">
+      <ToolTip>on reverse</ToolTip>
+      <Description>on.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <pValue>FRGrabberInReverseReg</pValue>
+  </Enumeration>
+
+<IntReg Name="FRGrabberInReverseReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x81</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+  <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Float Name="FRGrabberInGlitchTime">
+      <ToolTip>use glitch time</ToolTip>
+      <Description>use glitch time.</Description>
+      <Visibility>Beginner</Visibility>
+      <pValue>GlitchSwitchReg</pValue>
+      <Min>0</Min>
+      <Max>10000</Max>
+      <Unit>us</Unit>
+  </Float>
+
+  <Converter Name="GlitchSwitchReg">
+      <FormulaTo>FROM*125</FormulaTo>
+      <FormulaFrom>TO/125</FormulaFrom>
+      <pValue>FRGrabberInGlitchTimeReg</pValue>
+      <Slope>Varying</Slope>
+  </Converter>
+  
+  <IntReg Name="FRGrabberInGlitchTimeReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x82</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+
+  <Command Name="FRGrabberRestart">
+  <ToolTip>Starts the trigger of the device.</ToolTip>
+  <Description>Starts gentl device timer.</Description>
+  <DisplayName>Device Trigger Start</DisplayName>
+  <Visibility>Beginner</Visibility>
+    <!-- <pIsLocked>FRGrabberLocked</pIsLocked>-->
+  <pValue>GrabberRestartReg</pValue>
+  <CommandValue>1</CommandValue>
+</Command>
+<IntReg Name="GrabberRestartReg">
+  <pAddress>OffsetDataStream</pAddress>
+  <Address>0x18</Address>
+  <Length>4</Length>
+  <AccessMode>RW</AccessMode>
+  <pPort>InterfacePort</pPort>
+  <Cachable>NoCache</Cachable>
+  <pInvalidator>DevUserSetLoadReg</pInvalidator>
+  <Sign>Unsigned</Sign>
+  <Endianess>LittleEndian</Endianess>
+</IntReg>
+
+<Command Name="FRGrabberReset">
+  <ToolTip>Starts the trigger of the device.</ToolTip>
+  <Description>Starts gentl device timer.</Description>
+  <DisplayName>Device Trigger Start</DisplayName>
+  <Visibility>Beginner</Visibility>
+  <!-- <pIsLocked>FRGrabberLocked</pIsLocked>-->
+  <pValue>GrabberResetReg</pValue>
+  <CommandValue>1</CommandValue>
+</Command>
+<IntReg Name="GrabberResetReg">
+  <pAddress>OffsetDataStream</pAddress>
+  <Address>0x19</Address>
+  <Length>4</Length>
+  <AccessMode>RW</AccessMode>
+  <pPort>InterfacePort</pPort>
+  <Cachable>NoCache</Cachable>
+  <pInvalidator>DevUserSetLoadReg</pInvalidator>
+  <Sign>Unsigned</Sign>
+  <Endianess>LittleEndian</Endianess>
+</IntReg>
+
+<Enumeration Name="DecoderMode">
+    <ToolTip>Rotary DecoderMode</ToolTip>
+    <Description>Rotary Decoder Mode.</Description>
+    <DisplayName>Rotary Decoder Mode</DisplayName>
+    <EnumEntry Name="AnyDirection">
+      <ToolTip>AnyDirection</ToolTip>
+      <Description>AnyDirection.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="ForwardOnly">
+      <ToolTip>ForwardOnly</ToolTip>
+      <Description>ForwardOnly.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <EnumEntry Name="BackwardOnly">
+      <ToolTip>BackwardOnly</ToolTip>
+      <Description>BackwardOnly.</Description>
+      <Value>2</Value>
+    </EnumEntry>
+    <EnumEntry Name="OnePhaseOnly">
+      <ToolTip>OnePhaseOnly</ToolTip>
+      <Description>OnePhaseOnly.</Description>
+      <Value>3</Value>
+    </EnumEntry>
+    <pValue>DecoderModeReg</pValue>
+  </Enumeration>
+
+<IntReg Name="DecoderModeReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x60</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  
+  <IntSwissKnife Name="DecoderModeSwiss">
+    <pVariable Name="FRLOCK">DecoderModeReg</pVariable>
+    <Formula>
+      <![CDATA[ (FRLOCK<>3) ]]>
+    </Formula>
+  </IntSwissKnife>
+  <Enumeration Name="DecoderPhaseSelect">
+    <ToolTip>Rotary DecoderPhaseSelect</ToolTip>
+    <Description>Rotary DecoderPhaseSelect.</Description>
+    <DisplayName>Rotary DecoderPhaseSelect</DisplayName>
+    <pIsLocked>DecoderModeSwiss</pIsLocked>
+    <EnumEntry Name="PhaseA">
+      <ToolTip>PhaseA</ToolTip>
+      <Description>PhaseA.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="PhaseB">
+      <ToolTip>PhaseB</ToolTip>
+      <Description>PhaseB.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <pValue>DecoderPhaseSelectReg</pValue>
+  </Enumeration>
+  <IntReg Name="DecoderPhaseSelectReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x69</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+<Enumeration Name="DecoderMulti">
+    <ToolTip>Decoder Multi</ToolTip>
+    <Description>Decoder Multi.</Description>
+    <DisplayName>Decoder Multi</DisplayName>
+    <EnumEntry Name="1">
+      <ToolTip>1</ToolTip>
+      <Description>1.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="2">
+      <ToolTip>2</ToolTip>
+      <Description>2.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <EnumEntry Name="4">
+      <ToolTip>4</ToolTip>
+      <Description>4.</Description>
+      <Value>2</Value>
+    </EnumEntry>
+    <EnumEntry Name="8">
+      <ToolTip>8</ToolTip>
+      <Description>8.</Description>
+      <Value>3</Value>
+    </EnumEntry>
+    <EnumEntry Name="16">
+      <ToolTip>16</ToolTip>
+      <Description>16.</Description>
+      <Value>4</Value>
+    </EnumEntry>
+    <EnumEntry Name="32">
+      <ToolTip>32</ToolTip>
+      <Description>32.</Description>
+      <Value>5</Value>
+    </EnumEntry>
+    <EnumEntry Name="64">
+      <ToolTip>64</ToolTip>
+      <Description>64.</Description>
+      <Value>6</Value>
+    </EnumEntry>
+    <EnumEntry Name="128">
+      <ToolTip>128</ToolTip>
+      <Description>128.</Description>
+      <Value>7</Value>
+    </EnumEntry>
+    <pValue>DecoderMultiReg</pValue>
+  </Enumeration>
+
+  <IntReg Name="DecoderMultiReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x61</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Integer Name="DecoderDiv">
+    <ToolTip>Decoder Multi</ToolTip>
+    <Description>Decoder Multi.</Description>
+    <DisplayName>Decoder Multi</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <ImposedAccessMode>RW</ImposedAccessMode>
+    <pValue>DecoderDivReg</pValue>
+    <Min>1</Min>
+    <Max>255</Max>
+  </Integer>
+
+  <IntReg Name="DecoderDivReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x62</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Integer Name="DecoderMaxReverseNum">
+    <ToolTip>Decoder Max Reverse Num</ToolTip>
+    <Description>Decoder Max Reverse Num.</Description>
+    <DisplayName>Decoder Max Reverse Num</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <ImposedAccessMode>RW</ImposedAccessMode>
+    <pValue>DecoderMaxReverseNumReg</pValue>
+    <Min>0</Min>
+    <Max>65535</Max>
+  </Integer>
+
+  <IntReg Name="DecoderMaxReverseNumReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x66</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Integer Name="DecoderCountA">
+    <ToolTip>Decoder Count A</ToolTip>
+    <Description>Decoder Count A.</Description>
+    <DisplayName>Decoder Count A</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>DecoderCountAReg</pValue>
+    <Min>0</Min>
+    <Max>4294967296</Max>
+  </Integer>
+
+  <IntReg Name="DecoderCountAReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x64</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Integer Name="DecoderCountB">
+    <ToolTip>Decoder Count B</ToolTip>
+    <Description>Decoder Count B.</Description>
+    <DisplayName>Decoder Count B</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>DecoderCountBReg</pValue>
+    <Min>0</Min>
+    <Max>4294967296</Max>
+  </Integer>
+  <IntReg Name="DecoderCountBReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x65</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Command Name="DecoderCountClear">
+  <ToolTip>DecoderCount Clear.</ToolTip>
+  <Description>DecoderCount Clear.</Description>
+  <DisplayName>DecoderCount Clear</DisplayName>
+  <Visibility>Beginner</Visibility>
+  <pValue>DecoderCountClearReg</pValue>
+  <CommandValue>1</CommandValue>
+</Command>
+<IntReg Name="DecoderCountClearReg">
+  <pAddress>OffsetIoTrigger</pAddress>
+  <Address>0x63</Address>
+  <Length>4</Length>
+  <AccessMode>WO</AccessMode>
+  <pPort>InterfacePort</pPort>
+  <Cachable>NoCache</Cachable>
+  <Sign>Unsigned</Sign>
+  <Endianess>LittleEndian</Endianess>
+</IntReg>
+
+<Integer Name="DecoderReverseCount">
+    <ToolTip>Decoder Reverse Count</ToolTip>
+    <Description>Decoder Reverse Count.</Description>
+    <DisplayName>Decoder Reverse Count</DisplayName>
+    <Visibility>Beginner</Visibility>
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>DecoderReverseCountReg</pValue>
+    <Min>0</Min>
+    <Max>4294967296</Max>
+  </Integer>
+  <IntReg Name="DecoderReverseCountReg">
+    <pAddress>OffsetIoTrigger</pAddress>
+    <Address>0x68</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <Command Name="DecoderReverseCountClear">
+  <ToolTip>DecoderReverse Count Clear.</ToolTip>
+  <Description>DecoderReverse Count Clear.</Description>
+  <DisplayName>DecoderReverse Count Clear</DisplayName>
+  <Visibility>Beginner</Visibility>
+  <pValue>DecoderReverseCountClearReg</pValue>
+  <CommandValue>1</CommandValue>
+</Command>
+<IntReg Name="DecoderReverseCountClearReg">
+  <pAddress>OffsetIoTrigger</pAddress>
+  <Address>0x67</Address>
+  <Length>4</Length>
+  <AccessMode>WO</AccessMode>
+  <pPort>InterfacePort</pPort>
+  <Cachable>NoCache</Cachable>
+  <Sign>Unsigned</Sign>
+  <Endianess>LittleEndian</Endianess>
+</IntReg>
+
+  <!--Device Compatibility-->
+  <Enumeration Name="CxpTriggerDelayUnit">
+    <ToolTip>Cxp Trigger Delay Unit</ToolTip>
+    <Description>Cxp Trigger Delay Unit.</Description>
+    <DisplayName>Cxp Trigger Delay Unit</DisplayName>
+    <EnumEntry Name="Standard">
+      <ToolTip>Strictly follow CXP standards</ToolTip>
+      <Description>Standard.</Description>
+      <Value>0</Value>
+    </EnumEntry>
+    <EnumEntry Name="Fixed2ns">
+      <ToolTip>all use 2 ns</ToolTip>
+      <Description>all use 2 ns.</Description>
+      <Value>1</Value>
+    </EnumEntry>
+    <pValue>CxpTriggerDelayUnitReg</pValue>
+  </Enumeration>
+  <IntReg Name="CxpTriggerDelayUnitReg">
+    <pAddress>CxpConfBase</pAddress>
+    <Address>0x100</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+	<pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <Integer Name="CxpCtrlPktPayloadSize">
+    <ToolTip>Control PayloadSize Max Per Packet.</ToolTip>
+    <Description>CxpCtrlPktPayloadSize.</Description>
+    <DisplayName>CxpCtrlPktPayloadSize</DisplayName>
+    <Visibility>Guru</Visibility>
+    <ImposedAccessMode>RW</ImposedAccessMode>
+    <Streamable>Yes</Streamable>
+    <pValue>CxpCtrlPktPayloadSizeReg</pValue>
+    <Min>64</Min>
+    <Max>1024</Max>
+    <Inc>4</Inc>
+  </Integer>
+  <IntReg Name="CxpCtrlPktPayloadSizeReg">
+    <pAddress>CxpConfBase</pAddress>
+    <Address>0x40</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <pPort>InterfacePort</pPort>
+    <Cachable>NoCache</Cachable>
+	<pInvalidator>DevUserSetLoadReg</pInvalidator>
+    <Sign>Unsigned</Sign>
+    <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <!-- Device Control -->
+<Integer Name="Timestamp">
+  <ToolTip>current value(in 1ns steps) of the device timestamp counter.</ToolTip>
+  <Description>current value(in 1ns steps) of the device timestamp counter.</Description>
+  <DisplayName>Timestamp</DisplayName>
+  <Visibility>Expert</Visibility>
+  <ImposedAccessMode>RO</ImposedAccessMode>
+  <pValue>TimestampReg</pValue>
+  <Min>0</Min>
+  </Integer>
+  <IntReg Name="TimestampReg">
+  <pAddress>CxpConfBase</pAddress>
+  <Address>0x200</Address>
+  <Length>8</Length>
+  <AccessMode>RO</AccessMode>
+  <pPort>InterfacePort</pPort>
+  <Cachable>NoCache</Cachable>
+  <Sign>Unsigned</Sign>
+  <Endianess>LittleEndian</Endianess>
+  </IntReg>
+
+  <!--DevUserSetControl -->
+  <Group Comment="DevUserSetControl">
+    <Category Name="DevUserSetControl">
+      <ToolTip>Category that contains the User Set control features.</ToolTip>
+      <Description>Category that contains the User Set control features.</Description>
+      <DisplayName>User Set Control</DisplayName>  
+      <pIsImplemented>DevUser_IsImplemented</pIsImplemented>
+      <pFeature>DevUserSetSelector</pFeature>
+      <pFeature>DevUserSetLoad</pFeature>
+      <pFeature>DevUserSetSave</pFeature>
+      <pFeature>DevUserSetDefault</pFeature>
+    </Category>
+
+    <IntReg Name="DevUser_IsImplemented">
+      <pAddress>DevUserSetBase</pAddress>
+      <Address>0xFFFF</Address>
+      <Length>4</Length>
+      <AccessMode>RO</AccessMode>
+      <pPort>InterfacePort</pPort>
+      <Cachable>WriteThrough</Cachable>
+      <Sign>Unsigned</Sign>
+      <Endianess>LittleEndian</Endianess>
+    </IntReg>
+
+    <Enumeration Name="DevUserSetSelector">
+      <ToolTip>Selects the feature User Set to load, save or configure.</ToolTip>
+      <Description>Selects the feature User Set to load, save or configure.</Description>
+      <DisplayName>User Set Selector</DisplayName>
+      <Visibility>Beginner</Visibility>
+      <pIsLocked>TLParamsLocked</pIsLocked>
+      <Streamable>Yes</Streamable>
+      <EnumEntry Name="Default">
+        <Value>0</Value>
+      </EnumEntry>
+      <EnumEntry Name="UserSet1">
+        <Value>1</Value>
+      </EnumEntry>
+      <pValue>DevUserSetSelectorReg</pValue>
+    </Enumeration>
+    <IntReg Name="DevUserSetSelectorReg">
+      <pAddress>DevUserSetBase</pAddress>
+      <Address>0x0000</Address>
+      <Length>4</Length>
+      <AccessMode>RW</AccessMode>
+      <pPort>InterfacePort</pPort>
+      <Cachable>WriteThrough</Cachable>
+      <pInvalidator>DevUserSetLoadReg</pInvalidator>
+      <Sign>Unsigned</Sign>
+      <Endianess>LittleEndian</Endianess>
+    </IntReg>
+
+    <Command Name="DevUserSetLoad">
+      <ToolTip>Loads the User Set specified by DevUserSetSelector to the device and makes it active.</ToolTip>
+      <Description>Loads the User Set specified by DevUserSetSelector to the device and makes it active.</Description>
+      <DisplayName>User Set Load</DisplayName>
+      <Visibility>Beginner</Visibility>
+      <pIsAvailable>DevUserSetLoadAvailExpr</pIsAvailable>
+      <pIsLocked>TLParamsLocked</pIsLocked>
+      <pValue>DevUserSetLoadReg</pValue>
+      <CommandValue>1</CommandValue>
+    </Command>
+    <IntReg Name="DevUserSetLoadReg">
+      <pAddress>DevUserSetBase</pAddress>
+      <Address>0x0004</Address>
+      <Length>4</Length>
+      <AccessMode>RW</AccessMode>
+      <pPort>InterfacePort</pPort>
+      <Cachable>WriteAround</Cachable>
+      <pInvalidator>DevUserSetLoadReg</pInvalidator>
+      <Sign>Unsigned</Sign>
+      <Endianess>LittleEndian</Endianess>
+    </IntReg>
+    <IntSwissKnife Name="DevUserSetLoadAvailExpr">
+      <pVariable Name="VAR_USERSETSELECTOR">DevUserSetSelectorReg</pVariable>
+      <pVariable Name="VAR_USERSET1VALID">DevUserSet1ValidReg</pVariable>
+      <pVariable Name="VAR_USERSET2VALID">DevUserSet2ValidReg</pVariable>
+      <Formula><![CDATA[ (VAR_USERSETSELECTOR=0) || ((VAR_USERSETSELECTOR=1) && (VAR_USERSET1VALID=1)) || ((VAR_USERSETSELECTOR=2) && (VAR_USERSET2VALID=1)) ]]></Formula>
+    </IntSwissKnife>
+
+    <Command Name="DevUserSetSave">
+      <ToolTip>Save the User Set specified by DevUserSetSelector to the non-volatile memory of the device.</ToolTip>
+      <Description>Save the User Set specified by DevUserSetSelector to the non-volatile memory of the device.</Description>
+      <DisplayName>User Set Save</DisplayName>
+      <Visibility>Beginner</Visibility>
+      <pIsAvailable>DevUserSetSaveAvailExpr</pIsAvailable>
+      <pIsLocked>TLParamsLocked</pIsLocked>
+      <pValue>DevUserSetSaveReg</pValue>
+      <CommandValue>1</CommandValue>
+    </Command>
+    <IntReg Name="DevUserSetSaveReg">
+      <pAddress>DevUserSetBase</pAddress>
+      <Address>0x0008</Address>
+      <Length>4</Length>
+      <AccessMode>RW</AccessMode>
+      <pPort>InterfacePort</pPort>
+      <Cachable>WriteAround</Cachable>
+      <pInvalidator>DevUserSetLoadReg</pInvalidator>
+      <Sign>Unsigned</Sign>
+      <Endianess>LittleEndian</Endianess>
+    </IntReg>
+    <IntSwissKnife Name="DevUserSetSaveAvailExpr">
+      <pVariable Name="VAR_USERSETSELECTOR">DevUserSetSelectorReg</pVariable>
+      <pVariable Name="VAR_USERSETSAVEAVAILABLE">DevUserSetSaveAvailableReg</pVariable>
+      <Formula><![CDATA[ (VAR_USERSETSELECTOR <> 0) && (VAR_USERSETSAVEAVAILABLE = 1) ]]></Formula>
+    </IntSwissKnife>
+    <!--<Boolean Name="UserSetSaveAvailable">
+      <Visibility>Invisible</Visibility>
+      <pValue>DevUserSetSaveAvailableReg</pValue>
+    </Boolean>-->
+    <IntReg Name="DevUserSetSaveAvailableReg">
+      <pAddress>DevUserSetBase</pAddress>
+      <Address>0x0020</Address>
+      <Length>4</Length>
+      <AccessMode>RO</AccessMode>
+      <pPort>InterfacePort</pPort>
+      <pInvalidator>DevUserSetSelector</pInvalidator>
+      <Sign>Unsigned</Sign>
+      <Endianess>LittleEndian</Endianess>
+    </IntReg>
+
+    <Enumeration Name="DevUserSetDefault" NameSpace="Standard">
+      <ToolTip>Selects the feature User Set to load and make active by default when the device is reset.</ToolTip>
+      <Description>Selects the feature User Set to load and make active by default when the device is reset.</Description>
+      <DisplayName>User Set Default</DisplayName>
+      <Visibility>Beginner</Visibility>
+      <pIsLocked>TLParamsLocked</pIsLocked>
+      <EnumEntry Name="Default" NameSpace="Standard">
+        <Value>0</Value>
+      </EnumEntry>
+      <EnumEntry Name="UserSet1" NameSpace="Standard">
+        <pIsAvailable>DevUserSetDefaultUserSet1AvailExpr</pIsAvailable>
+        <Value>1</Value>
+      </EnumEntry>
+      <EnumEntry Name="UserSet2" NameSpace="Standard">
+        <pIsAvailable>DevUserSetDefaultUserSet2AvailExpr</pIsAvailable>
+        <Value>2</Value>
+      </EnumEntry>
+      <pValue>UserSetDefaultReg</pValue>
+    </Enumeration>
+    <IntReg Name="UserSetDefaultReg">
+      <pAddress>DevUserSetBase</pAddress>
+      <Address>0x000C</Address>
+      <Length>4</Length>
+      <AccessMode>RW</AccessMode>
+      <pPort>InterfacePort</pPort>
+      <Cachable>WriteThrough</Cachable>
+      <pInvalidator>DevUserSetLoadReg</pInvalidator>
+      <pInvalidator>DevUserSetSaveReg</pInvalidator>
+      <Sign>Unsigned</Sign>
+      <Endianess>LittleEndian</Endianess>
+    </IntReg>
+    <IntSwissKnife Name="DevUserSetDefaultUserSet1AvailExpr">
+      <pVariable Name="VAR_USERSET1VALID">DevUserSet1ValidReg</pVariable>
+      <Formula><![CDATA[ VAR_USERSET1VALID = 1 ]]></Formula>
+    </IntSwissKnife>
+    <IntSwissKnife Name="DevUserSetDefaultUserSet2AvailExpr">
+      <pVariable Name="VAR_USERSET2VALID">DevUserSet2ValidReg</pVariable>
+      <Formula><![CDATA[ VAR_USERSET2VALID = 1 ]]></Formula>
+    </IntSwissKnife>
+
+    <Integer Name="DevUserSet1Valid">
+      <Visibility>Invisible</Visibility>
+      <Streamable>Yes</Streamable>
+      <pValue>DevUserSet1ValidReg</pValue>
+      <Inc>1</Inc>
+      <Representation>Linear</Representation>
+    </Integer>
+    <IntReg Name="DevUserSet1ValidReg">
+      <pAddress>DevUserSetBase</pAddress>
+      <Address>0x0010</Address>
+      <Length>4</Length>
+      <AccessMode>RO</AccessMode>
+      <pPort>InterfacePort</pPort>
+      <Cachable>WriteThrough</Cachable>
+      <pInvalidator>DevUserSetLoadReg</pInvalidator>
+      <pInvalidator>DevUserSetSelectorReg</pInvalidator>
+      <pInvalidator>DevUserSetSaveReg</pInvalidator>
+      <Sign>Unsigned</Sign>
+      <Endianess>LittleEndian</Endianess>
+    </IntReg>
+
+    <Integer Name="DevUserSet2Valid">
+      <Visibility>Invisible</Visibility>
+      <Streamable>Yes</Streamable>
+      <pValue>DevUserSet2ValidReg</pValue>
+      <Inc>1</Inc>
+      <Representation>Linear</Representation>
+    </Integer>
+    <IntReg Name="DevUserSet2ValidReg">
+      <pAddress>DevUserSetBase</pAddress>
+      <Address>0x0014</Address>
+      <Length>4</Length>
+      <AccessMode>RO</AccessMode>
+      <pPort>InterfacePort</pPort>
+      <Cachable>WriteThrough</Cachable>
+      <pInvalidator>DevUserSetLoadReg</pInvalidator>
+      <pInvalidator>DevUserSetSelectorReg</pInvalidator>
+      <pInvalidator>DevUserSetSaveReg</pInvalidator>
+      <Sign>Unsigned</Sign>
+      <Endianess>LittleEndian</Endianess>
+    </IntReg>
+  </Group>
+
+  <Category Name="TLParamsLockedCategory">
+    <Visibility>Invisible</Visibility>
+    <pFeature>TLParamsLocked</pFeature>
+  </Category>
+  <Integer Name="TLParamsLocked">
+    <ToolTip>Integer parameter: 1 when grabbing, 0 when not</ToolTip>
+    <Visibility>Invisible</Visibility>
+    <Value>0</Value>
+    <Min>0</Min>
+    <Max>1</Max>
+  </Integer>
+  
+  <Group Comment="Address">
+    <Integer Name="OffsetIoTrigger">
+      <Value>0x00002800</Value>
+    </Integer>
+    <Integer Name="OffsetDataStream">
+      <Value>0x00002000</Value>
+    </Integer>
+	<Integer Name="OffsetReset">
+      <Value>0x00000100</Value>
+    </Integer>
+    <Integer Name="CxpPoCxpBase">
+      <Value>0x2e0000fffe0000</Value>
+    </Integer>
+    <Integer Name="CofBase">
+      <Value>0x2e0000fffd0000</Value>
+    </Integer>
+    <Integer Name="OffsetPocxp">
+      <Value>0x00000300</Value>
+    </Integer>
+    <Integer Name="IfUserSetBase">
+      <Value>0x2d0000fffe0000</Value>
+    </Integer>
+    <Integer Name="CxpConfBase">
+      <Value>0x3e0000fffd0000</Value>
+    </Integer>
+    <Integer Name="DevUserSetBase">
+      <Value>0x3d0000fffe0000</Value>
+    </Integer>
+    <Integer Name="SwitchBase">
+      <Value>8</Value>
+    </Integer>
+  </Group>
+</RegisterDescription>

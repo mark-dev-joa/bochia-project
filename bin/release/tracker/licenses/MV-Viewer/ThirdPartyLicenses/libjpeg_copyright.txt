@@ -1,0 +1,11 @@
+USING THE IJG JPEG LIBRARY
+
+This file was part of the Independent JPEG Group's software:
+Copyright (C) 1994-2013, Thomas G. Lane, Guido Vollbeding.
+Lossless JPEG Modifications:
+Copyright (C) 1999, Ken Murchison.
+libjpeg-turbo Modifications:
+Copyright (C) 2010, 2014-2018, 2020, 2022-2023, D. R. Commander.
+Copyright (C) 2015, Google, Inc.
+For conditions of distribution and use, see the accompanying README.ijg file.
+

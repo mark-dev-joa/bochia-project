@@ -47,8 +47,15 @@ Thumbs.db
 /output/
 # Reviewed Windows distribution is intentionally committed.
 !/releases/Boccia-Windows-x64.zip
+!/releases/Boccia-Tracker-Windows-x64.zip
 !/releases/Boccia-Image-Detector-Windows-x64.zip
 
 # Labeler v2 work builds here so it never collides with builds in /build/.
 /build-labeler/
-/bin/
+# The release folder is committed (2026-10-14 user request): the apps and their shared models, without this PC's
+# labeling work and settings (each app's data folder).
+/bin/*
+!/bin/release/
+/bin/release/*/data/
+!/bin/release/**/*.onnx
+!/bin/release/**/*.zip
