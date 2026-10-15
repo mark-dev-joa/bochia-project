@@ -62,3 +62,4 @@ Thumbs.db
 # The CUDA runtime the tracker installs on a PC (2 GB, tools/install-cuda.ps1)
 /bin/release/cuda/
 /bin/release/*/cuda/
+/bin/release/*/logs/
