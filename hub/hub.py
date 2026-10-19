@@ -55,9 +55,10 @@ class HubError(Exception):
 
 
 class Hub:
-    def __init__(self, storage, say=None):
+    def __init__(self, storage, say=None, control_from=()):
         self.storage = Path(storage)
         self.say = say or (lambda text: None)
+        self.control_from = set(control_from)   # addresses allowed to use /api besides this PC (--control-from)
         self.lock = threading.RLock()
         self.wake = threading.Condition(self.lock)
         self.closing = False
@@ -155,6 +156,10 @@ class Hub:
         return stamp.isoformat(timespec="milliseconds")
 
     # ---- workers and tokens
+
+    def control_allowed(self, address):
+        """The control API answers this PC and the addresses named by --control-from; worker PCs on the same tailnet get 403."""
+        return address in ("127.0.0.1", "::1") or address in self.control_from
 
     def invite(self, worker):
         if not valid_name(worker):
@@ -448,6 +453,10 @@ class Handler(BaseHTTPRequestHandler):
         raise HubError(404, "no such route")
 
     def _control(self, hub, method, parts, query, body):
+        if not hub.control_allowed(self.client_address[0]):
+            raise HubError(403, "control API: only this PC and --control-from addresses")
+        if method == "POST" and not self.headers.get("Content-Type", "").startswith("application/json"):
+            raise HubError(415, "control API: send JSON (Content-Type: application/json)")   # also keeps a browser's no-cors POST out
         if parts == ["status"] and method == "GET":
             return self._json(hub.summary())
         if parts == ["workers"] and method == "GET":
@@ -562,11 +571,13 @@ def main(argv=None):
     serve.add_argument("--port", type=int, default=8790)
     serve.add_argument("--storage", default=r"D:\Boccia Hub")
     serve.add_argument("--bind", default="auto", help="auto (localhost + Tailscale), all, or addresses separated by commas")
+    serve.add_argument("--control-from", default="", help="addresses allowed to use /api besides this PC, separated by commas")
     serve.add_argument("--print-port", action="store_true", help="print 'port <n>' first")
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    hub = Hub(args.storage, say=lambda text: print(f"{datetime.now():%H:%M:%S} {text}", flush=True))
+    hub = Hub(args.storage, say=lambda text: print(f"{datetime.now():%H:%M:%S} {text}", flush=True),
+              control_from=[address.strip() for address in args.control_from.split(",") if address.strip()])
     first = None
     for address in bind_addresses(args.bind):
         try:

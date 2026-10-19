@@ -76,6 +76,10 @@ std::vector<std::string> tailLines(const fs::path& path, size_t count) {
         newlines += size_t(std::count(chunk.begin(), chunk.end(), '\n'));
         text.insert(0, chunk);
     }
+    if (!text.empty() && text.back() != '\n') {   // a line still being written waits for the next read
+        const auto cut = text.rfind('\n');
+        text = cut == std::string::npos ? std::string() : text.substr(0, cut + 1);
+    }
     std::vector<std::string> lines;
     for (size_t start = 0; start < text.size();) {
         auto end = text.find('\n', start);
@@ -105,6 +109,8 @@ std::vector<std::string> authHeaders(const Settings& settings, bool json = true)
     return {"Authorization: Bearer " + settings.token, "X-Boccia-Pc: " + percentEncode(settings.pc),
             json ? "Content-Type: application/json; charset=utf-8" : "Content-Type: application/octet-stream"};
 }
+// JSON for the wire: a byte that is not UTF-8 (a CP949 path inside an error message) becomes U+FFFD, not an exception.
+std::string wire(const Json& value) { return value.dump(-1, ' ', false, Json::error_handler_t::replace); }
 }
 
 std::string percentEncode(const std::string& utf8) {
@@ -162,6 +168,11 @@ Reply Session::request(const std::string& address, const char* method, const std
     if (!connection) { reply.error = describe(GetLastError()); return reply; }
     HINTERNET request = WinHttpOpenRequest(connection, wide(method).c_str(), wide(path).c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
     if (!request) { reply.error = describe(GetLastError()); WinHttpCloseHandle(connection); return reply; }
+    {
+        std::lock_guard guard(lock_);
+        if (cancelled_) { WinHttpCloseHandle(request); WinHttpCloseHandle(connection); reply.error = "cancelled"; return reply; }
+        active_ = request;
+    }
     DWORD timeout = DWORD(timeoutMs);
     WinHttpSetOption(request, WINHTTP_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof timeout);
     WinHttpSetOption(request, WINHTTP_OPTION_SEND_TIMEOUT, &timeout, sizeof timeout);
@@ -184,9 +195,25 @@ Reply Session::request(const std::string& address, const char* method, const std
             reply.body.append(chunk, 0, read);
         }
     }
-    WinHttpCloseHandle(request);
+    {
+        std::lock_guard guard(lock_);
+        const bool mine = active_ == request;   // interrupt() or cancel() may have closed it meanwhile
+        active_ = nullptr;
+        if (mine) WinHttpCloseHandle(request);
+    }
     WinHttpCloseHandle(connection);
     return reply;
+}
+
+void Session::interrupt() {
+    std::lock_guard guard(lock_);
+    if (active_) { WinHttpCloseHandle(active_); active_ = nullptr; }   // the blocked call on the other thread returns with an error
+}
+
+void Session::cancel() {
+    std::lock_guard guard(lock_);
+    cancelled_ = true;
+    if (active_) { WinHttpCloseHandle(active_); active_ = nullptr; }
 }
 
 // ---- Client
@@ -209,6 +236,7 @@ struct Client::Core {
     std::vector<Json> events, results;      // under lock: to send
     std::vector<Command> commands;          // under lock: for the app
     bool stop = false, senderDone = false, pollerDone = false;   // under lock
+    Session senderSession, pollerSession;   // one per thread; the app's thread only interrupts or cancels them
     Core(Settings made, fs::path box, std::function<fs::path()> log, std::function<Registration()> extra)
         : settings(std::move(made)), outbox(std::move(box)), logFile(std::move(log)), registration(std::move(extra)) {}
     void fail(const std::string& what, const Reply& reply) {
@@ -217,19 +245,26 @@ struct Client::Core {
         error = what + ": " + (reply.status ? "HTTP " + std::to_string(reply.status) + (reply.body.empty() ? "" : " " + reply.body.substr(0, 200)) : reply.error);
     }
     bool postEvents(Session& session, const Settings& current, const Json& batch) {
-        const auto reply = session.request(current.address, "POST", "/events", Json{{"events", batch}}.dump(), authHeaders(current));
+        const auto reply = session.request(current.address, "POST", "/events", wire(Json{{"events", batch}}), authHeaders(current));
         if (reply.status != 200) { fail("events", reply); return false; }
         seen = Clock::now();
         return true;
     }
-    // After a (re)connect: the log's last lines that the hub has not seen, oldest first, 100 at a time.
+    // After a (re)connect: the log's last lines that the hub has not seen, oldest first, 100 at a time. Only this worker's
+    // lines: the app writes "작업자 · <worker>@<pc> …" when it (re)starts the client, so a line after another worker's mark is
+    // that worker's; lines before any mark count as ours.
     bool backfill(Session& session, const Settings& current, const std::string& since) {
         const fs::path file = logFile ? logFile() : fs::path();
         if (file.empty()) return true;
+        static const std::string mark = "작업자 · ";
+        std::string owner;
         Json batch = Json::array();
         for (const auto& line : tailLines(file, BACKFILL_LINES)) {
             const auto [time, text] = splitLine(line);
-            if (time.empty() || time <= since) continue;
+            if (time.empty()) continue;
+            if (text.compare(0, mark.size(), mark) == 0) { const auto at = text.find('@', mark.size()); owner = text.substr(mark.size(), at == std::string::npos ? std::string::npos : at - mark.size()); }
+            if (!owner.empty() && owner != current.worker) continue;
+            if (time <= since) continue;
             batch.push_back(Json{{"time", time}, {"text", text}});
             if (batch.size() == BATCH) { if (!postEvents(session, current, batch)) return false; batch = Json::array(); }
         }
@@ -259,14 +294,14 @@ struct Client::Core {
         bool dirty = false;
         { std::lock_guard guard(lock); dirty = statusDirty; state_ = status; statusDirty = false; }
         if (dirty) {
-            const auto reply = session.request(current.address, "POST", "/status", state_.dump(), authHeaders(current));
+            const auto reply = session.request(current.address, "POST", "/status", wire(state_), authHeaders(current));
             if (reply.status != 204) { fail("status", reply); std::lock_guard guard(lock); statusDirty = true; return; }
             seen = Clock::now();
         }
         std::vector<Json> pending;
         { std::lock_guard guard(lock); pending.swap(results); }
         for (size_t i = 0; i < pending.size(); ++i) {
-            const auto reply = session.request(current.address, "POST", "/commands/" + pending[i].value("id", "") + "/result", pending[i].dump(), authHeaders(current));
+            const auto reply = session.request(current.address, "POST", "/commands/" + pending[i].value("id", "") + "/result", wire(pending[i]), authHeaders(current));
             if (reply.status == 0) {   // no hub: the rest waits
                 fail("result", reply);
                 std::lock_guard guard(lock);
@@ -293,12 +328,12 @@ struct Client::Core {
         const Registration extra = registration ? registration() : Registration{};
         const Json body{{"app", current.app}, {"worker", current.worker}, {"pc", current.pc}, {"account", current.account},
                         {"version", current.version}, {"session", instance}, {"device", extra.device}, {"summary", extra.summary}};
-        reply = session.request(current.address, "POST", "/register", body.dump(), authHeaders(current));
+        reply = session.request(current.address, "POST", "/register", wire(body), authHeaders(current));
         if (reply.status != 200) { fail("register", reply); if (reply.status == 401 || reply.status == 403) state = State::Unauthorized; return; }
         std::string since;
         try { since = Json::parse(reply.body).value("since", ""); } catch (const std::exception&) { fail("register", reply); return; }
         seen = Clock::now();
-        { std::lock_guard guard(lock); error.clear(); }
+        { std::lock_guard guard(lock); error.clear(); statusDirty = !status.is_null(); }   // a new hub, or a restarted one, gets the status again
         state = State::Connected;
         wake.notify_all();   // the poller starts
         if (!backfill(session, current, since)) return;
@@ -308,14 +343,15 @@ struct Client::Core {
 };
 
 void Client::sendLoop(std::shared_ptr<Core> core) {
-    Session session;
+    Session& session = core->senderSession;
     Clock::time_point nextKnock{};   // at once
+    bool first = true;               // the first cycle does not wait: a short-lived app still gets to knock
     for (;;) {
         Settings current;
         std::string instance;
         {
             std::unique_lock guard(core->lock);
-            core->wake.wait_for(guard, 1s, [&] {
+            core->wake.wait_for(guard, first ? 0s : 1s, [&] {
                 return core->stop || core->settingsChanged
                     || (core->state == State::Connected && (core->statusDirty || core->outboxDirty || !core->events.empty() || !core->results.empty()));
             });
@@ -324,18 +360,21 @@ void Client::sendLoop(std::shared_ptr<Core> core) {
             current = core->settings;
             instance = core->sessionId;
         }
-        if (core->state == State::Offline) {
-            if (Clock::now() < nextKnock) continue;
-            nextKnock = Clock::now() + KNOCK_EVERY;
-            core->knock(session, current, instance);
-        } else if (core->state == State::Connected) core->flush(session, current);
+        first = false;
+        try {
+            if (core->state == State::Offline) {
+                if (Clock::now() < nextKnock) continue;
+                nextKnock = Clock::now() + KNOCK_EVERY;
+                core->knock(session, current, instance);
+            } else if (core->state == State::Connected) core->flush(session, current);
+        } catch (const std::exception& error) { core->fail("client", Reply{0, "", error.what()}); }   // never out of the thread
     }
     { std::lock_guard guard(core->lock); core->senderDone = true; }
     core->wake.notify_all();
 }
 
 void Client::pollLoop(std::shared_ptr<Core> core) {
-    Session session;
+    Session& session = core->pollerSession;
     for (;;) {
         Settings current;
         std::string instance;
@@ -387,6 +426,8 @@ Client::Client(Settings settings, fs::path outbox, std::function<fs::path()> log
 Client::~Client() {
     { std::lock_guard guard(core_->lock); core_->stop = true; }
     core_->wake.notify_all();
+    core_->senderSession.cancel();   // a request in progress (the 25 s command wait above all) returns now
+    core_->pollerSession.cancel();
     bool senderDone = false, pollerDone = false;
     {
         std::unique_lock guard(core_->lock);
@@ -435,5 +476,6 @@ Clock::time_point Client::lastSeen() const { return core_->seen; }
 void Client::setSettings(Settings settings) {
     { std::lock_guard guard(core_->lock); core_->settings = std::move(settings); core_->sessionId = newSession(); core_->settingsChanged = true; core_->state = State::Offline; }
     core_->wake.notify_all();
+    core_->pollerSession.interrupt();   // the command wait on the old hub ends now; the next one goes to the new settings
 }
 }

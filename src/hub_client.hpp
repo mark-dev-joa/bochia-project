@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -19,6 +20,7 @@ struct Registration { Json device, summary; };   // the app's own part of /regis
 struct Reply { int status = 0; std::string body, error; };   // status 0: no answer, error says why
 
 // One WinHTTP session, used from one thread: GET/POST to the hub with a UTF-8 body and extra headers ("Name: value").
+// Another thread may end the request in progress (interrupt) or end it and refuse the next ones (cancel).
 class Session {
 public:
     Session();
@@ -27,8 +29,13 @@ public:
     Session& operator=(const Session&) = delete;
     Reply request(const std::string& address, const char* method, const std::string& path, const std::string& body = "",
                   const std::vector<std::string>& headers = {}, int timeoutMs = 5000);
+    void interrupt();   // the blocked call returns with an error; the next request runs as usual
+    void cancel();      // interrupt, and every later request returns at once
 private:
     void* handle_ = nullptr;
+    std::mutex lock_;
+    void* active_ = nullptr;    // under lock_: the request handle a call is blocked on
+    bool cancelled_ = false;    // under lock_
 };
 
 class Client {

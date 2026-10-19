@@ -70,10 +70,10 @@ try {
     if ($notify -notmatch '완료 · 띄움') { throw "notify not finished:`n$notify" }
     $log = Hub @('send', '나', 'log')
     if ($log -notmatch '완료 · labeler-') { throw "log not uploaded:`n$log" }
-    $logText = WaitFor -Seconds 10 -What 'the uploaded log' -Check { $text = Hub @('logs', '나'); if ($text -match '시작 · ') { $text } else { $null } }
+    $logText = WaitFor -Seconds 10 -What 'the uploaded log' -Check { $text = Hub @('logs', '나'); if ($text -match '작업자 · 나@') { $text } else { $null } }
     $events = WaitFor -Seconds 10 -What 'the events of 가' -Check {
         $text = Hub @('events', '가', '--limit', '2000')
-        if (($text -match '시작 · ') -and ($text -match '허브 알림 · 쉬세요')) { $text } else { $null }
+        if (($text -match '작업자 · 가@') -and ($text -match '허브 알림 · 쉬세요')) { $text } else { $null }
     }
     Write-Host 'PASS: two labelers registered, notify delivered, log uploaded, events listed'
 }

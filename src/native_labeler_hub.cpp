@@ -39,6 +39,8 @@ void Application::startHub() {
     made.address = settings_.hubAddress; made.token = settings_.token; made.worker = settings_.worker;
     made.pc = hub::hostName(); made.account = hub::accountName(); made.app = "labeler"; made.version = boccia::versionString();
     hubStarted_ = std::chrono::steady_clock::now();
+    // The mark the backfill reads: lines after it are this worker's, lines after another worker's mark are not (hub_client.cpp).
+    logLine("작업자 · " + made.worker + "@" + made.pc + " · 버전 " + made.version);
     if (hub_) { hub_->setSettings(made); return; }
     wchar_t location[32768]{};
     GetEnvironmentVariableW(L"LOCALAPPDATA", location, 32768);
@@ -68,7 +70,7 @@ void Application::saveWorker() {
     if (settings.hubAddress.empty()) settings.hubAddress = LabelerSettings{}.hubAddress;
     try { saveLabelerSettings(settings); } catch (const std::exception& error) { error_ = error.what(); return; }
     settings_.worker = settings.worker; settings_.token = settings.token; settings_.hubAddress = settings.hubAddress;
-    logLine(settings.worker.empty() ? std::string("작업자 없음") : "작업자 · " + settings.worker + " · " + settings.hubAddress);
+    logLine(settings.worker.empty() ? std::string("작업자 설정 · 없음") : "작업자 설정 · " + settings.worker + " · " + settings.hubAddress);
     startHub();
     workerDialog_ = false;
 }
@@ -90,7 +92,7 @@ void Application::workerPopup() {
         theme::textField("##hubAddress", hubAddress_, sizeof hubAddress_, full);
         if (hub_ && hub_->state() == hub::Client::State::Unauthorized) {
             ImGui::Dummy({full, 8});
-            theme::write(ImGui::GetWindowDrawList(), ImGui::GetCursorScreenPos(), theme::warn, "초대 코드가 맞지 않습니다", theme::caption);
+            theme::write(ImGui::GetWindowDrawList(), ImGui::GetCursorScreenPos(), theme::warn, "초대 코드 확인", theme::caption);
             ImGui::Dummy({full, 18});
         }
         theme::dialogFooter();

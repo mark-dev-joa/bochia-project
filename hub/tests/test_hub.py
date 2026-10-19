@@ -196,6 +196,20 @@ class HubTest(unittest.TestCase):
         self.assertEqual([c["id"] for c in poll("b", 0)[1]["commands"]], [cid])
         self.assertEqual(poll("", 0)[0], 200)                              # no session header: as before
 
+    def test_control_api_refuses_addresses_not_allowed(self):
+        self.assertTrue(self.hub.control_allowed("127.0.0.1") and self.hub.control_allowed("::1"))
+        self.assertFalse(self.hub.control_allowed("100.64.0.5"))
+        allowed = Hub(self.temp / "other", control_from=["100.64.0.5"])
+        self.assertTrue(allowed.control_allowed("100.64.0.5") and allowed.control_allowed("127.0.0.1"))
+        self.assertFalse(allowed.control_allowed("100.64.0.9"))
+        self.hub.control_allowed = lambda address: False      # as if the request came from a worker PC
+        self.assertEqual(self.call("GET", "/api/status")[0], 403)
+        self.assertEqual(self.call("GET", "/ping")[0], 200)    # the app API is untouched
+
+    def test_control_post_requires_json(self):
+        self.assertEqual(self.call_raw("POST", "/api/invites", b'{"worker": "\xed\x99\x8d"}', None, "text/plain")[0], 415)
+        self.assertEqual(self.call("POST", "/api/invites", {"worker": "홍길동"})[0], 200)
+
     def test_invite_again_replaces_token(self):
         old = self.hub.invite("홍길동")
         new = self.call("POST", "/api/invites", {"worker": "홍길동"})[1]["token"]
