@@ -218,6 +218,7 @@ private:
     std::shared_ptr<hub::Client> hub_;               // shared: the log sink holds it weakly, from any thread that logs
     std::shared_ptr<HubShared> hubShared_ = std::make_shared<HubShared>();
     std::chrono::steady_clock::time_point hubTicked_{}, hubStarted_{};
+    std::chrono::seconds hubWait_{0};                // --hub-wait: a hidden run stays at least this long, so a check can send it commands
     bool workerDialog_ = false;
     std::string hubNotice_;
     char workerName_[128] = "", workerToken_[128] = "", hubAddress_[256] = "";
@@ -237,8 +238,8 @@ public:
     void recentForCapture(const std::filesystem::path& file);   // a recent-project list for the hidden start-screen capture
     void projectSettingsForCapture() { beginProjectSettings(); }
     void workerDialogForCapture() { openWorkerDialog(); }
-    void hubForCheck(const std::string& address, const std::string& worker, const std::string& token);   // --hub --worker --token: joins with these instead of the settings
-    bool hubSettled() const;                         // no hub, or the hub has answered, or 5 s have passed: a hidden check may end
+    void hubForCheck(const std::string& address, const std::string& worker, const std::string& token, int waitSeconds = 0);   // --hub --worker --token: joins with these instead of the settings
+    bool hubSettled() const;                         // no hub, or the hub has answered, or 5 s have passed, and --hub-wait is over: a hidden check may end
     void applyPreviousForCapture(bool on) { applyPrevious_ = on; }   // ← 이전 적용 for a hidden capture (no preferences are read)
     void importStateForCapture(const std::string& state);       // the import dialog while it checks or copies, for a capture
 private:

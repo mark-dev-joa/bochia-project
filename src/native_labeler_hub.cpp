@@ -27,8 +27,9 @@ std::string trimmed(const char* text) {
 }
 
 // --hub --worker --token: a hidden check joins with these instead of the PC's settings; nothing is saved.
-void Application::hubForCheck(const std::string& address, const std::string& worker, const std::string& token) {
+void Application::hubForCheck(const std::string& address, const std::string& worker, const std::string& token, int waitSeconds) {
     settings_.hubAddress = address; settings_.worker = worker; settings_.token = token;
+    hubWait_ = std::chrono::seconds(std::max(0, waitSeconds));
     startHub();
 }
 
@@ -47,9 +48,11 @@ void Application::startHub() {
     setLogSink([weak = std::weak_ptr<hub::Client>(hub_)](const std::string& line) { if (const auto client = weak.lock()) client->event(line); });
 }
 
-// A hidden check with --hub waits for the hub's answer (or 5 s) before it captures and ends.
+// A hidden check with --hub waits for the hub's answer (or 5 s), and for --hub-wait, before it captures and ends.
 bool Application::hubSettled() const {
-    return !hub_ || hub_->state() != hub::Client::State::Offline || std::chrono::steady_clock::now() - hubStarted_ > std::chrono::seconds(5);
+    if (!hub_) return true;
+    const auto since = std::chrono::steady_clock::now() - hubStarted_;
+    return since >= hubWait_ && (hub_->state() != hub::Client::State::Offline || since > std::chrono::seconds(5));
 }
 
 void Application::openWorkerDialog() {
