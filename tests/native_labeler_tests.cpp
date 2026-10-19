@@ -1,5 +1,8 @@
 #include "build_info.hpp"
+#include "labeler_settings.hpp"
 #include <regex>
+#include <cstdlib>
+#include <windows.h>
 #include "native_labeler_model.hpp"
 #include "labeler_engine.hpp"
 #include "native_labeler_view.hpp"
@@ -87,8 +90,36 @@ void viewTests() {
     check(about(float(half.x), 100, 1) && about(float(half.y), 50, 1) && about(float(half.r), 20, 1), "a circle fitted to a half ring, as of a part-hidden ball, must still find the whole ball");
     check(fitCircle({{3, 4}}).r == 0 && fitCircle({}).r == 0, "too few points give no circle");
 }
+// The PC's settings file (실행 장치 and the hub) and the status line the hub gets (design/hub/PLAN-1.md Task 5).
+void settingsTests() {
+    namespace fs = std::filesystem;
+    wchar_t original[32768]{}; GetEnvironmentVariableW(L"LOCALAPPDATA", original, 32768);
+    const auto root = fs::temp_directory_path() / ("boccia-settings-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directories(root);
+    _wputenv_s(L"LOCALAPPDATA", root.c_str());
+    check(settingsFile() == root / "Boccia/labeler-settings.json", "settings file must live under LOCALAPPDATA/Boccia");
+    auto settings = loadLabelerSettings();
+    check(settings.gpu && settings.hubAddress == "mark-hong-pc.tail68c059.ts.net:8790" && settings.worker.empty() && settings.token.empty(), "no file must give the defaults");
+    fs::create_directories(root / "Boccia");
+    std::ofstream(root / "Boccia/labeler-settings.json", std::ios::binary) << R"({"device":"cpu","extra":1})";
+    settings = loadLabelerSettings();
+    check(!settings.gpu && settings.hubAddress == "mark-hong-pc.tail68c059.ts.net:8790", "the device must be read and a missing hub must keep the default address");
+    settings.worker = "홍길동"; settings.token = "abc";
+    saveLabelerSettings(settings);
+    const auto stored = Json::parse(std::ifstream(root / "Boccia/labeler-settings.json", std::ios::binary));
+    check(stored["device"] == "cpu" && stored["extra"] == 1 && stored["hub"]["worker"] == "홍길동" && stored["hub"]["token"] == "abc" && stored["hub"]["address"] == "mark-hong-pc.tail68c059.ts.net:8790", "saving must keep the device and unknown keys");
+    check(loadLabelerSettings().worker == "홍길동" && !loadLabelerSettings().gpu, "saved settings must read back");
+    const Json status = hubStatusJson("review", Json{{"recording", "촬영 03"}, {"index", 142}}, Json{{"kind", "redraft"}, {"text", "초안 212 / 498"}, {"fraction", .43}}, true, true, "");
+    check(status["page"] == "review" && status["scene"]["index"] == 142 && status["job"]["kind"] == "redraft" && status["apply_previous"] == true && status["device"] == "GPU" && status["error"] == "", "status json fields");
+    check(status["text"] == "검수 · 촬영 03 · 프레임 0142 · 초안 212 / 498", "status text must read as one line");
+    const Json bare = hubStatusJson("data", nullptr, nullptr, false, false, "디스크 가득 참");
+    check(bare["scene"].is_null() && bare["job"].is_null() && bare["device"] == "CPU" && bare["text"] == "자료 · 오류", "status json without a scene or a job");
+    _wputenv_s(L"LOCALAPPDATA", original);
+    fs::remove_all(root);
+}
 int main(int argc,char** argv){try{
     viewTests();
+    settingsTests();
     check(std::regex_match(boccia::versionString(), std::regex(R"(\d{4}-\d{2}-\d{2} \d{2}:\d{2} · \S+)")), "version string shape");
     cv::Mat mask(9,13,CV_8UC1,cv::Scalar(0));mask(cv::Rect(4,2,5,5)).setTo(1);mask.at<uchar>(4,6)=0;
     auto rle=encodeMask(mask);auto decoded=decodeMask(rle,13,9);check(cv::countNonZero(mask!=decoded)==0,"RLE hole/column order lost");

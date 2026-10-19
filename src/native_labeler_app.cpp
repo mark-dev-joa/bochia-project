@@ -1,4 +1,5 @@
 #include "native_labeler_app.hpp"
+#include "labeler_log.hpp"
 #include "native_labeler_theme.hpp"
 #include "labeler_assist.hpp"
 #include <opencv2/imgproc.hpp>
@@ -15,17 +16,35 @@ namespace {
 using Clock = std::chrono::steady_clock;
 std::string title(const Json& scene) { return "촬영 " + std::to_string(scene.at("recording_number").get<int>()) + " · 프레임 " + std::to_string(scene.at("index").get<int>()); }
 }
-Application::Application(Configuration config): config_(std::move(config)), poll_(Clock::now()) { connect(); }
+Application::Application(Configuration config): config_(std::move(config)), poll_(Clock::now()) {
+    const auto legacyProject=config_.project;const bool startScreen=config_.startScreen;
+    page_=config_.training?Page::Split:Page::Data;
+    if(config_.startScreen){config_.source.clear();config_.project.clear();message_.clear();}
+    else {
+        std::string recovery;
+        if(!config_.project.empty()&&std::filesystem::is_regular_file(config_.source.parent_path()/"boccia-project.json")){
+            workspace_=config_.source.parent_path();workspaceName_=readWorkspace(workspace_).value("name", "프로젝트");
+            // An import a crash interrupted is undone before the labels open, as when a project is opened from the menu.
+            try{if(!pendingImports(workspace_).empty()||std::filesystem::exists(workspace_/"pending")){if(!config_.lease)config_.lease=acquireLabelLease(config_.project);rollbackImports(workspace_);}}
+            catch(const std::exception& error){recovery=error.what();}
+        }
+        connect();if(!recovery.empty())error_=recovery;
+    }
+    if(config_.rememberUi){try{wchar_t location[32768]{};GetEnvironmentVariableW(L"LOCALAPPDATA",location,32768);std::ifstream input(std::filesystem::path(location)/"Boccia/labeler-projects.json",std::ios::binary);const auto recent=Json::parse(input);if(recent.is_array())recentProjects_=recent;}catch(...){}}
+    if(config_.rememberUi){loadDevice();if(!settings_.worker.empty())startHub();else openWorkerDialog();}   // the hidden checks keep the CPU and join no hub
+    if(startScreen&&std::filesystem::is_regular_file(legacyProject)){const auto path=utf8(legacyProject);bool found=false;for(const auto& item:recentProjects_)found|=item.value("path","")==path;if(!found)recentProjects_.push_back({{"path",path},{"name","기존 라벨 작업"},{"legacy",true}});}
+}
 Application::~Application() {
+    setLogSink(nullptr);hub_.reset();   // the hub client stops first: its threads touch nothing of the app after this
     if(task_.valid()) task_.wait(); if(thumbTask_.valid()) thumbTask_.wait(); if(ahead_.valid()) ahead_.wait();
-    if(config_.rememberUi){try{rememberPosition();}catch(...){}} releaseFrames();deleteDoomed();
+    if(config_.rememberUi){try{rememberPosition();}catch(...){}try{if(projectOpened())rememberProject(workspace_.empty()?config_.project:workspace_);}catch(...){}} releaseFrames();deleteDoomed();
     for(auto& [key,id]:thumbs_)if(id)glDeleteTextures(1,&id);
 }
 std::filesystem::path Application::preferencesPath() const { return config_.project.parent_path()/(config_.project.stem().wstring()+L"-native-ui.json"); }
 void Application::rememberPosition() const {
     if(frames_.empty())return;
     const auto& scene=catalog_["scenes"][scene_];
-    Json state={{"recording",scene["recording"]},{"index",scene["index"]},{"camera",frames_[camera_].member["camera"]},{"editor",editor_},{"brightness",brightness_},{"representatives",representatives_},{"filter",filter_},{"masks",masks_},{"boxes",boxes_},{"circles",circles_},{"outlines",outlines_},{"view",view_},{"fit_circle",fitCircle_},{"panels",{listOpen_,sideOpen_,summaryOpen_}}};
+    Json state={{"recording",scene["recording"]},{"index",scene["index"]},{"camera",frames_[camera_].member["camera"]},{"editor",editor_},{"page",int(page_)},{"brightness",brightness_},{"export",exportSettings()},{"apply_previous",applyPrevious_},{"fit",fitCircle_},{"representatives",representatives_},{"filter",filter_},{"masks",masks_},{"boxes",boxes_},{"circles",circles_},{"outlines",outlines_},{"view",view_},{"fit_circle",fitCircle_},{"panels",{listOpen_,sideOpen_,summaryOpen_}}};
     auto path=preferencesPath();std::filesystem::create_directories(path.parent_path());
     auto temporary=path;temporary+=L"."+std::to_wstring(Clock::now().time_since_epoch().count())+L".tmp";std::ofstream stream(temporary,std::ios::binary);stream<<state.dump(2);stream.close();
     if(!stream)throw std::runtime_error("작업 위치 저장 실패");
@@ -35,7 +54,8 @@ void Application::restorePosition() {
     int index=0,camera=0;bool editor=false;
     if(config_.rememberUi){try {
         std::ifstream input(preferencesPath(),std::ios::binary);auto state=Json::parse(input);
-        brightness_=std::clamp(state.value("brightness",1.65f),.5f,3.f);representatives_=state.value("representatives",true);filter_=std::clamp(state.value("filter",0),0,3);masks_=state.value("masks",true);boxes_=state.value("boxes",true);circles_=state.value("circles",true);view_=std::clamp(state.value("view",0),0,viewCount-1);outlines_=state.value("outlines",true);fitCircle_=state.value("fit_circle",true);
+        const int savedPage=state.value("page",int(page_));if(!config_.training&&(savedPage==0||savedPage==1))page_=Page(savedPage);
+        brightness_=std::clamp(state.value("brightness",1.65f),.5f,3.f);restoreExportSettings(state.value("export",Json()));applyPrevious_=state.value("apply_previous",false);fitCircle_=state.value("fit",true);representatives_=state.value("representatives",true);filter_=std::clamp(state.value("filter",0),0,3);masks_=state.value("masks",true);boxes_=state.value("boxes",true);circles_=state.value("circles",true);view_=std::clamp(state.value("view",0),0,viewCount-1);outlines_=state.value("outlines",true);fitCircle_=state.value("fit_circle",true);
         if(state.contains("panels")&&state["panels"].is_array()&&state["panels"].size()==3){listOpen_=state["panels"][0];sideOpen_=state["panels"][1];summaryOpen_=state["panels"][2];}
         for(int i=0;i<int(catalog_["scenes"].size());++i){auto& scene=catalog_["scenes"][i];if(scene["recording"]==state.at("recording")&&scene["index"]==state.at("index")){
             index=i;editor=state.value("editor",false);for(int c=0;c<int(scene["members"].size());++c)if(scene["members"][c]["camera"]==state.at("camera"))camera=c;break;
@@ -44,7 +64,7 @@ void Application::restorePosition() {
     if(!catalog_["scenes"].empty())loadScene(index,editor,camera);
 }
 bool Application::idle() const {return settled()&&std::none_of(frames_.begin(),frames_.end(),[](const FrameView& frame){return frame.dirty;});}
-bool Application::canClose() const {return !busy()&&!pending()&&std::none_of(frames_.begin(),frames_.end(),[](const FrameView& frame){return frame.dirty;});}
+bool Application::canClose() const {return !busy()&&!pending()&&!exporting()&&std::none_of(frames_.begin(),frames_.end(),[](const FrameView& frame){return frame.dirty;});}
 void Application::preserveRecovery(){
     const auto directory=config_.project.parent_path()/"recovery";std::filesystem::create_directories(directory);   // beside the labels it belongs to
     for(auto& frame:frames_)if(frame.dirty||(&frame==&current()&&pending())){
@@ -62,19 +82,16 @@ void Application::launch(std::string label, std::function<JobResult()> work, std
 }
 // The engine lives in this process: the recordings are scanned and the labels opened on a worker thread, so the
 // window appears at once and an error (another source, a changed recording folder) shows in the usual place.
-void Application::connect() {
+void Application::connect(std::string note) {
     const auto config=config_;
     launch("로컬 데이터 연결", [config] {
         auto engine=std::make_shared<Engine>(EnginePaths{config.source,config.project,config.exports,config.models,config.root});
-        JobResult result{{{"catalog",engine->nativeCatalog()},{"auto",engine->autoStatus()},{"assist",engine->assistStatus()}}, {}};
+        JobResult result{{{"catalog",engine->nativeCatalog(false)},{"auto",engine->autoStatus()},{"assist",engine->assistStatus()}}, {}};
         result.engine=std::move(engine);
         return result;
-    }, [this](JobResult result){
-        engine_=std::move(result.engine); updateCatalog(result.data.at("catalog")); autoStatus_=result.data.at("auto"); message_="기존 촬영과 라벨 연결 완료";
+    }, [this,note](JobResult result){
+        engine_=std::move(result.engine); updateCatalog(result.data.at("catalog")); autoStatus_=result.data.at("auto"); message_=note.empty()?"자료와 라벨을 열었습니다.":note;
         circleMargin_=float(catalog_.value("circle_margin",.5));
-        // The colour camera's balls get their colours by themselves: drafts and older labels without one are filled in the background.
-        const int colorable=catalog_.value("colorable",0);
-        if(colorable>0){try{colorStatus_=engine_->nativeAction("fill-colors",Json::object());message_="컬러 공 "+grouped(colorable)+"개의 색상을 채우는 중";}catch(const std::exception& error){message_=error.what();}}
         restorePosition();
     });
 }
@@ -108,13 +125,27 @@ void Application::releaseFrames(){for(auto& frame:frames_){if(frame.texture)doom
 void Application::deleteDoomed(){if(!doomed_.empty()){glDeleteTextures(GLsizei(doomed_.size()),doomed_.data());doomed_.clear();}}
 namespace {
 // The cameras of one scene are read at the same time, each on its own thread.
-JobResult fetchScene(const std::shared_ptr<Engine>& engine,const Json& scene) {
+JobResult fetchScene(const std::shared_ptr<Engine>& engine,const Json& scene,bool applyPrevious) {
     const auto recording=scene.at("recording").get<std::string>();
     std::vector<std::future<FrameView>> cameras;
     for(const auto& member:scene.at("members"))cameras.push_back(std::async(std::launch::async,[engine,member,recording]{
         const auto camera=member.at("camera").get<std::string>();const int index=member.at("index").get<int>();
         FrameView frame;frame.member=member;frame.annotation=engine->frame(recording,camera,index);frame.image=engine->image(recording,camera,index);return frame;}));
-    JobResult result;for(auto& camera:cameras)result.frames.push_back(camera.get());
+    JobResult result;result.data=Json::object();for(auto& camera:cameras)result.frames.push_back(camera.get());
+    // 이전 적용 (2026-10-19 user request): the untouched drafts of a camera scene open with the nearest earlier confirmed
+    // frame's labels, saved only when the scene is confirmed. 전파 →: what a confirmed scene has still to give.
+    Json keys=Json::array(),untouched=Json::array();bool confirmed=!result.frames.empty();
+    for(const auto& frame:result.frames){keys.push_back(frame.annotation.at("key"));
+        if(!frame.annotation.value("human_touched",false)&&!frame.annotation.value("reviewed",false))untouched.push_back(frame.annotation.at("key"));
+        if(frame.member.value("selected",true)&&!frame.member.value("reviewed",false))confirmed=false;}
+    const bool photo=result.frames.size()==1&&result.frames[0].member.value("camera","")=="images";
+    if(applyPrevious&&!photo&&!untouched.empty()){
+        try{const Json preview=engine->nativeAction("carry-preview",{{"keys",untouched}});
+            for(auto& frame:result.frames){const std::string key=frame.annotation.at("key");if(!preview["frames"].contains(key))continue;
+                frame.annotation["boxes"]=preview["frames"][key]["boxes"];frame.applied=preview["frames"][key].value("from","");}}
+        catch(const std::exception&){}   // the drafts stay as they are
+    }
+    if(confirmed&&!photo){try{const Json counts=engine->nativeAction("propagation-counts",{{"sources",keys}});result.data["propagate_pending"]=counts.value("pending",0)+counts.value("carry",0);}catch(const std::exception&){}}
     return result;
 }
 }
@@ -129,15 +160,19 @@ void Application::loadScene(int index,bool editor,int camera,std::string note) {
         const auto& members=catalog_["scenes"][index]["members"];
         for(size_t i=0;i<result.frames.size()&&i<members.size();++i){result.frames[i].member=members[i];result.frames[i].annotation["review_status"]=members[i].value("status","draft");}
         if(backing_)backing_=false;else if(!frames_.empty()&&scene_!=index){history_.push_back(scene_);if(history_.size()>50)history_.erase(history_.begin());}
-        releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor;adding_=false;stale_=false;aheadDirty_=true;scrollToCurrent_=true;cancel();message_=note.empty()?"원본과 저장 라벨 표시 중":note;};
+        releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor||(frames_.size()==1&&frames_[0].member.value("camera","")=="images");adding_=false;stale_=false;aheadDirty_=true;scrollToCurrent_=true;cancel();propagatePending_=result.data.is_object()?result.data.value("propagate_pending",0):0;
+        std::string from;for(const auto& f:frames_)if(!f.applied.empty())from=f.applied.substr(f.applied.rfind('/')+1);
+        std::string shown=note;
+        if(shown.empty()&&!from.empty()){char text[48];std::snprintf(text,sizeof text,"이전 적용 · 프레임 %04d",std::atoi(from.c_str()));shown=text;}
+        message_=shown.empty()?"원본과 저장 라벨 표시 중":shown;};
     // A scene fetched ahead is used only if no automatic draft has been written since.
     if(index==aheadScene_&&ahead_.valid()&&aheadAuto_==catalog_["summary"].value("auto_revision",0)){
         const auto fetched=ahead_.share();aheadScene_=-1;++aheadHits_;
         if(fetched.wait_for(std::chrono::seconds(0))!=std::future_status::ready){launch("카메라 이미지 불러오기",[fetched]{return fetched.get();},show);return;}
         try{show(fetched.get());return;}catch(...){}   // fetch again below, so a failure is reported the usual way
     }
-    const auto scene=catalog_["scenes"][index];const auto engine=engine_;
-    launch("카메라 이미지 불러오기",[engine,scene]{return fetchScene(engine,scene);},show);
+    const auto scene=catalog_["scenes"][index];const auto engine=engine_;const bool apply=applyPrevious_;
+    launch("카메라 이미지 불러오기",[engine,scene,apply]{return fetchScene(engine,scene,apply);},show);
 }
 // Fetches the next unreviewed scene in the background, so confirming a scene does not wait for the images.
 void Application::prefetch() {
@@ -152,7 +187,8 @@ void Application::prefetch() {
     if(next<0||next==scene_)return;
     const auto engine=engine_;const auto scene=catalog_["scenes"][next];
     aheadScene_=next;aheadAuto_=revision;
-    ahead_=std::async(std::launch::async,[engine,scene]{return fetchScene(engine,scene);});
+    const bool apply=applyPrevious_;
+    ahead_=std::async(std::launch::async,[engine,scene,apply]{return fetchScene(engine,scene,apply);});
 }
 bool Application::pending() const { return !proposal_.is_null()||!polygon_.empty()||!points_.empty()||dragging_; }
 bool Application::guard(){if(busy()){message_="처리가 끝난 뒤 이동하세요. 화면 확대·이동은 계속할 수 있습니다.";return false;}if(pending()){message_="미확정 윤곽을 반영하거나 취소하세요.";return false;}return true;}
@@ -160,12 +196,16 @@ void Application::navigate(int index){if(!guard())return;if(!frames_.empty()&&cu
 void Application::showEditor(int camera){focus(camera);}
 void Application::switchCamera(int camera){focus(camera);}
 void Application::openPage(Page page){
+    if(!projectOpened()){page_=Page::Data;return;}
+    if(config_.training&&(page==Page::Data||page==Page::Review||page==Page::Export))return;
+    if(!config_.training&&(page==Page::Split||page==Page::TrainExport||page==Page::Train))return;
     if(!guard())return;
     if(!frames_.empty()&&current().dirty){save([this,page]{openPage(page);});return;}
     page_=page;
-    if(page!=Page::Review)refreshStage();else if(stale_)loadScene(scene_,editor_,camera_);
+    if(!engine_)return;
+    if(page==Page::Split||page==Page::TrainExport||page==Page::Train)refreshStage();else if(stale_&&page==Page::Review)loadScene(scene_,editor_,camera_);
 }
-void Application::showPage(int page){openPage(Page(std::clamp(page,0,3)));}
+void Application::showPage(int page){openPage(Page(std::clamp(page,0,5)));}
 // Enlarge one camera in place without selecting a ball.
 void Application::focus(int camera) {
     if(frames_.empty()||camera<0||camera>=int(frames_.size())||!guard())return;
@@ -259,6 +299,7 @@ void Application::apply() {
             if(existing[replacement_].contains("color"))box["color"]=existing[replacement_]["color"];
             existing[replacement_]=box;selected_=replacement_;
         } else {existing.push_back(box);selected_=int(existing.size())-1;}
+        logLine((added?"공 추가 · ":"공 수정 · ")+cameraLabel(current().member)+(added?std::string(" · ")+(!brushMask_.empty()?"브러시":tool_==Tool::Polygon?"폴리곤":tool_==Tool::Box?"박스":"클릭 분할"):" · 공 "+std::to_string(selected_+1)));
         cancel();changed();message_=std::string("윤곽 반영 · ")+note;
         // A found ball, once applied, takes the user back to the three-tile view (2026-10-08 user request).
         adding_=false;
@@ -272,6 +313,7 @@ void Application::removeBall(int slot,int ball){
     if(slot!=camera_&&current().dirty){save([this,slot,ball]{removeBall(slot,ball);});return;}
     camera_=slot;auto& objects=current().annotation["boxes"];if(ball<0||ball>=int(objects.size()))return;
     checkpoint();objects.erase(objects.begin()+ball);selected_=-1;current().scale=0;current().repaint=true;changed();
+    logLine("공 삭제 · "+cameraLabel(current().member)+" · 공 "+std::to_string(ball+1));
     message_="공을 지웠습니다 · Ctrl+Z로 되돌릴 수 있습니다";   // no dialog: deletion is immediate (2026-10-08 user request)
 }
 // Marks a ball of any camera of the scene as partly hidden, or not, from the checkbox on its crop (2026-10-08 user
@@ -282,89 +324,6 @@ void Application::setOccluded(int slot,int ball,bool value){
     camera_=slot;auto& objects=current().annotation["boxes"];if(ball<0||ball>=int(objects.size()))return;
     if(objects[ball].value("occluded",false)==value)return;
     checkpoint();setOccludedFlag(objects[ball],value);changed(false);message_=value?"일부 가림으로 표시했습니다":"일부 가림 표시를 지웠습니다";
-}
-// Grows every draft mask outward. The dialog says how many images and balls that touches; a person's work is left alone.
-void Application::confirmGrowth(){
-    if(!growAsk_)return;
-    if(!ImGui::IsPopupOpen("##grow-masks"))ImGui::OpenPopup("##grow-masks");
-    const auto viewport=ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos({viewport->WorkPos.x+viewport->WorkSize.x/2,viewport->WorkPos.y+viewport->WorkSize.y/2},ImGuiCond_Appearing,{.5f,.5f});
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{22,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,10});
-    if(ImGui::BeginPopupModal("##grow-masks",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
-        const auto growable=catalog_.value("growable",Json::object());
-        ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted("자동 초안 윤곽 1픽셀 넓히기");ImGui::PopFont();
-        ImGui::Text("사람이 손대지 않은 이미지 %s장의 공 %s개 마스크를 바깥으로 1픽셀 넓힙니다.",grouped(growable.value("frames",0)).c_str(),grouped(growable.value("balls",0)).c_str());
-        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"박스도 1픽셀씩 커집니다. 되돌릴 수 없고, 1분쯤 걸립니다.");ImGui::PopFont();
-        ImGui::Dummy({0,4});
-        bool close=false;
-        ImGui::PushFont(theme::bold,theme::px(theme::base));
-        if(theme::primaryButton("넓히기  Enter",{140,34})||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{growMasks(1);};close=true;}
-        ImGui::PopFont();ImGui::SameLine();
-        if(ImGui::Button("취소  Esc",{110,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
-        if(close){growAsk_=false;ImGui::CloseCurrentPopup();}
-        ImGui::EndPopup();
-    }
-    ImGui::PopStyleVar(2);
-}
-void Application::growMasks(int pixels){
-    if(!guard())return;
-    if(!frames_.empty()&&dirtySlot()>=0){save([this,pixels]{growMasks(pixels);},dirtySlot());return;}
-    const auto engine=engine_;const Json payload={{"pixels",pixels},{"expected_revision",catalog_["summary"]["revision"]}};
-    launch("윤곽 넓히는 중",[engine,payload]{return JobResult{engine->nativeAction("grow-masks",payload),{}};},[this](JobResult result){
-        updateSummary(result.data.at("summary"));catalog_["mask_growth"]=result.data.value("mask_growth",Json::object());catalog_["growable"]=result.data.value("growable",Json::object());
-        message_="공 "+grouped(result.data.value("balls",0))+"개의 윤곽을 넓혔습니다.";
-        if(!frames_.empty())loadScene(scene_,editor_,camera_,message_);
-    });
-}
-// Fills the colour of every colour-camera ball that has none. The engine reads the images in the background.
-void Application::confirmColors(){
-    if(!colorAsk_)return;
-    if(!ImGui::IsPopupOpen("##fill-colors"))ImGui::OpenPopup("##fill-colors");
-    const auto viewport=ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos({viewport->WorkPos.x+viewport->WorkSize.x/2,viewport->WorkPos.y+viewport->WorkSize.y/2},ImGuiCond_Appearing,{.5f,.5f});
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{22,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,10});
-    if(ImGui::BeginPopupModal("##fill-colors",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
-        ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted("컬러 공 색상 채우기");ImGui::PopFont();
-        ImGui::Text("컬러 카메라의 공 %s개에 빨강·파랑·흰색·검정을 자동으로 넣습니다.",grouped(catalog_.value("colorable",0)).c_str());
-        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"앱을 시작할 때도 자동으로 채웁니다. 이미 색상이 있는 공은 그대로 두고, 그동안 계속 작업할 수 있습니다.");ImGui::PopFont();
-        ImGui::Dummy({0,4});
-        bool close=false;
-        ImGui::PushFont(theme::bold,theme::px(theme::base));
-        if(theme::primaryButton("채우기  Enter",{140,34})||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{fillColors();};close=true;}
-        ImGui::PopFont();ImGui::SameLine();
-        if(ImGui::Button("취소  Esc",{110,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
-        if(close){colorAsk_=false;ImGui::CloseCurrentPopup();}
-        ImGui::EndPopup();
-    }
-    ImGui::PopStyleVar(2);
-}
-// Measures every masked ball's outline again from the image. The dialog says how many balls that is.
-void Application::confirmCircles(){
-    if(!circleAsk_)return;
-    if(!ImGui::IsPopupOpen("##refine-circles"))ImGui::OpenPopup("##refine-circles");
-    const auto viewport=ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos({viewport->WorkPos.x+viewport->WorkSize.x/2,viewport->WorkPos.y+viewport->WorkSize.y/2},ImGuiCond_Appearing,{.5f,.5f});
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{22,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,10});
-    if(ImGui::BeginPopupModal("##refine-circles",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
-        ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted("공 둘레를 영상에서 다시 재기");ImGui::PopFont();
-        const int count=catalog_.value(remeasure_?"circleable_remeasure":includeReviewed_?"circleable_all":"circleable",0);
-        ImGui::Text("공 %s개의 가장자리를 Canny로 찾아 원을 맞추고, 그 원으로 마스크와 검출 박스를 정합니다.",grouped(count).c_str());
-        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"확인 상태는 그대로이고 공을 지우거나 더하지 않습니다. 손으로 그린 윤곽, 직접 보정한 박스, 원이 맞지 않는 공(많이 가려진 공 포함)은 건너뜁니다. 그동안 계속 작업할 수 있습니다.");ImGui::PopFont();
-        ImGui::Dummy({0,2});
-        theme::checkbox("확인한 이미지의 공도 포함",&includeReviewed_);
-        theme::checkbox("이미 잰 공도 다시 재기 (둘레 여유를 바꾼 뒤)",&remeasure_);
-        ImGui::TextUnformatted("둘레 여유");ImGui::SameLine();ImGui::SetNextItemWidth(96);ImGui::DragFloat("##margin",&circleMargin_,.05f,-1.f,2.f,"%+.2f px");ImGui::SameLine();
-        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"잰 반지름에 더하는 픽셀. 0은 에지의 그래디언트 최대점, 양수는 그보다 바깥");ImGui::PopFont();
-        ImGui::Dummy({0,4});
-        bool close=false;
-        ImGui::PushFont(theme::bold,theme::px(theme::base));
-        if(theme::primaryButton("다듬기  Enter",{140,34})||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{refineCircles();};close=true;}
-        ImGui::PopFont();ImGui::SameLine();
-        if(ImGui::Button("취소  Esc",{110,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
-        if(close){circleAsk_=false;ImGui::CloseCurrentPopup();}
-        ImGui::EndPopup();
-    }
-    ImGui::PopStyleVar(2);
 }
 // After Space confirmed the scene: the prompt in the middle, where a second Space moves on and Esc stays.
 void Application::confirmNext(){
@@ -387,6 +346,9 @@ void Application::confirmNext(){
         if(theme::primaryButton("다음 장면  Space",{160,36})||ImGui::IsKeyPressed(ImGuiKey_Space,false)||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{advance();};close=true;}
         ImGui::PopFont();ImGui::SameLine();
         if(ImGui::Button("머물기  Esc",{110,36})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
+        if(propagatePending_>0&&propagationStatus_.value("status","")!="running"){   // 전파 → from here, then stay (2026-10-19)
+            ImGui::SameLine();char text[32];std::snprintf(text,sizeof text,"전파 → %d  P",propagatePending_);
+            if(ImGui::Button(text,{130,36})||ImGui::IsKeyPressed(ImGuiKey_P,false)){later_=[this]{propagateScene();};close=true;}}
         if(close){nextAsk_=false;ImGui::CloseCurrentPopup();}
         ImGui::EndPopup();
     }
@@ -397,8 +359,9 @@ void Application::confirmNext(){
 void Application::startMissing(bool dryRun,bool countOnly,int limit){
     if(busy())return;
     const auto engine=engine_;
-    const Json payload={{"cameras",missingCameras_==0?"colour":"all"},{"coverage",double(missingCoverage_)},{"min_radius",double(missingMinRadius_)},{"max_radius",double(missingMaxRadius_)},
+    Json payload={{"cameras",missingCameras_==0?"colour":"all"},{"coverage",double(missingCoverage_)},{"min_radius",double(missingMinRadius_)},{"max_radius",double(missingMaxRadius_)},
                         {"margin",double(circleMargin_)},{"dry_run",dryRun},{"count_only",countOnly},{"limit_frames",limit>=0?limit:dryRun?missingTrial_:0},{"sample_limit",8}};
+    payload.update(batchPayload_);
     launch(countOnly?"누락 공 후보 세기":dryRun?"누락 공 시험 실행":"누락 공 채우기",[engine,payload]{return JobResult{engine->nativeAction("fill-missing",payload),{}};},
            [this,countOnly](JobResult result){missingStatus_=result.data;if(countOnly)message_="후보 "+grouped(missingStatus_.value("candidates",0))+"개 · "+grouped(missingStatus_.value("frames_with_candidates",0))+"장";else message_="누락 공 작업을 시작했습니다. 그동안 계속 작업할 수 있습니다.";});
 }
@@ -486,7 +449,7 @@ void Application::sampleGrid(const char* heading){
         const std::string camera=sample.member.value("camera",""),note=sample.member.value("note","");
         const char* cam=camera.empty()?"?":camera.substr(camera.size()-1).c_str();
         if(!note.empty())std::snprintf(caption,sizeof caption,"%s·%04d %s",cam,sample.member.value("index",0),note.c_str());
-        else std::snprintf(caption,sizeof caption,"%s·%04d r%.1f %s",cam,sample.member.value("index",0),box.contains("circle")?box["circle"][2].get<double>():0.0,box.value("source","")=="auto_sam"?"SAM":"기하");
+        else std::snprintf(caption,sizeof caption,"%s·%04d r%.1f %s",cam,sample.member.value("index",0),box.contains("circle")?box["circle"][2].get<double>():0.0,box.value("source","")=="auto_sam"?"윤곽":"상자");
         theme::write(draw,{p0.x,p1.y+3},theme::text2,caption,11,theme::mono);
     }
 }
@@ -579,50 +542,33 @@ void Application::confirmMissing(){
 // Confirmed labels carried to the repeated frames the filter left out of the review (2026-10-08 user request).
 // After a confirmation: its labels carried into the drafts that follow it, and into its repeated frames, in the engine's
 // background thread. A propagation already running takes the keys afterwards.
-void Application::carryForward(Json keys){
-    for(const auto& key:keys)carryQueue_.push_back(key);
-    if(!engine_||propagationStatus_.value("status","")=="running")return;
-    try{propagationStatus_=engine_->nativeAction("propagate-reviewed",{{"carry",true},{"sources",carryQueue_}});carryQueue_=Json::array();}
-    catch(const std::exception&){}   // the next poll or confirmation tries again
+// 전파 → (2026-10-19 user request, in place of the carry that ran on every confirmation): this scene's confirmed labels
+// to its repeated frames and to the drafts of the next 1.5 s, in the background; the status check shows what it did.
+void Application::propagateScene(){
+    if(frames_.empty()||busy()||!engine_||propagationStatus_.value("status","")=="running")return;
+    Json keys=Json::array();for(const auto& frame:frames_)keys.push_back(frame.annotation.at("key"));
+    const auto engine=engine_;
+    launch("전파",[engine,keys]{return JobResult{engine->nativeAction("propagate-reviewed",{{"carry",true},{"sources",keys}}),{}};},
+           [this](JobResult result){propagationStatus_=result.data;propagatePending_=0;message_="전파 중";poll_={};});
+}
+// ← 이전 적용 on or off: the scene shown is fetched again with the new setting; a scene fetched ahead with the old one is dropped.
+void Application::toggleApplyPrevious(){
+    if(busy())return;applyPrevious_=!applyPrevious_;aheadScene_=-1;aheadDirty_=true;
+    logLine(applyPrevious_?"이전 적용 켬":"이전 적용 끔");
+    if(!frames_.empty()&&dirtySlot()<0&&!pending())loadScene(scene_,editor_,camera_,applyPrevious_?"이전 적용 켬":"이전 적용 끔");
+    else message_=applyPrevious_?"이전 적용 켬 · 다음 장면부터":"이전 적용 끔";
 }
 void Application::startPropagation(){
-    if(busy())return;const auto engine=engine_;const Json payload={{"force",propagateForce_},{"carry",propagateCarry_}};
+    if(busy())return;const auto engine=engine_;Json payload=batchPayload_;payload.update({{"force",propagateForce_},{"carry",propagateCarry_}});
     launch("라벨 전파 시작",[engine,payload]{return JobResult{engine->nativeAction("propagate-reviewed",payload),{}};},[this](JobResult result){propagationStatus_=result.data;message_="반복 프레임에 라벨을 전파하는 중입니다. 그동안 계속 작업할 수 있습니다.";});
-}
-void Application::confirmPropagation(){
-    if(!propagateAsk_)return;
-    if(!ImGui::IsPopupOpen("##propagate"))ImGui::OpenPopup("##propagate");
-    const auto viewport=ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos({viewport->WorkPos.x+viewport->WorkSize.x/2,viewport->WorkPos.y+viewport->WorkSize.y/2},ImGuiCond_Appearing,{.5f,.5f});
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{22,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,10});
-    if(ImGui::BeginPopupModal("##propagate",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoTitleBar)){
-        const auto counts=catalog_.value("propagation_counts",Json::object());
-        ImGui::PushFont(theme::bold,theme::px(theme::title));ImGui::TextUnformatted("확인한 라벨을 반복 프레임에 전파");ImGui::PopFont();
-        ImGui::Text("확인한 대표 프레임 %s장의 반복 프레임 %s장 중 아직 전파하지 않은 %s장에 라벨을 옮깁니다.",grouped(counts.value("representatives",0)).c_str(),grouped(counts.value("duplicates",0)).c_str(),grouped(counts.value("pending",0)).c_str());
-        ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+700);
-        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::text2),"반복 프레임의 초안 공 가운데 확인한 공과 8픽셀 안에서 맞는 것은 그 프레임 자체의 위치를 쓰고 그 프레임 영상으로 원을 다시 잽니다. 사람이 더한 공은 복사하고 지운 공은 뺍니다. 전파된 프레임은 학습 데이터에 들어가되 검수 대상은 아니며, 목록에 초록 고리로 보입니다. 대표 프레임을 다시 고치면 다음 전파 때 자동으로 갱신되고, 전파된 프레임을 직접 고치면 보통 프레임이 됩니다.");
-        ImGui::PopTextWrapPos();ImGui::PopFont();
-        ImGui::Dummy({0,2});
-        theme::checkbox("이미 최신인 프레임도 다시 전파",&propagateForce_);
-        {char carry[160];std::snprintf(carry,sizeof carry,"확인한 프레임 뒤 1.5초 안의 검수 대상 가운데 초안이 확인본과 다른 %s장도 맞추기 (공이 아직 그 자리에 있는지 영상으로 확인한 뒤 더하고, 움직인 공은 새 자리를 지키며, 그림자 같은 오검출은 뺌. 확인은 사람이)",grouped(counts.value("carry",0)).c_str());theme::checkbox(carry,&propagateCarry_);}
-        ImGui::Dummy({0,4});
-        bool close=false;const bool running=propagationStatus_.value("status","")=="running";
-        ImGui::BeginDisabled(running||busy());
-        ImGui::PushFont(theme::bold,theme::px(theme::base));
-        if(theme::primaryButton("전파  Enter",{140,34})||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{startPropagation();};close=true;}
-        ImGui::PopFont();ImGui::EndDisabled();ImGui::SameLine();
-        if(ImGui::Button("취소  Esc",{110,34})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
-        if(close){propagateAsk_=false;ImGui::CloseCurrentPopup();}
-        ImGui::EndPopup();
-    }
-    ImGui::PopStyleVar(2);
 }
 // Balls partly hidden by a hand, a person or the frame edge, marked by themselves (2026-10-08 user request). The rim
 // share, the mask's circularity and the box's aspect decide; a rim hidden by a neighbouring ball on the floor is exempt.
 void Application::startOcclusion(bool dryRun,bool countOnly,int limit){
     if(busy())return;const auto engine=engine_;
-    const Json payload={{"coverage",double(occlCoverage_)},{"circularity",double(occlCircularity_)},{"aspect",double(occlAspect_)},{"include_reviewed",occlReviewed_},
+    Json payload={{"coverage",double(occlCoverage_)},{"circularity",double(occlCircularity_)},{"aspect",double(occlAspect_)},{"include_reviewed",occlReviewed_},
                         {"dry_run",dryRun},{"count_only",countOnly},{"limit_frames",limit>=0?limit:dryRun?occlTrial_:0},{"sample_limit",8}};
+    payload.update(batchPayload_);
     launch(countOnly?"가림 후보 세기":dryRun?"가림 시험 실행":"가림 표시",[engine,payload]{return JobResult{engine->nativeAction("mark-occluded",payload),{}};},
            [this,countOnly](JobResult result){occlusionStatus_=result.data;message_=countOnly?"아직 표시 없는 공 "+grouped(occlusionStatus_.value("balls_total",0))+"개 · "+grouped(occlusionStatus_.value("frames_total",0))+"장":"가림 판정을 시작했습니다. 그동안 계속 작업할 수 있습니다.";});
 }
@@ -678,18 +624,6 @@ void Application::confirmOcclusion(){
     }
     ImGui::PopStyleVar(2);
 }
-void Application::refineCircles(){
-    if(!guard())return;
-    if(!frames_.empty()&&dirtySlot()>=0){save([this]{refineCircles();},dirtySlot());return;}
-    const auto engine=engine_;const Json payload={{"include_reviewed",includeReviewed_},{"remeasure",remeasure_},{"margin",double(circleMargin_)}};
-    launch("둘레 다듬기 시작",[engine,payload]{return JobResult{engine->nativeAction("refine-circles",payload),{}};},[this](JobResult result){circleStatus_=result.data;message_="공 둘레를 다시 재는 중입니다. 끝나면 알려 드립니다.";});
-}
-void Application::fillColors(){
-    if(!guard())return;
-    if(!frames_.empty()&&dirtySlot()>=0){save([this]{fillColors();},dirtySlot());return;}
-    const auto engine=engine_;
-    launch("색상 채우기 시작",[engine]{return JobResult{engine->nativeAction("fill-colors",Json::object()),{}};},[this](JobResult result){colorStatus_=result.data;message_="색상을 채우는 중입니다. 끝나면 알려 드립니다.";});
-}
 void Application::undo(){if(busy())return;if(pending()){cancel();return;}auto& f=current();if(f.history.empty())return;f.annotation=f.history.back();f.history.pop_back();selected_=f.annotation["boxes"].empty()?-1:std::min(selected_,int(f.annotation["boxes"].size())-1);changed();}
 void Application::segment(cv::Point2d point,bool negative) {
     if(busy())return;
@@ -697,7 +631,7 @@ void Application::segment(cv::Point2d point,bool negative) {
     if(points_.empty()) {if(negative){message_="첫 점은 공 내부에 클릭하세요.";return;}replacement_=target(current(),point);if(replacement_>=0)selected_=replacement_;}
     if(points_.size()>=32){message_="점은 최대 32개입니다. 현재 결과를 반영하거나 취소하세요.";return;}
     points_.push_back({{"x",point.x},{"y",point.y},{"label",negative?0:1}});
-    auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["replacement"]=replacement_;payload["radius"]=radius_;
+    auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["replacement"]=replacement_;payload["colour"]=fitCircle_;payload["radius"]=radius_;
     const auto key=current().annotation.at("key").get<std::string>();const auto engine=engine_;const auto token=generation_;
     launch("EfficientSAM으로 공 윤곽 분리",[engine,payload]{return JobResult{engine->assist("segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_=proposal_.contains("circle")?"제안 미확정 · 원 맞춤 완료 · Space 반영, Esc 취소":"제안 미확정 · 원 맞춤 실패, 마스크 경계 박스 · Space 반영, Esc 취소";});
 }
@@ -707,7 +641,7 @@ void Application::segmentBox(cv::Rect2d box) {
     const cv::Point2d center{box.x+box.width/2,box.y+box.height/2};
     replacement_=target(current(),center);if(replacement_>=0)selected_=replacement_;
     points_.push_back({{"x",center.x},{"y",center.y},{"label",1}});
-    auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["replacement"]=replacement_;payload["radius"]=std::max(box.width,box.height)/2;payload["box"]={box.x,box.y,box.width,box.height};
+    auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points_;payload["replacement"]=replacement_;payload["colour"]=fitCircle_;payload["radius"]=std::max(box.width,box.height)/2;payload["box"]={box.x,box.y,box.width,box.height};
     const auto key=current().annotation.at("key").get<std::string>();const auto engine=engine_;const auto token=generation_;
     launch("EfficientSAM으로 공 윤곽 분리",[engine,payload]{return JobResult{engine->assist("segment",payload),{}};},[this,key,token](JobResult result){if(token!=generation_||current().annotation.value("key","")!=key)return;proposal_=result.data.at("proposals").at(0);current().repaint=true;message_=proposal_.contains("circle")?"제안 미확정 · 원 맞춤 완료 · Space 반영, Esc 취소":"제안 미확정 · 원 맞춤 실패, 마스크 경계 박스 · Space 반영, Esc 취소";});
 }
@@ -715,7 +649,7 @@ void Application::polygonProposal(){
     if(busy()||polygon_.size()<3)return;Json points=Json::array();for(auto point:polygon_)points.push_back({point.x,point.y});
     // An outline follows the edge of a ball, so its middle says which ball it is; its first point may lie in a neighbour's box.
     replacement_=target(current(),boundsCenter(polygon_));if(replacement_>=0)selected_=replacement_;
-    auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points;const auto engine=engine_;const auto token=generation_;
+    auto payload=annotationPayload(current().annotation,catalog_["summary"]["revision"].get<int>());payload["points"]=points;payload["colour"]=fitCircle_;const auto engine=engine_;const auto token=generation_;
     launch("수동 폴리곤 마스크 만들기",[engine,payload]{return JobResult{engine->assist("polygon",payload),{}};},[this,token](JobResult result){if(token!=generation_)return;proposal_=result.data.at("proposals").at(0);polygon_.clear();current().repaint=true;message_=proposal_.contains("circle")?"폴리곤 미리보기 · 원 맞춤 완료 · Space로 반영":"폴리곤 미리보기 · 원 맞춤 실패, 마스크 경계 박스 · Space로 반영";});
 }
 void Application::review(Scope scope,bool hold,int member) {
@@ -726,25 +660,35 @@ void Application::review(Scope scope,bool hold,int member) {
         queued_=[this,scope,hold,member,scene=scene_]{if(scene_!=scene)return;if(nextAsk_){nextAsk_=false;advance();}else review(scope,hold,member);};
         message_=busyLabel_+" 중 · 끝나면 바로 "+(hold?"보류합니다":"확인합니다");return;}
     if(!guard())return;
-    if(dirtySlot()>=0){save([this,scope,hold,member]{review(scope,hold,member);},dirtySlot());return;}
     Json keys=Json::array();
     if(scope==Scope::Camera)keys.push_back(frames_.at(member>=0?member:camera_).annotation.at("key"));
     else for(auto& frame:frames_)if(frame.member.value("selected",true)&&(!hold||!frame.member.value("reviewed",false)))keys.push_back(frame.annotation.at("key"));
     if(keys.empty())return;
+    // The screen's unsaved edits and the labels 이전 적용 showed go in the same write as the confirmation (2026-10-19: a
+    // save and then a confirmation wrote the label file twice). An edited frame outside it is saved first, as before.
+    Json edits=Json::object();std::vector<size_t> carried;
+    for(size_t i=0;i<frames_.size();++i){auto& frame=frames_[i];const std::string key=frame.annotation.at("key");
+        const bool inKeys=std::find(keys.begin(),keys.end(),Json(key))!=keys.end();
+        if((frame.dirty||!frame.applied.empty())&&inKeys){Json boxes=frame.annotation["boxes"];for(auto& box:boxes)box.erase("contours");edits[key]=std::move(boxes);carried.push_back(i);}
+        else if(frame.dirty){save([this,scope,hold,member]{review(scope,hold,member);},int(i));return;}}
     const bool moveOn=scope==Scope::Scene||hold;
     // The engine refuses when it holds a different number of balls than this screen shows, as after an automatic draft.
     Json seen=Json::object();for(const auto& frame:frames_)seen[frame.annotation.at("key").get<std::string>()]=frame.annotation["boxes"].size();
-    const auto engine=engine_;Json payload={{"keys",keys},{"seen",seen},{"status",hold?"hold":"reviewed"},{"expected_revision",catalog_["summary"]["revision"]}};
-    launch(hold?"보류 상태 저장":"확인 저장",[engine,payload]{
-        try{return JobResult{engine->nativeAction("review",payload),{}};}
-        catch(const Conflict&){return JobResult{{{"conflict",true},{"catalog",engine->nativeCatalog()}},{}};}
-    },[this,moveOn,hold,keys,scope](JobResult result){
+    const auto engine=engine_;Json payload={{"keys",keys},{"seen",seen},{"edits",edits},{"status",hold?"hold":"reviewed"},{"expected_revision",catalog_["summary"]["revision"]}};
+    launch(hold?"보류 상태 저장":"확인 저장",[engine,payload,keys,hold]{
+        try{Json result=engine->nativeAction("review",payload);
+            if(!hold){try{const Json counts=engine->nativeAction("propagation-counts",{{"sources",keys}});result["propagate_pending"]=counts.value("pending",0)+counts.value("carry",0);}catch(const std::exception&){}}
+            return JobResult{result,{}};}
+        catch(const Conflict&){return JobResult{{{"conflict",true},{"catalog",engine->nativeCatalog(false)}},{}};}
+    },[this,moveOn,hold,keys,scope,carried](JobResult result){
         if(result.data.contains("conflict")){updateCatalog(result.data["catalog"]);loadScene(scene_,editor_,camera_,"저장된 라벨이 화면과 달라 다시 불러왔습니다. 확인한 뒤 다시 누르세요.");return;}
         updateSummary(result.data.at("summary"));
         for(auto& f:frames_)if(std::find(keys.begin(),keys.end(),f.annotation["key"])!=keys.end()){f.annotation["reviewed"]=!hold;f.annotation["review_status"]=hold?"hold":"reviewed";}
+        for(const size_t i:carried)if(i<frames_.size()){frames_[i].dirty=false;frames_[i].applied.clear();}
+        if(!hold)propagatePending_=result.data.value("propagate_pending",0);
+        {int balls=0;for(const auto& frame:frames_)balls+=int(frame.annotation.value("boxes",Json::array()).size());logLine((hold?"보류 · ":"확인 · ")+hubSceneName()+(hold?std::string():" · 공 "+std::to_string(balls)+"개"));}
         message_=hold?"보류로 표시했습니다":"확인했습니다";
         // A hold moves on at once; a confirmation stops at a prompt, and a second Space moves on (2026-10-08 user request).
-        if(!hold)carryForward(keys);   // the drafts of the next 1.5 s follow this confirmation at once (2026-10-09 user request)
         if(hold&&moveOn)advance();else if(scope==Scope::Scene)nextAsk_=true;});
 }
 // Held images are skipped; they are revisited through the list filter.
@@ -788,23 +732,47 @@ void Application::nextUnreviewed(){
     loadScene(index);
 }
 void Application::selectSceneForCapture(int recordingNumber,int index){if(!ready()||busy())return;for(int i=0;i<int(catalog_["scenes"].size());++i)if(catalog_["scenes"][i].value("recording_number",0)==recordingNumber&&catalog_["scenes"][i].value("index",-1)==index){loadScene(i);return;}}
+int Application::runningJobs() const {
+    int count=0;
+    for(const Json* status:{&exportStatus_,&colorStatus_,&circleStatus_,&missingStatus_,&propagationStatus_,&occlusionStatus_,&redraftStatus_})count+=status->value("status","")=="running";
+    return count+(autoStatus_.value("job",Json::object()).value("status","")=="running");
+}
+// The catalog read again on the status thread, and the scene shown again when the labels changed under it.
+void Application::refreshCatalog(bool reloadScene){
+    const auto engine=engine_;
+    pollTask_=std::async(std::launch::async,[engine]{return JobResult{{{"catalog",engine->nativeCatalog(false)}},{}};});
+    pollDone_=[this,reloadScene](JobResult result){updateCatalog(result.data["catalog"]);if(reloadScene){if(page_==Page::Review)loadScene(scene_,editor_,camera_);else stale_=true;}};
+}
 void Application::tick(){
+    if(pollTask_.valid()&&pollTask_.wait_for(std::chrono::seconds(0))==std::future_status::ready){
+        auto done=std::move(pollDone_);pollDone_=nullptr;
+        try{auto result=pollTask_.get();if(done)done(std::move(result));}catch(const std::exception&){}   // a failed check: the next one tries again
+    }
+    // Every notice and error the screen shows goes to the log as well (labeler_log.hpp).
+    if(error_!=loggedError_){if(!error_.empty())logLine("오류 · "+error_);loggedError_=error_;}
+    if(message_!=loggedMessage_){if(!message_.empty())logLine("알림 · "+message_);loggedMessage_=message_;}
     if(task_.valid()&&task_.wait_for(std::chrono::seconds(0))==std::future_status::ready){
         auto complete=std::move(completion_);
         try {auto result=task_.get();busyLabel_.clear();complete(std::move(result));}
-        catch(const std::exception& error){error_=error.what();busyLabel_.clear();message_="처리에 실패했습니다. 변경과 현재 위치를 유지합니다.";
+        catch(const std::exception& error){error_=error.what();busyLabel_.clear();importProgress_.reset();message_="처리에 실패했습니다. 변경과 현재 위치를 유지합니다.";
             if(!frames_.empty()&&current().dirty){try{preserveRecovery();message_="저장 실패 · 변경은 메모리와 recovery 폴더에 보관했습니다.";}catch(...) {}}
         }
     }
     // The key pressed during the job: done now, or dropped when the job failed.
     if(queued_){if(!error_.empty())queued_=nullptr;else if(!busy()){auto action=std::move(queued_);queued_=nullptr;action();}}
-    pumpThumbs();prefetch();
+    pumpThumbs();prefetch();hubTick();
     if(ready()&&!busy()&&!pending()&&dirtySlot()>=0&&Clock::now()-changed_>std::chrono::milliseconds(450)&&error_.empty())save({},dirtySlot());
-    const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running"||colorStatus_.value("status","")=="running"||circleStatus_.value("status","")=="running"||missingStatus_.value("status","")=="running"||propagationStatus_.value("status","")=="running"||occlusionStatus_.value("status","")=="running";
+    const bool activeJob=autoStatus_.value("job",Json::object()).value("status","")=="running"||exportStatus_.value("status","")=="running"||colorStatus_.value("status","")=="running"||circleStatus_.value("status","")=="running"||missingStatus_.value("status","")=="running"||propagationStatus_.value("status","")=="running"||occlusionStatus_.value("status","")=="running"||redraftStatus_.value("status","")=="running";
     const auto pollEvery=propagationStatus_.value("status","")=="running"?std::chrono::milliseconds(400):std::chrono::milliseconds(3000);   // a live carry is short; its result should show quickly
-    if(activeJob&&ready()&&!busy()&&Clock::now()-poll_>pollEvery&&error_.empty()&&!current().dirty&&!pending()){
+    if(activeJob&&ready()&&!pollTask_.valid()&&Clock::now()-poll_>pollEvery&&error_.empty()&&engine_)poll();
+}
+// The status check of the background jobs (2026-10-19: it took the slot of the person's own actions, so Space waited
+// for it): statuses and the label revisions only; the catalog, a pass over every frame, only when something changed.
+void Application::poll(){
+    {
         poll_=Clock::now();const auto engine=engine_;
-        launch("작업 상태 확인",[engine]{return JobResult{{{"auto",engine->autoStatus()},{"export",engine->exportStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"missing",engine->missingFillStatus()},{"propagation",engine->propagationStatus()},{"occlusion",engine->occlusionStatus()},{"catalog",engine->nativeCatalog()}}, {}};},[this](JobResult result){
+        pollTask_=std::async(std::launch::async,[engine]{return JobResult{{{"auto",engine->autoStatus()},{"export",engine->exportStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"missing",engine->missingFillStatus()},{"propagation",engine->propagationStatus()},{"occlusion",engine->occlusionStatus()},{"redraft",engine->redraftStatus()},{"revisions",engine->revisions()}}, {}};});
+        pollDone_=[this](JobResult result){const int runningBefore=runningJobs();
             const auto oldRevision=catalog_["summary"].value("revision",0),oldAuto=catalog_["summary"].value("auto_revision",0);const bool exporting=exportStatus_.value("status","")=="running";
             const bool coloring=colorStatus_.value("status","")=="running",refining=circleStatus_.value("status","")=="running",filling=missingStatus_.value("status","")=="running",propagating=propagationStatus_.value("status","")=="running";
             propagationStatus_=result.data["propagation"];
@@ -815,19 +783,31 @@ void Application::tick(){
                 else{message_="공 "+grouped(occlusionStatus_.value("applied_balls",0))+"개를 일부 가림으로 표시했습니다 ("+grouped(occlusionStatus_.value("applied_frames",0))+"장).";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}}
             if(propagating&&propagationStatus_.value("status","")!="running"){
                 if(propagationStatus_.value("live",false)){if(propagationStatus_.value("carried",0)+propagationStatus_.value("frames",0)>0)message_="확인한 라벨을 다음 초안 "+grouped(propagationStatus_.value("carried",0))+"장과 반복 "+grouped(propagationStatus_.value("frames",0))+"장에 맞췄습니다.";}
-                else{message_=propagationStatus_.value("status","")=="complete"?"반복 프레임 "+grouped(propagationStatus_.value("frames",0))+"장에 라벨을 전파하고 초안 "+grouped(propagationStatus_.value("carried",0))+"장을 채웠습니다 (공 "+grouped(propagationStatus_.value("balls",0))+"개).":"라벨 전파가 실패했습니다: "+propagationStatus_.value("error","");if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
-                if(!carryQueue_.empty())carryForward(Json::array());}
-            autoStatus_=result.data["auto"];exportStatus_=result.data["export"];colorStatus_=result.data["color"];circleStatus_=result.data["circle"];missingStatus_=result.data["missing"];updateCatalog(result.data["catalog"]);
+                else{if(propagationStatus_.value("status","")=="complete")logLine("전파 → · 반복 "+grouped(propagationStatus_.value("frames",0))+"장 · 초안 "+grouped(propagationStatus_.value("carried",0))+"장");
+                    message_=propagationStatus_.value("status","")=="complete"?"반복 프레임 "+grouped(propagationStatus_.value("frames",0))+"장에 라벨을 전파하고 초안 "+grouped(propagationStatus_.value("carried",0))+"장을 채웠습니다 (공 "+grouped(propagationStatus_.value("balls",0))+"개).":"라벨 전파가 실패했습니다: "+propagationStatus_.value("error","");if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
+                }
+            {   // 초안 다시 만들기 finished: say so and show the new drafts
+                const bool redrafting=redraftStatus_.value("status","")=="running";redraftStatus_=result.data["redraft"];
+                if(redrafting&&redraftStatus_.value("status","")!="running"){
+                    const std::string state=redraftStatus_.value("status","");
+                    message_=state=="complete"?"초안을 다시 만들었습니다 · "+grouped(redraftStatus_.value("drafted",0))+"장":state=="stopped"?"초안 다시 만들기를 중단했습니다.":"초안 다시 만들기가 실패했습니다: "+redraftStatus_.value("error","");
+                    if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;
+                    if(batchTools_)queued_=[this]{refreshBatchScope();};}
+            }
+            autoStatus_=result.data["auto"];exportStatus_=result.data["export"];colorStatus_=result.data["color"];circleStatus_=result.data["circle"];missingStatus_=result.data["missing"];
             if(filling&&missingStatus_.value("status","")!="running"){
                 const bool trial=missingStatus_.value("dry_run",false);
                 if(missingStatus_.value("status","")!="complete")message_="누락 공 채우기가 실패했습니다: "+missingStatus_.value("error","");
+                else if(trial&&missingStatus_.value("method","")=="circles"){message_="원형 검출 · 새 공 "+grouped(missingStatus_.value("balls",0))+"개 · "+grouped(missingStatus_.value("frames",0))+"장";loadMissingSamples();}
                 else if(trial){message_="시험 실행 완료 · "+grouped(missingStatus_.value("frames",0))+"장에 공 "+grouped(missingStatus_.value("balls",0))+"개 (저장 안 함)";loadMissingSamples();}
                 else{message_="누락 공 "+grouped(missingStatus_.value("applied_balls",0))+"개를 "+grouped(missingStatus_.value("applied_frames",0))+"장에 추가했습니다.";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}}
             if(refining&&circleStatus_.value("status","")!="running"){message_=circleStatus_.value("status","")=="complete"?"공 "+grouped(circleStatus_.value("balls",0))+"개의 둘레를 다시 쟀습니다. 건너뛴 공 "+grouped(circleStatus_.value("skipped",0))+"개.":"둘레 다듬기가 실패했습니다.";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
             if(coloring&&colorStatus_.value("status","")!="running"){message_=colorStatus_.value("status","")=="complete"?"공 "+grouped(colorStatus_.value("filled",0))+"개의 색상을 채웠습니다.":"색상 채우기가 실패했습니다.";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
-            if(oldRevision!=catalog_["summary"].value("revision",0)||oldAuto!=catalog_["summary"].value("auto_revision",0)){if(page_==Page::Review)loadScene(scene_,editor_,camera_);else stale_=true;}
+            const Json revisions=result.data.value("revisions",Json::object());
+            const bool changed=oldRevision!=revisions.value("revision",0)||oldAuto!=revisions.value("auto_revision",0);
+            if(changed||runningJobs()<runningBefore)refreshCatalog(changed);   // the catalog, then the scene again when the labels moved under it
             if(exporting&&exportStatus_.value("status","")!="running"){message_=exportStatus_.contains("error")?"내보내기가 실패했습니다. 내보내기 화면에서 원인을 확인하세요.":"내보내기를 마쳤습니다.";refreshStage();}
-        });
+        };
     }
 }
 void Application::uploadTexture(GLuint& texture,const cv::Mat& pixels,bool rgba){
@@ -1010,7 +990,7 @@ bool Application::stageCheckStep(int step) {
         leaveGroup(groups_,second);expect(groups_[first]!=groups_[second],"a recording that left its group is still grouped");
         proposeSplit();return true;}
     case 2:expect(planned(),"no plan after regrouping");confirmSplit();return true;
-    case 3:expect(page_==Page::Export&&dataVersion().size()==64,"confirming did not open the export page with a data version");crops_=false;startExport();return true;
+    case 3:expect(page_==Page::TrainExport&&dataVersion().size()==64,"confirming did not open the export page with a data version");crops_=false;startExport();return true;
     default:{
         const auto status=exportStatus_.value("status","");
         if(status=="running")return true;
@@ -1027,7 +1007,7 @@ bool Application::stageCheckStep(int step) {
 // The stage pages show per-recording counts that only the full catalog carries.
 void Application::refreshStage(){
     if(busy())return;const auto engine=engine_;
-    launch("현황 새로 읽기",[engine]{return JobResult{{{"catalog",engine->nativeCatalog()},{"exports",engine->exports()},{"export",engine->exportStatus()},{"auto",engine->autoStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"missing",engine->missingFillStatus()},{"propagation",engine->propagationStatus()},{"occlusion",engine->occlusionStatus()}},{}};},
+    launch("현황 새로 읽기",[engine]{return JobResult{{{"catalog",engine->nativeCatalog(false)},{"exports",engine->exports()},{"export",engine->exportStatus()},{"auto",engine->autoStatus()},{"color",engine->colorFillStatus()},{"circle",engine->circleRefineStatus()},{"missing",engine->missingFillStatus()},{"propagation",engine->propagationStatus()},{"occlusion",engine->occlusionStatus()}},{}};},
         [this](JobResult result){
             const auto revision=catalog_["summary"].value("revision",0),automatic=catalog_["summary"].value("auto_revision",0);
             missingStatus_=result.data["missing"];propagationStatus_=result.data["propagation"];occlusionStatus_=result.data["occlusion"];
@@ -1041,7 +1021,7 @@ void Application::refreshStage(){
 }
 void Application::keys() {
     auto& io=ImGui::GetIO();
-    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||growAsk_||colorAsk_||circleAsk_||nextAsk_||missingAsk_||propagateAsk_||occludeAsk_)return;   // an open dialog owns the keys
+    if(page_!=Page::Review||io.WantTextInput||frames_.empty()||createProjectWanted_||importPreviewWanted_||settingsWanted_||nextAsk_||missingAsk_||occludeAsk_)return;   // an open dialog owns the keys
     auto pressed=[](ImGuiKey key){return ImGui::IsKeyPressed(key,false);};
     if(pressed(ImGuiKey_Escape)){
         if(pending())cancel();
@@ -1088,40 +1068,54 @@ void Application::keys() {
     if(pressed(ImGuiKey_O)){checkpoint();setOccludedFlag(objects[selected_],!objects[selected_].value("occluded",false));changed();}
     if(pressed(ImGuiKey_Delete))removeSelected();
 }
-// Name, page tabs, progress, save state and the shortcut list. Plain tabs with an underline, like any desktop tool.
+// The mark and name, the project button, the tabs, then progress, save state and the shortcut list (design/labeler-v3).
 void Application::topBar() {
-    const float width=ImGui::GetContentRegionAvail().x,height=44;const ImVec2 origin=ImGui::GetCursorScreenPos();
+    const float width=ImGui::GetContentRegionAvail().x,height=48;const ImVec2 origin=ImGui::GetCursorScreenPos();
     ImGui::Dummy({width,height});const ImVec2 after=ImGui::GetCursorScreenPos();auto draw=ImGui::GetWindowDrawList();
     draw->AddRectFilled(origin,{origin.x+width,origin.y+height},theme::bg1);
     draw->AddLine({origin.x,origin.y+height-.5f},{origin.x+width,origin.y+height-.5f},theme::line);
-    theme::write(draw,{origin.x+16,origin.y+13},theme::text,"Boccia Labeler",14,theme::bold);
-    float x=origin.x+16+theme::extent("Boccia Labeler",14,theme::bold).x+28;
-    static const char* names[]={"사전 작업","검수","분할","내보내기"};
-    for(int i=0;i<4;++i){
-        const float tab=theme::extent(names[i]).x+24;const bool on=int(page_)==i;
-        ImGui::SetCursorScreenPos({x,origin.y});ImGui::PushID(i);
-        if(ImGui::InvisibleButton("##tab",{tab,height})&&!on)openPage(Page(i));
-        const bool hovered=ImGui::IsItemHovered();ImGui::PopID();
-        theme::write(draw,{x+12,origin.y+13},on||hovered?theme::text:theme::text2,names[i]);
-        if(on)draw->AddRectFilled({x+8,origin.y+height-2},{x+tab-8,origin.y+height},theme::accent);
-        x+=tab;
+    const ImVec2 mark{origin.x+21,origin.y+24};   // a ring around a dot, as on the program icon
+    draw->AddCircleFilled(mark,7,theme::accent);draw->AddCircle(mark,5.1f,theme::bg1,0,2.2f);
+    const char* app=config_.training?"Boccia Trainer":"Boccia Labeler";
+    theme::write(draw,{origin.x+35,origin.y+24-7},theme::text,app,14,theme::bold);
+    float x=origin.x+35+theme::extent(app,14,theme::bold).x+14;
+    if(!projectOpened()){ImGui::SetCursorScreenPos(after);return;}
+    draw->AddLine({x+.5f,origin.y+13},{x+.5f,origin.y+35},theme::line2);x+=14;
+    ImGui::SetCursorScreenPos({x,origin.y+9});x+=projectControls()+18;
+    struct Tab{Page page;const char* name;};
+    static const Tab labeler[]={{Page::Data,"자료"},{Page::Review,"검수"},{Page::Export,"내보내기"}};
+    static const Tab trainer[]={{Page::Split,"데이터 배정"},{Page::TrainExport,"데이터 내보내기"},{Page::Train,"모델 학습"}};
+    const Tab* tabs=config_.training?trainer:labeler;
+    for(int i=0;i<3;++i){
+        const Tab& tab=tabs[i];const bool enabled=true,on=page_==tab.page;
+        const float w=theme::extent(tab.name,theme::base,on?theme::bold:nullptr).x+26;
+        ImGui::SetCursorScreenPos({x,origin.y});ImGui::PushID(i);ImGui::BeginDisabled(!enabled);
+        if(ImGui::InvisibleButton("##tab",{w,height})&&!on)openPage(tab.page);
+        const bool hovered=enabled&&ImGui::IsItemHovered();ImGui::EndDisabled();ImGui::PopID();
+        theme::write(draw,{x+13,origin.y+24-theme::base/2},!enabled?theme::line2:on||hovered?theme::text:theme::text2,tab.name,theme::base,on?theme::bold:nullptr);
+        if(on)draw->AddRectFilled({x+9,origin.y+height-2},{x+w-9,origin.y+height},theme::accent);
+        x+=w;
     }
     const int target=catalog_.is_object()?catalog_.value("target_images",0):0,done=catalog_.is_object()?catalog_.value("reviewed_target_images",0):0;
     float right=origin.x+width-14;
-    ImGui::PushFont(nullptr,theme::px(theme::caption));ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,{10,5});
-    const float help=theme::extent("단축키",theme::caption).x+20;right-=help;
-    ImGui::SetCursorScreenPos({right,origin.y+9});
-    if(ImGui::Button("단축키",{help,26})||shortcutsWanted_){ImGui::OpenPopup("##shortcuts");shortcutsWanted_=false;}
+    const float help=theme::extent("단축키",theme::caption).x+40;right-=help;
+    const ImVec2 helpAt{right,origin.y+10};
+    ImGui::SetCursorScreenPos(helpAt);
+    const bool helpClicked=ImGui::InvisibleButton("##shortcutsButton",{help,28}),helpHovered=ImGui::IsItemHovered();
+    if(helpClicked||shortcutsWanted_){ImGui::OpenPopup("##shortcuts");shortcutsWanted_=false;}
+    draw->AddRectFilled(helpAt,{helpAt.x+help,helpAt.y+28},helpHovered?theme::bg3:theme::bg1,6);draw->AddRect(helpAt,{helpAt.x+help,helpAt.y+28},theme::line,6);
+    theme::icon(draw,theme::Icon::Help,{helpAt.x+16,helpAt.y+14},14,theme::text2);
+    theme::write(draw,{helpAt.x+28,helpAt.y+14-theme::caption/2},theme::text2,"단축키",theme::caption);
     shortcutsPopup({right+help,origin.y+height});
-    ImGui::PopStyleVar();ImGui::PopFont();
     const bool dirty=!frames_.empty()&&current().dirty;
     const std::string saved=busy()?busyLabel_:dirty?"저장 대기":"저장됨";
-    right-=20+theme::extent(saved,theme::caption).x;theme::write(draw,{right,origin.y+14},busy()||dirty?theme::hold:theme::text3,saved,theme::caption);
-    draw->AddCircleFilled({right-9,origin.y+22},3,busy()||dirty?theme::hold:theme::ok);
-    const std::string count="검수 "+grouped(done)+" / "+grouped(target);
-    right-=34+120;draw->AddRectFilled({right,origin.y+20},{right+120,origin.y+24},theme::bg4,2);
-    if(target&&done)draw->AddRectFilled({right,origin.y+20},{right+std::max(2.f,120.f*done/target),origin.y+24},theme::ok,2);
-    right-=10+theme::extent(count,theme::caption,theme::mono).x;theme::write(draw,{right,origin.y+14},theme::text,count,theme::caption,theme::mono);
+    right-=20+theme::extent(saved,theme::caption).x;theme::write(draw,{right,origin.y+24-theme::caption/2},busy()||dirty?theme::hold:theme::text3,saved,theme::caption);
+    draw->AddCircleFilled({right-9,origin.y+24},3,busy()||dirty?theme::hold:theme::ok);
+    const std::string count=grouped(done)+" / "+grouped(target);
+    right-=34+120;draw->AddRectFilled({right,origin.y+22},{right+120,origin.y+26},theme::bg4,2);
+    if(target&&done)draw->AddRectFilled({right,origin.y+22},{right+std::max(2.f,120.f*done/target),origin.y+26},theme::ok,2);
+    right-=10+theme::extent(count,theme::caption,theme::mono).x;theme::write(draw,{right,origin.y+24-theme::caption/2},theme::text,count,theme::caption,theme::mono);
+    right-=8+theme::extent("검수",theme::caption).x;theme::write(draw,{right,origin.y+24-theme::caption/2},theme::text2,"검수",theme::caption);
     ImGui::SetCursorScreenPos(after);
 }
 // The key list lives here instead of in hint lines all over the screens.
@@ -1176,7 +1170,7 @@ void Application::errorOverlay() {
         ImGui::Dummy({18,26});ImGui::SameLine();
         ImGui::AlignTextToFramePadding();ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::warn),"%s",error_.c_str());ImGui::SameLine();
         if(ImGui::Button("닫기",{60,26}))error_.clear();
-        if(!ready()){ImGui::SameLine();if(ImGui::Button("다시 연결",{110,26})){if(!busy()&&(frames_.empty()||!current().dirty))connect();else message_="현재 변경을 저장하거나 recovery 파일을 보관한 뒤 다시 실행하세요.";}}
+        if(!ready()&&!config_.source.empty()){ImGui::SameLine();if(ImGui::Button("다시 연결",{110,26})){if(!busy()&&(frames_.empty()||!current().dirty))connect();else message_="현재 변경을 저장하거나 recovery 파일을 보관한 뒤 다시 실행하세요.";}}
     }
     ImGui::End();
     ImGui::PopStyleVar(4);ImGui::PopStyleColor(2);
@@ -1185,9 +1179,57 @@ void Application::statusBar() {
     const float width=ImGui::GetContentRegionAvail().x;const ImVec2 origin=ImGui::GetCursorScreenPos();
     ImGui::Dummy({width,28});auto draw=ImGui::GetWindowDrawList();
     draw->AddLine(origin,{origin.x+width,origin.y},theme::line);
-    theme::write(draw,{origin.x+14,origin.y+7},busy()?theme::hold:theme::text3,busy()?busyLabel_:message_,theme::caption);
-    const std::string source="원본 "+utf8(config_.source);
-    theme::write(draw,{origin.x+width-14-theme::extent(source,theme::caption).x,origin.y+7},theme::text3,source,theme::caption);
+    // A notice the hub sent stays at the left, with × to close it, until the next one replaces it (design/hub).
+    if(!hubNotice_.empty()){
+        const float noticeWidth=theme::extent(hubNotice_,theme::caption).x;
+        theme::write(draw,{origin.x+14,origin.y+14-theme::caption/2},theme::accent,hubNotice_,theme::caption);
+        ImGui::SetCursorScreenPos({origin.x+14+noticeWidth+6,origin.y+4});
+        if(ImGui::InvisibleButton("##hubNoticeClose",{22,20}))hubNotice_.clear();
+        theme::write(draw,{origin.x+14+noticeWidth+12,origin.y+14-theme::caption/2},ImGui::IsItemHovered()?theme::text:theme::text3,"×",theme::caption);
+    }
+    else theme::write(draw,{origin.x+14,origin.y+14-theme::caption/2},busy()?theme::hold:theme::text3,busy()?busyLabel_:message_,theme::caption);
+    // Where the project lives; a long path keeps its end, which names the project. Nothing before a project is open.
+    std::string where=projectOpened()?utf8(workspace_.empty()?config_.project:workspace_):std::string();
+    const float room=width*.45f;
+    if(theme::extent(where,theme::caption).x>room)for(size_t start=1;start<where.size();++start){
+        if((where[start]&0xC0)==0x80)continue;
+        if(const auto tail="…"+where.substr(start);theme::extent(tail,theme::caption).x<=room){where=tail;break;}
+    }
+    const float textWidth=where.empty()?0:theme::extent(where,theme::caption).x,x=origin.x+width-14-textWidth;
+    // The hub, left of the folder: a green dot while connected, an orange one while the invite code is refused, nothing
+    // while off. A click opens the worker dialog.
+    float hubWidth=0;
+    if(hub_&&hub_->state()!=hub::Client::State::Offline){
+        const bool joined=hub_->state()==hub::Client::State::Connected;const std::string word=joined?"허브":"초대 코드 확인";
+        const float wordWidth=theme::extent(word,theme::caption).x,dotX=where.empty()?x-6:x-12-16;hubWidth=wordWidth+32;
+        draw->AddCircleFilled({dotX,origin.y+14},4,joined?theme::ok:theme::warn);
+        theme::write(draw,{dotX-8-wordWidth,origin.y+14-theme::caption/2},theme::text3,word,theme::caption);
+        ImGui::SetCursorScreenPos({dotX-8-wordWidth,origin.y+4});
+        if(ImGui::InvisibleButton("##hubState",{wordWidth+16,20}))later_=[this]{openWorkerDialog();};
+        if(ImGui::IsItemHovered()&&!joined)ImGui::SetTooltip("%s",hub_->lastError().c_str());
+    }
+    if(projectOpened()){
+        struct Running{const Json* state;std::string label;const char* stop;};
+        const Running jobs[]={{&redraftStatus_,"초안 다시 만들기 · "+redraftStatus_.value("stage",""),"stop-redraft"},{&missingStatus_,"빠진 공 찾기","stop-missing"},{&occlusionStatus_,"가려진 공 표시","stop-occluded"}};
+        for(const auto& job:jobs){
+            if(job.state->value("status","")!="running")continue;
+            const int done=job.state->value("done",0),total=job.state->value("total",0);
+            const std::string text=job.label+(total?"  "+grouped(done)+" / "+grouped(total):"");
+            float right=x-24-hubWidth;const float stopWidth=44,bar=90;
+            ImGui::SetCursorScreenPos({right-stopWidth,origin.y+4});
+            const bool stop=ImGui::InvisibleButton("##stopJob",{stopWidth,20}),hovered=ImGui::IsItemHovered();
+            if(stop&&!busy())later_=[this,action=job.stop]{stopJob(action,"작업 중단");};
+            draw->AddRectFilled({right-stopWidth,origin.y+4},{right,origin.y+24},hovered?theme::bg3:theme::bg2,5);draw->AddRect({right-stopWidth,origin.y+4},{right,origin.y+24},theme::line2,5);
+            theme::write(draw,{right-stopWidth+(stopWidth-theme::extent("중단",theme::caption).x)/2,origin.y+14-theme::caption/2},theme::text,"중단",theme::caption);
+            right-=stopWidth+10;
+            draw->AddRectFilled({right-bar,origin.y+12},{right,origin.y+16},theme::bg4,2);
+            if(total>0)draw->AddRectFilled({right-bar,origin.y+12},{right-bar+bar*std::min(1.f,float(done)/float(total)),origin.y+16},theme::accent,2);
+            right-=bar+10;
+            theme::write(draw,{right-theme::extent(text,theme::caption).x,origin.y+14-theme::caption/2},theme::text2,text,theme::caption);
+            break;
+        }
+    }
+    if(!where.empty()){theme::write(draw,{x,origin.y+14-theme::caption/2},theme::text3,where,theme::caption);theme::icon(draw,theme::Icon::Folder,{x-12,origin.y+14},11,theme::text3);}
 }
 void Application::draw(){
     deleteDoomed();   // the previous frame has been rendered; the textures it showed can go now
@@ -1196,7 +1238,18 @@ void Application::draw(){
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{0,0});
     topBar();
     const float body=ImGui::GetContentRegionAvail().y-28;
-    if(!ready()){
+    if(!projectOpened()){
+        ImGui::BeginChild("ProjectStart",{0,body},0,ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);welcomePage();ImGui::EndChild();
+    }
+    else if(page_==Page::Data){
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{28,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,8});
+        ImGui::BeginChild("ImportPane",{0,body},ImGuiChildFlags_AlwaysUseWindowPadding);preparePage();ImGui::EndChild();ImGui::PopStyleVar(2);
+    }
+    else if(page_==Page::Export){
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{28,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,8});
+        ImGui::BeginChild("ExportPane",{0,body},ImGuiChildFlags_AlwaysUseWindowPadding);exportTab();ImGui::EndChild();ImGui::PopStyleVar(2);
+    }
+    else if(!ready()){
         ImGui::BeginChild("Loading",{0,body});
         theme::write(ImGui::GetWindowDrawList(),{ImGui::GetCursorScreenPos().x+28,ImGui::GetCursorScreenPos().y+24},theme::text2,message_);
         ImGui::EndChild();
@@ -1213,17 +1266,17 @@ void Application::draw(){
     else{
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{28,20});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8,8});ImGui::PushStyleColor(ImGuiCol_ChildBg,theme::bg0);
         ImGui::BeginChild("StagePane",{0,body},ImGuiChildFlags_AlwaysUseWindowPadding);
-        if(page_==Page::Prepare)preparePage();else if(page_==Page::Split)splitPage();else exportPage();
+        if(page_==Page::Split)splitPage();else if(page_==Page::TrainExport)exportPage();
         ImGui::EndChild();ImGui::PopStyleColor();ImGui::PopStyleVar(2);
     }
     statusBar();
     errorOverlay();
-    confirmGrowth();
-    confirmColors();
-    confirmCircles();
+    projectPopups();workerPopup();
+    exportPopups();
+    batchToolsPopup();
+    circlesPopup();
     confirmNext();
     confirmMissing();
-    confirmPropagation();
     confirmOcclusion();
     ImGui::PopStyleVar();
     ImGui::End();

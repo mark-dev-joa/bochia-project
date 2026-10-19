@@ -1,18 +1,27 @@
 #pragma once
 #include "labeler_engine.hpp"
+#include "labeler_workspace.hpp"
 #include "native_labeler_view.hpp"
+#include "hub_client.hpp"
+#include "labeler_settings.hpp"
 #include <glad/gl.h>
 #include <imgui.h>
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <functional>
 #include <future>
 #include <memory>
 #include <unordered_map>
+#include <atomic>
+#include <mutex>
 
 namespace boccia::labeler {
 struct Configuration {
     bool rememberUi = true;
+    bool training = false;
+    bool startScreen = false;
+    std::shared_ptr<void> lease;
     std::filesystem::path source, project, exports;   // the recordings, the label file and the export folder
     std::filesystem::path models, root;               // the EfficientSAM files and the repository
 };
@@ -24,12 +33,14 @@ struct FrameView {
     std::vector<std::vector<std::vector<cv::Point>>> contours;   // per ball, refreshed by repaint()
     std::vector<Circle> circles;                                 // per ball, fitted to the mask by repaint()
     bool dirty = false, repaint = true;
+    std::string applied;                                         // 이전 적용: the confirmed frame whose labels this draft shows, saved only with the confirmation
     float scale = 0, offsetX = 0, offsetY = 0;                   // scale 0 = fit or zoom to the selected ball on next draw
 };
 struct JobResult {
     Json data;
     std::vector<FrameView> frames;
     std::shared_ptr<Engine> engine;   // set by the connect job
+    std::shared_ptr<Configuration> configuration;
 };
 class Application {
 public:
@@ -38,8 +49,9 @@ public:
     void tick();
     void draw();
     bool ready() const { return catalog_.is_object() && !frames_.empty(); }
+    bool projectOpened() const { return engine_ && catalog_.is_object(); }
     bool busy() const { return task_.valid(); }
-    bool settled() const { return !busy() && !thumbTask_.valid() && thumbWanted_.empty() && colorStatus_.value("status", "") != "running" && circleStatus_.value("status", "") != "running" && missingStatus_.value("status", "") != "running" && propagationStatus_.value("status", "") != "running" && occlusionStatus_.value("status", "") != "running"; }
+    bool settled() const { return !busy() && !thumbTask_.valid() && thumbWanted_.empty() && colorStatus_.value("status", "") != "running" && circleStatus_.value("status", "") != "running" && missingStatus_.value("status", "") != "running" && propagationStatus_.value("status", "") != "running" && occlusionStatus_.value("status", "") != "running" && redraftStatus_.value("status", "") != "running" && (exportDemo_ || exportStatus_.value("status", "") != "running"); }
     bool idle() const;                               // settled and nothing waiting to be saved; an open proposal does not count
     void showEditor(int camera = 0);
     void showPage(int page);
@@ -54,6 +66,19 @@ public:
     void missingTrialForCapture(int frames) { missingTrial_ = frames; missingAsk_ = true; startMissing(true, false); }   // a trial of the missing-ball pass, to picture its dialog
     void missingApplyForCapture(int frames) { missingAsk_ = true; startMissing(false, false, frames); }           // applies the pass to a few frames, for the check of the apply path
     void propagateForCapture() { startPropagation(); }   // runs the propagation, for the check of its path
+    // Opens the batch drawer; "redraft", "missing" or "occlusion" also starts that tool, on the scope after a colon
+    // (0 the scene, 1 its capture or folder, 2 everything; "missing:1").
+    void exportStateForCapture(const std::string& state);   // "dialog": the formats dialog; "run": an export of what is chosen
+    void batchDrawerForCapture(std::string run) {
+        if (const auto colon = run.find(':'); colon != std::string::npos) { batchScope_ = std::clamp(std::stoi(run.substr(colon + 1)), 0, 2); run.resize(colon); }
+        drawerRun_ = std::move(run); openBatchTools();
+    }
+    // Opens 원형 검출 on the scope after a colon ("find:1"); "find" also searches, "add" searches and adds what it found.
+    void circlesForCapture(std::string state) {
+        if (const auto colon = state.find(':'); colon != std::string::npos) { batchScope_ = std::clamp(std::stoi(state.substr(colon + 1)), 0, 2); state.resize(colon); }
+        if (state != "settings") circleRun_ = state;
+        openCircles();
+    }
     void showErrorForCapture(std::string text) { error_ = std::move(text); errorDemo_ = true; }   // pictures the floating error notice
     void occlusionTrialForCapture(int frames) { occlTrial_ = frames; occludeAsk_ = true; startOcclusion(true, false); }
     void occlusionApplyForCapture(int frames) { occludeAsk_ = true; startOcclusion(false, false, frames); }
@@ -64,14 +89,166 @@ public:
     const std::string& error() const { return errorDemo_ ? empty_ : error_; }   // a pictured error must not end a hidden run
     bool canClose() const;
     void preserveRecovery();
+    void droppedFiles(std::vector<std::filesystem::path> files);
+    void openProject(const std::filesystem::path& folderOrFile);
+    void importPaths(std::vector<std::filesystem::path> files);
+    void commitPlannedImport();
+    bool importing() const { return importProgress_ && !importProgress_->finished; }
+    void cancelImport() { if (importing()) importProgress_->cancelled = true; }
+    bool exporting() const { return !exportDemo_ && exportStatus_.value("status", "") == "running"; }
+    void stopRunningExport() { if (engine_) engine_->nativeAction("stop-export", Json::object()); }   // the close dialog's 중단하고 종료
+    bool importDraftingForTest() const {             // an import has copied and started its drafts (hidden cancel check)
+        if (!importProgress_) return false;
+        std::lock_guard guard(importProgress_->lock);
+        return std::find(importProgress_->states.begin(), importProgress_->states.end(), 2) != importProgress_->states.end();
+    }
+    void projectUiCheck(int step, const std::filesystem::path& first, const std::filesystem::path& second);
+    void showNewProjectForCapture(const std::filesystem::path& parent = {}, const std::string& name = {});
+    void createProjectForCapture() { createProject(); }
+    void closeProjectForCapture() { closeProject(); }
+    ImVec2 creationPopupSizeForCapture() const { return creationPopupSize_; }
 private:
-    enum class Page { Prepare, Review, Split, Export };
+    // The labeler's tabs come first; Export is the dataset export, whose page is not built yet. The rest are the trainer's.
+    enum class Page { Data, Review, Export, Split, TrainExport, Train };
+    bool batchTools_ = false;
+    int batchScope_ = 0;
+    Json batchPayload_ = {{"scope",{{"mode","all"}}}}, batchStats_ = Json::object();
+    void batchToolsPopup();
+    void openBatchTools();
+    void refreshBatchScope(bool drawer = true);   // the scope's counts; the batch drawer opens unless 원형 검출 asked
+    // 원형 검출 (design/labeler-v3 circles.png, 2026-10-14): a dialog with the project's settings, a search over the scope
+    // that shows what it found, then 더하기. The search is the missing-ball pass with circles for its finder.
+    bool circlesWanted_ = false, circleApply_ = false;
+    bool circleShowResult_ = false;                  // the dialog shows the last search's result instead of the settings
+    int circleMin_ = 6, circleMax_ = 45, circleThreshold_ = 22, circleEdge_ = 90, circleSpacing_ = 12, circleLimit_ = 20;
+    bool circleContrast_ = true;
+    std::string circleRun_;                          // the hidden capture: "find" or "add" once the dialog is open
+    void openCircles();
+    void circlesPopup();
+    void startCircleSearch();
+    void restoreCircleSettings(const Json& stored);
+    Json circleSettings() const;
+    Json batchScopePayload() const;
+    // The batch drawer (design/labeler-v3 batch.png): scope, 초안 다시 만들기, 빠진 공 찾기, 가려진 공 표시 and the
+    // automatic settings. Trials run on the whole scope, so what the drawer shows is what 적용 writes.
+    Json redraftStatus_ = Json::object();
+    bool applyPrevious_ = false;                     // ← 이전 적용: a draft opens with the nearest earlier confirmed frame's labels (kept for the PC)
+    int propagatePending_ = 0;                       // 전파 →: the repeated frames and drafts this scene's confirmation has still to fill
+    void toggleApplyPrevious();
+    bool missingAvailable_ = false;                  // the project finds missing balls (its YOLO model, or the 10-02 file)
+    // The export tab: the captures and folders chosen for export, the formats and the folder (remembered per project),
+    // and the dialogs of the export itself.
+    std::set<std::string> exportChosen_;
+    bool exportChosenInit_ = false, exportAsk_ = false, exportWatching_ = false, exportDemo_ = false;
+    bool exportYolo_ = true, exportCocoDetection_ = true, exportCocoMask_ = false, exportCrops_ = false;
+    char exportFolder_[4096] = "";
+    std::chrono::steady_clock::time_point exportStarted_{}, exportPolled_{};
+    void exportTab();
+    void exportPopups();
+    void beginExport();
+    Json exportSettings() const;
+    void restoreExportSettings(const Json& saved);
+    void rememberExportSettings();
+    std::string drawerRun_;                          // the tool the hidden capture starts once the drawer is open
+    bool drawerApply_ = false;                       // the hidden capture also applies the trial ("missing-apply")
+    int samplesFrom_ = 0;                            // the tool whose trial the sample crops show: 1 missing, 2 occlusion
+    std::array<std::string, 3> scopeNames() const;   // 현재 장면·현재 촬영 NN·전체 자료, or 현재 이미지·현재 폴더·전체 자료
+    void startRedraft();
+    void applyMissing();
+    void stopJob(const char* action, const char* label);
+    void drawerSamples(ImVec2 at, float width);
+    void startDrafts();
+    void importData();
+    // An import in its dialog: the check, then the copy of every item, then each item's drafts, filter and circle fit.
+    struct ImportStatus {
+        std::atomic<bool> cancelled = false;
+        std::mutex lock;
+        std::string phase;                           // the check's step, or the stage of the current item
+        uint64_t done = 0, total = 0;                // of that step or stage
+        int item = -1;                               // the plan item being copied or finished
+        std::vector<int> states;                     // per item: 0 waiting, 1 copying, 4 copied, 2 drafting/filtering/fitting, 3 done, 5 failed
+        std::vector<std::string> reasons;            // per item: why it failed
+        Json items = Json::array();                  // the items being imported, as planned (fixed once the import starts)
+        std::vector<std::string> ids, titles;        // their IDs (to place the reports) and names
+        std::vector<uint64_t> frames;                // images per item, for the time left
+        double remaining = -1;                       // seconds, estimated; negative while unknown
+        std::chrono::steady_clock::time_point copyStart{}, pipelineStart{};
+        uint64_t finishedFrames = 0;                 // images of the items done
+        bool finished = false;                       // the import has ended; the dialog shows how until 확인
+        std::string outcome, reason;                 // "done", "partial", "stopped" or "failed", and the failure when nothing came in
+    };
+    std::shared_ptr<ImportStatus> importProgress_;
+    std::shared_ptr<ImportPlan> importPlan_;
+    std::vector<char> importChosen_;                 // per plan item: imported when set (the dialog's checkboxes)
+    std::filesystem::path workspace_;
+    std::string workspaceName_;
+    Json recentProjects_ = Json::array(), importSummary_;
+    bool createProjectWanted_ = false, importPreviewWanted_ = false;
+    char projectName_[256] = "";
+    char projectLocation_[4096] = "";
+    std::string createProjectError_;
+    ImVec2 creationPopupSize_{};
+    int importType_ = 0;
+    float projectControls();                         // the project button and its menu; returns the width it took
+    void welcomePage();
+    void beginCreateProject();
+    void closeProject();
+    void chooseProjectLocation();
+    void projectPopups();
+    void chooseProject();
+    void chooseImportFolder();
+    void createProject();
+    void rememberProject(const std::filesystem::path& path);
+    void activateProject(JobResult result);
+    void resetProjectViews();
+    bool prepareProjectChange(std::function<void()> after);
+    bool imageScene() const;
+    int draftSeeds_ = 0;                             // the 초안 후보 field: 0 the YOLO model, 1 circles
+    char draftModel_[4096] = "";
+    bool settingsWanted_ = false;                    // the project settings dialog is open
+    std::string settingsError_;
+    void draftField(float width);                    // the 초안 후보 field shared by the new-project and settings dialogs
+    bool deviceGpu_ = true;                          // the 실행 장치 field: drafts and SAM on the GPU
+    void deviceField(float width);
+    void loadDevice();                               // the 실행 장치 is kept for the PC (labeler-settings.json), not the project
+    void saveDevice(bool gpu);
+    // The hub (design/hub): this PC's worker name and invite code, the client that reports to it and the notice it sent.
+    struct HubShared { std::mutex lock; hub::Registration registration; };   // what /register carries; read on the client's thread
+    LabelerSettings settings_;
+    std::shared_ptr<hub::Client> hub_;               // shared: the log sink holds it weakly, from any thread that logs
+    std::shared_ptr<HubShared> hubShared_ = std::make_shared<HubShared>();
+    std::chrono::steady_clock::time_point hubTicked_{}, hubStarted_{};
+    bool workerDialog_ = false;
+    std::string hubNotice_;
+    char workerName_[128] = "", workerToken_[128] = "", hubAddress_[256] = "";
+    void startHub();                                 // the client from settings_, or its new settings; none without a worker name
+    void hubTick();                                  // at the end of tick(): the status, the registration and the commands
+    void openWorkerDialog();
+    void workerPopup();
+    void saveWorker();
+    Json hubScene() const;                           // the scene on screen, for the status; null when none
+    Json hubJob() const;                             // the running job, for the status; null when none
+    std::string hubSceneName() const;                // "촬영 03 · 프레임 0142", for the event lines
+    hub::Registration currentRegistration() const;
+    void chooseDraftModel();
+    void beginProjectSettings();
+    void saveProjectSettings();
+public:
+    void recentForCapture(const std::filesystem::path& file);   // a recent-project list for the hidden start-screen capture
+    void projectSettingsForCapture() { beginProjectSettings(); }
+    void workerDialogForCapture() { openWorkerDialog(); }
+    void hubForCheck(const std::string& address, const std::string& worker, const std::string& token);   // --hub --worker --token: joins with these instead of the settings
+    bool hubSettled() const;                         // no hub, or the hub has answered, or 5 s have passed: a hidden check may end
+    void applyPreviousForCapture(bool on) { applyPrevious_ = on; }   // ← 이전 적용 for a hidden capture (no preferences are read)
+    void importStateForCapture(const std::string& state);       // the import dialog while it checks or copies, for a capture
+private:
     enum class Tool { Select, Ai, Polygon, Brush, Box };
     enum class Scope { Scene, Camera };
     struct SceneRow {
         int scene = -1, recording = 0, index = 0, scenes = 0;
         float seconds = 0;
         bool header = false, warn = false, color = false;
+        bool image = false;
         std::array<MemberState, 3> state{};
         std::array<int, 3> count{};
         int cameras = 0;
@@ -91,8 +268,7 @@ private:
     bool occlReviewed_ = false; int occlTrial_ = 30;
     bool propagateForce_ = false;                                // the dialog's "also the frames already up to date"
     bool propagateCarry_ = true;                                 // the dialog's "also the empty drafts after a confirmed frame"
-    Json carryQueue_ = Json::array();                            // confirmed frames whose labels still have to be carried forward
-    void carryForward(Json keys);                                // starts that in the background, or queues it while a propagation runs
+    void propagateScene();                                       // 전파 →: this scene's confirmed labels to its repeated frames and the next drafts
     bool fitCircle_ = true;                                      // proposals take the circle fit; off keeps the outline as segmented (hand-held balls)
     std::vector<FrameView> missingSamples_;                      // crops of a trial's new balls, shown in the dialog
     int missingCameras_ = 0, missingTrial_ = 30;                 // 0 colour only, 1 all cameras; frames per trial
@@ -102,6 +278,11 @@ private:
     int combineA_ = 0, combineOp_ = 0, combineB_ = 0;            // the assembly row: trial, operator, trial
     std::vector<FrameView> frames_;
     std::future<JobResult> task_, ahead_;
+    std::future<JobResult> pollTask_;                            // the status check of the background jobs: its own thread, never in the way (2026-10-19)
+    std::function<void(JobResult)> pollDone_;
+    void poll();
+    void refreshCatalog(bool reloadScene);
+    int runningJobs() const;
     std::function<void(JobResult)> completion_;
     std::function<void()> later_;                                // UI actions run after the frame is drawn
     std::function<void()> queued_;                               // a Space pressed while a job ran: done as soon as the job ends
@@ -129,12 +310,8 @@ private:
          listOpen_ = true, sideOpen_ = true, summaryOpen_ = true, // the collapsible panels
          backing_ = false,                                       // the next scene load comes from the back button
          shortcutsWanted_ = false,                               // open the shortcut list on the next frame
-         growAsk_ = false,                                       // the grow-masks dialog is open
-         colorAsk_ = false,                                      // the fill-colours dialog is open
-         circleAsk_ = false,                                     // the refine-circles dialog is open
          nextAsk_ = false,                                       // the scene is confirmed; the prompt asks whether to move on
          missingAsk_ = false,                                    // the missing-ball dialog is open
-         propagateAsk_ = false,                                  // the propagation dialog is open
          occludeAsk_ = false;                                    // the occlusion-marking dialog is open
     float brightness_ = 1.65f, brushSize_ = 6, radius_ = 16, circleMargin_ = .5f;
     int view_ = 0;                                               // how the frames are shown: original, contrast, gray, edges, gradient, edge overlay
@@ -150,9 +327,10 @@ private:
     ImVec2 dragScreen_{};
     size_t generation_ = 0;
     std::string error_, message_ = "촬영 데이터 연결 중…", busyLabel_;
+    std::string loggedError_, loggedMessage_;      // what the log (labeler_log.hpp) last got of the two
     std::chrono::steady_clock::time_point changed_, poll_;
     void launch(std::string label, std::function<JobResult()> work, std::function<void(JobResult)> completed);
-    void connect();
+    void connect(std::string note = {});            // note replaces the status line once the data is open
     void updateCatalog(Json catalog);
     void updateSummary(const Json& summary);
     void loadScene(int index, bool editor = false, int camera = 0, std::string note = {});   // note replaces the usual status line
@@ -190,14 +368,8 @@ private:
     void removeSelected();
     void removeBall(int slot, int ball);
     void setOccluded(int slot, int ball, bool value);   // from the checkbox on a crop; that camera becomes current first
-    void confirmGrowth();                            // the dialog behind growAsk_
-    void growMasks(int pixels);
-    void confirmColors();                            // the dialog behind colorAsk_
-    void fillColors();
-    void confirmCircles();                           // the dialog behind circleAsk_
     void confirmNext();                              // the prompt behind nextAsk_: Space moves on, Esc stays
     void confirmMissing();                           // the dialog behind missingAsk_: options, count, trial, samples, apply
-    void confirmPropagation();                       // the dialog behind propagateAsk_
     void confirmOcclusion();                         // the dialog behind occludeAsk_: thresholds, count, trial, samples, apply
     void startOcclusion(bool dryRun, bool countOnly, int limit = -1);
     void sampleGrid(const char* heading);            // the sample crops of a trial, with the note or the measured circle
@@ -206,7 +378,6 @@ private:
     void loadMissingSamples(Json samples = Json());  // crops of new balls: the last trial's, or the given ones
     void refreshMissingTrials();                     // the saved trials, from the engine
     void missingAction(const std::string& action, Json payload, std::string done);   // a trial action, then the list again
-    void refineCircles();
     void segment(cv::Point2d point, bool negative);
     void segmentBox(cv::Rect2d box);
     void polygonProposal();
@@ -229,7 +400,7 @@ private:
     void smallTile(int slot, ImVec2 pos, ImVec2 size);
     void focusTile(int slot, ImVec2 pos, ImVec2 size);
     void tileHeader(int slot, ImVec2 pos, float width, bool compact, const std::string& meta);
-    void cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact);
+    void cropGrid(int slot, ImVec2 pos, ImVec2 size, bool compact, int columns = 2);
     void canvas(FrameView& frame, ImVec2 pos, ImVec2 size);
     void zoomBy(FrameView& frame, float factor);     // zooms around the middle of the canvas, for the +/- keys and rail buttons
     ImVec2 canvasSize_{0, 0};                        // the canvas drawn last, so a key can zoom around its middle

@@ -1,5 +1,21 @@
 #include "native_labeler_model.hpp"
 #include <opencv2/imgproc.hpp>
+#include <cstdio>
+
+namespace boccia::labeler {
+Json hubStatusJson(const std::string& page, const Json& scene, const Json& job, bool applyPrevious, bool gpu, const std::string& error) {
+    std::string text = page == "data" ? "자료" : page == "export" ? "내보내기" : "검수";
+    if (scene.is_object()) {
+        char frame[16];
+        std::snprintf(frame, sizeof frame, "%04d", scene.value("index", 0));
+        text += " · " + scene.value("recording", "") + (scene.value("image", false) ? " · 이미지 " : " · 프레임 ") + frame;
+    }
+    if (job.is_object() && !job.value("text", "").empty()) text += " · " + job.value("text", "");
+    if (!error.empty()) text += " · 오류";
+    return Json{{"page", page}, {"scene", scene.is_object() ? scene : Json()}, {"job", job.is_object() ? job : Json()},
+                {"apply_previous", applyPrevious}, {"device", gpu ? "GPU" : "CPU"}, {"error", error}, {"text", text}};
+}
+}
 #include <cmath>
 #include <stdexcept>
 

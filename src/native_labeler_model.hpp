@@ -15,4 +15,7 @@ Json maskAnnotation(const cv::Mat& mask, const Json& previous, const std::string
 cv::Rect2d detectionBox(const Json& box);
 bool nudgeEdge(Json& box, int edge, bool expand, int width, int height);
 Json annotationPayload(const Json& frame, int revision);
+// The status the hub shows for this labeler (design/hub): the page, the scene, the running job, 이전 적용, the device and
+// the error, with `text` saying the same in one line.
+Json hubStatusJson(const std::string& page, const Json& scene, const Json& job, bool applyPrevious, bool gpu, const std::string& error);
 }
