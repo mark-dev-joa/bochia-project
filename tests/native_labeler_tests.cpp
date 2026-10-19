@@ -1,3 +1,5 @@
+#include "build_info.hpp"
+#include <regex>
 #include "native_labeler_model.hpp"
 #include "labeler_engine.hpp"
 #include "native_labeler_view.hpp"
@@ -87,6 +89,7 @@ void viewTests() {
 }
 int main(int argc,char** argv){try{
     viewTests();
+    check(std::regex_match(boccia::versionString(), std::regex(R"(\d{4}-\d{2}-\d{2} \d{2}:\d{2} · \S+)")), "version string shape");
     cv::Mat mask(9,13,CV_8UC1,cv::Scalar(0));mask(cv::Rect(4,2,5,5)).setTo(1);mask.at<uchar>(4,6)=0;
     auto rle=encodeMask(mask);auto decoded=decodeMask(rle,13,9);check(cv::countNonZero(mask!=decoded)==0,"RLE hole/column order lost");
     Json box={{"bbox",{4,2,5,5}},{"segmentation",rle},{"occluded",false}};

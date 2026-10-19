@@ -2,6 +2,7 @@
 #include "native_labeler_theme.hpp"
 #include "labeler_selection.hpp"
 #include "labeler_util.hpp"
+#include "build_info.hpp"
 #include <chrono>
 #include <GLFW/glfw3.h>
 #include <imgui_impl_glfw.h>
@@ -13,8 +14,13 @@
 #include <iostream>
 
 using namespace boccia::labeler;
+// boccia_labeler.exe --version prints the build time and git hash: into a pipe when there is one, else onto the console it was started from.
+static void sayVersion(){
+    if(!GetStdHandle(STD_OUTPUT_HANDLE)&&AttachConsole(ATTACH_PARENT_PROCESS)){FILE* out{};freopen_s(&out,"CONOUT$","w",stdout);}
+    std::cout<<boccia::versionString()<<"\n"<<std::flush;}
 int main() {
     int argc{}; auto args=CommandLineToArgvW(GetCommandLineW(),&argc);
+    for(int i=1;i<argc;++i)if(std::wstring(args[i])==L"--version"){sayVersion();LocalFree(args);return 0;}
     Configuration config; auto root=fromUtf8(BOCCIA_LABELER_ROOT);
     // The engine code stays in the repository; the labels and exports live in data/ beside this program.
     wchar_t module[MAX_PATH]{};GetModuleFileNameW(nullptr,module,MAX_PATH);const auto home=std::filesystem::path(module).parent_path()/"data";

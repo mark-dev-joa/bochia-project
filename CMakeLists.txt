@@ -116,6 +116,9 @@ add_custom_command(TARGET boccia_calibration POST_BUILD
 add_library(native_labeler_model src/native_labeler_model.cpp src/native_labeler_view.cpp)
 target_include_directories(native_labeler_model PUBLIC src ${OpenCV_INCLUDE_DIRS} "${DEPENDENCY_ROOT}/nlohmann/include")
 target_link_libraries(native_labeler_model PUBLIC ${OpenCV_LIBS})
+# The build time and git hash the programs report (--version, the hub): cmake/build_info.cmake regenerates build_stamp.hpp at every build.
+add_custom_target(build_info ALL COMMAND ${CMAKE_COMMAND} -DOUT=${CMAKE_BINARY_DIR}/build_stamp.hpp -DSRC=${CMAKE_SOURCE_DIR} -P ${CMAKE_SOURCE_DIR}/cmake/build_info.cmake
+  BYPRODUCTS ${CMAKE_BINARY_DIR}/build_stamp.hpp)
 add_executable(boccia_labeler WIN32 src/native_labeler_main.cpp src/native_labeler_app.cpp src/native_labeler_theme.cpp src/native_labeler_review.cpp src/native_labeler_pages.cpp)
 target_link_libraries(boccia_labeler PRIVATE labeler_engine imgui opengl32 shell32)
 target_compile_definitions(boccia_labeler PRIVATE GLFW_INCLUDE_NONE NOMINMAX
@@ -128,8 +131,12 @@ endif()
 add_custom_command(TARGET boccia_labeler POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:opencv_world>" "$<TARGET_FILE_DIR:boccia_labeler>"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:onnxruntime>" "$<TARGET_FILE_DIR:boccia_labeler>")
+add_dependencies(boccia_labeler build_info)
+target_include_directories(boccia_labeler PRIVATE "${CMAKE_BINARY_DIR}")
 add_executable(native_labeler_tests tests/native_labeler_tests.cpp)
 target_link_libraries(native_labeler_tests PRIVATE labeler_engine)
+add_dependencies(native_labeler_tests build_info)
+target_include_directories(native_labeler_tests PRIVATE "${CMAKE_BINARY_DIR}")
 target_compile_definitions(native_labeler_tests PRIVATE NOMINMAX
   BOCCIA_LABELER_ROOT="${CMAKE_SOURCE_DIR}")
 if(MSVC)
