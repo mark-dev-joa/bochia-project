@@ -151,6 +151,51 @@ class HubTest(unittest.TestCase):
         summary = self.call("GET", "/api/status")[1]
         self.assertEqual((summary["workers"], summary["connected"]), (1, 0))
 
+    def test_pc_header_picks_the_pc_when_one_token_serves_two(self):
+        token = self.hub.invite("홍길동")
+        for pc in ("joonyeon", "노트북"):
+            self.call("POST", "/register", {"app": "labeler", "worker": "홍길동", "pc": pc}, token)
+        request = urllib.request.Request(f"http://127.0.0.1:{self.port}/status", data=b'{"page": "review"}', method="POST")
+        request.add_header("Authorization", f"Bearer {token}")
+        request.add_header("X-Boccia-Pc", urllib.parse.quote("joonyeon"))
+        with urllib.request.urlopen(request, timeout=10) as response:
+            self.assertEqual(response.status, 204)
+        request = urllib.request.Request(f"http://127.0.0.1:{self.port}/status", data=b'{"page": "tools"}', method="POST")
+        request.add_header("Authorization", f"Bearer {token}")
+        request.add_header("X-Boccia-Pc", urllib.parse.quote("노트북"))
+        with urllib.request.urlopen(request, timeout=10) as response:
+            self.assertEqual(response.status, 204)
+        pages = {worker["id"]: worker["status"].get("page") for worker in self.call("GET", "/api/workers")[1]}
+        self.assertEqual(pages, {"홍길동@joonyeon": "review", "홍길동@노트북": "tools"})
+
+    def test_newer_session_takes_over_the_poll(self):
+        token = self.hub.invite("홍길동")
+        self.call("POST", "/register", {"app": "labeler", "worker": "홍길동", "pc": "joonyeon", "session": "a"}, token)
+
+        def poll(session, wait):
+            request = urllib.request.Request(f"http://127.0.0.1:{self.port}/commands?wait={wait}")
+            request.add_header("Authorization", f"Bearer {token}")
+            request.add_header("X-Boccia-Session", session)
+            try:
+                with urllib.request.urlopen(request, timeout=20) as response:
+                    return response.status, json.loads(response.read())
+            except urllib.error.HTTPError as error:
+                return error.code, json.loads(error.read())
+
+        stale = {}
+        thread = threading.Thread(target=lambda: stale.update(result=poll("a", 10)), daemon=True)
+        thread.start()
+        time.sleep(0.3)
+        started = time.monotonic()
+        self.call("POST", "/register", {"app": "labeler", "worker": "홍길동", "pc": "joonyeon", "session": "b"}, token)
+        thread.join(5)
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual(stale["result"][0], 409)                          # the old poll ends at once, taking nothing
+        cid = self.call("POST", "/api/workers/홍길동@joonyeon/commands", {"name": "ping"})[1]["id"]
+        self.assertEqual(poll("a", 0)[0], 409)
+        self.assertEqual([c["id"] for c in poll("b", 0)[1]["commands"]], [cid])
+        self.assertEqual(poll("", 0)[0], 200)                              # no session header: as before
+
     def test_invite_again_replaces_token(self):
         old = self.hub.invite("홍길동")
         new = self.call("POST", "/api/invites", {"worker": "홍길동"})[1]["token"]

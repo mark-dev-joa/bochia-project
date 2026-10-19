@@ -181,9 +181,10 @@ class Hub:
             for key in ("app", "version", "account", "device", "summary"):
                 if key in body:
                     entry[key] = body[key]
-            entry.update({"token_hash": hash_, "registered": now(), "last_seen": now()})
+            entry.update({"token_hash": hash_, "registered": now(), "last_seen": now(), "session": str(body.get("session", ""))})
             self.sessions[hash_] = worker_id
             self._write_json("workers.json", self.workers)
+            self.wake.notify_all()      # a poll of an older session of this worker ends now
         self.say(f"{worker_id} 접속 · {entry.get('app', '')} {entry.get('version', '')}".rstrip())
         return {"ok": True, "id": worker_id, "since": entry.get("since", "")}
 
@@ -287,12 +288,16 @@ class Hub:
         self.say(f"{worker_id} ← {name} {value}".rstrip())
         return cid
 
-    def take_commands(self, worker_id, wait):
+    def take_commands(self, worker_id, wait, session=""):
+        """Queued commands for the worker, waiting up to `wait` seconds; a poll from a session the worker has since replaced gets 409."""
         deadline = time.monotonic() + wait
         with self.lock:
             self.polling[worker_id] = self.polling.get(worker_id, 0) + 1
             try:
                 while True:
+                    current = self.workers.get(worker_id, {}).get("session", "")
+                    if session and current and session != current:
+                        raise HubError(409, "another session registered")
                     pending = [record for record in self.commands.values() if record["worker"] == worker_id and record["state"] == "queued"]
                     remaining = deadline - time.monotonic()
                     if pending or remaining <= 0 or self.closing:
@@ -427,14 +432,14 @@ class Handler(BaseHTTPRequestHandler):
         hash_ = self._token_hash()
         if parts == ["register"] and method == "POST":
             return self._json(hub.register(hash_, self._parse(body)))
-        worker_id = hub.resolve(hash_, self.headers.get("X-Boccia-Pc", "").strip())
+        worker_id = hub.resolve(hash_, unquote(self.headers.get("X-Boccia-Pc", "")).strip())   # the PC name travels percent-encoded
         if parts == ["status"] and method == "POST":
             hub.set_status(worker_id, self._parse(body))
             return self._empty()
         if parts == ["events"] and method == "POST":
             return self._json({"stored": hub.add_events(worker_id, self._parse(body).get("events"))})
         if parts == ["commands"] and method == "GET":
-            return self._json({"commands": hub.take_commands(worker_id, self._number(query, "wait", 0, LONGPOLL_MAX))})
+            return self._json({"commands": hub.take_commands(worker_id, self._number(query, "wait", 0, LONGPOLL_MAX), self.headers.get("X-Boccia-Session", "").strip())})
         if len(parts) == 3 and parts[0] == "commands" and parts[2] == "result" and method == "POST":
             hub.finish_command(worker_id, parts[1], self._parse(body))
             return self._empty()
