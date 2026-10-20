@@ -143,8 +143,10 @@ class HeadlessEdge:
             time.sleep(0.25)
         return text
 
-    def capture(self, url, path, wait_for="", timeout=15, width=1440, height=900):
+    def capture(self, url, path, wait_for="", timeout=15, width=1440, height=900, transparent=False):
         session = self.open(url, width, height)
+        if transparent:   # an icon: the page's empty background stays see-through
+            self._call(self.browser, "Emulation.setDefaultBackgroundColorOverride", {"color": {"r": 0, "g": 0, "b": 0, "a": 0}}, session)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             text = self.evaluate(session, "document.documentElement ? document.documentElement.innerText : ''") or ""

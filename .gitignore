@@ -63,3 +63,6 @@ Thumbs.db
 /bin/release/cuda/
 /bin/release/*/cuda/
 /bin/release/*/logs/
+
+# The WebView2 SDK (tools/fetch-webview2.ps1)
+/third_party/
