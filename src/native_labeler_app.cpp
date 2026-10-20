@@ -167,7 +167,7 @@ void Application::loadScene(int index,bool editor,int camera,std::string note) {
         if(shown.empty()&&!from.empty()){char text[48];std::snprintf(text,sizeof text,"이전 적용 · 프레임 %04d",std::atoi(from.c_str()));shown=text;}
         message_=shown.empty()?"원본과 저장 라벨 표시 중":shown;};
     // A scene fetched ahead is used only if no automatic draft has been written since.
-    if(index==aheadScene_&&ahead_.valid()&&aheadAuto_==catalog_["summary"].value("auto_revision",0)){
+    if(index==aheadScene_&&ahead_.valid()&&aheadAuto_==catalog_["summary"].value("auto_revision",0)&&(!aheadApply_||aheadRevision_==catalog_["summary"].value("revision",0))){
         const auto fetched=ahead_.share();aheadScene_=-1;++aheadHits_;
         if(fetched.wait_for(std::chrono::seconds(0))!=std::future_status::ready){launch("카메라 이미지 불러오기",[fetched]{return fetched.get();},show);return;}
         try{show(fetched.get());return;}catch(...){}   // fetch again below, so a failure is reported the usual way
@@ -176,18 +176,51 @@ void Application::loadScene(int index,bool editor,int camera,std::string note) {
     launch("카메라 이미지 불러오기",[engine,scene,apply]{return fetchScene(engine,scene,apply);},show);
 }
 // Fetches the next unreviewed scene in the background, so confirming a scene does not wait for the images.
+// Hidden check (2026-10-20 user report around 프레임 0022 → 0023): with 이전 적용 on, confirming a draft and moving on must
+// show the next scene with the labels of the scene just confirmed, not of the one before it.
+bool Application::applyPreviousCheckStep() {
+    static int first = -1, phase = 0, waited = 0;
+    if (busy()) return true;
+    switch (phase) {
+    case 0:
+        first = nextUnreviewedIndex();
+        if (first < 0) throw std::runtime_error("apply-previous check: no draft scene");
+        applyPrevious_ = true; aheadScene_ = -1; aheadDirty_ = true;
+        loadScene(first); phase = 1; waited = 0; return true;
+    case 1:   // the draft is shown and the scene after it has been fetched ahead, before this one is confirmed
+        if (scene_ != first || !ahead_.valid() || ahead_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            if (++waited > 600) throw std::runtime_error("apply-previous check: nothing was fetched ahead");
+            return true;
+        }
+        review(Scope::Scene, false); phase = 2; return true;
+    case 2:   // confirmed: the prompt, where Space moves on
+        if (!nextAsk_) return true;
+        nextAsk_ = false; advance(); phase = 3; waited = 0; return true;
+    case 3: {
+        if (scene_ == first) { if (++waited > 600) throw std::runtime_error("apply-previous check: did not move on"); return true; }
+        const int expected = catalog_["scenes"][first].value("index", -1);
+        std::string from;
+        for (const auto& frame : frames_) if (!frame.applied.empty()) from = frame.applied.substr(frame.applied.rfind('/') + 1);
+        if (from.empty()) throw std::runtime_error("apply-previous check: the next scene shows nothing applied");
+        if (std::stoi(from) != expected) throw std::runtime_error("apply-previous check: applied from frame " + from + ", not from the scene just confirmed (" + std::to_string(expected) + ")");
+        return false;
+    }
+    default: return false;
+    }
+}
 void Application::prefetch() {
     if(!aheadDirty_||!ready()||busy()||page_!=Page::Review)return;
-    const int next=advanceIndex(),revision=catalog_["summary"].value("auto_revision",0);
+    const int next=advanceIndex(),revision=catalog_["summary"].value("auto_revision",0),labels=catalog_["summary"].value("revision",0);
     if(ahead_.valid()){
-        if(aheadScene_==next&&aheadAuto_==revision){aheadDirty_=false;return;}
+        // With 이전 적용 the scene fetched ahead also depends on the frames confirmed before it: a confirmation since makes it stale.
+        if(aheadScene_==next&&aheadAuto_==revision&&(!aheadApply_||aheadRevision_==labels)){aheadDirty_=false;return;}
         if(ahead_.wait_for(std::chrono::seconds(0))!=std::future_status::ready)return;   // dropping a running fetch would block until it ends
         try{ahead_.get();}catch(...){}
     }
     aheadDirty_=false;aheadScene_=-1;
     if(next<0||next==scene_)return;
     const auto engine=engine_;const auto scene=catalog_["scenes"][next];
-    aheadScene_=next;aheadAuto_=revision;
+    aheadScene_=next;aheadAuto_=revision;aheadRevision_=labels;aheadApply_=applyPrevious_;
     const bool apply=applyPrevious_;
     ahead_=std::async(std::launch::async,[engine,scene,apply]{return fetchScene(engine,scene,apply);});
 }

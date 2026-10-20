@@ -134,6 +134,8 @@ private:
     Json redraftStatus_ = Json::object();
     bool applyPrevious_ = false;                     // ← 이전 적용: a draft opens with the nearest earlier confirmed frame's labels (kept for the PC)
     int propagatePending_ = 0;                       // 전파 →: the repeated frames and drafts this scene's confirmation has still to fill
+    int aheadRevision_ = -1;                         // the labels' revision when the scene ahead was fetched
+    bool aheadApply_ = false;                        // that fetch showed 이전 적용, so a later confirmation makes it stale
     void toggleApplyPrevious();
     bool missingAvailable_ = false;                  // the project finds missing balls (its YOLO model, or the 10-02 file)
     // The export tab: the captures and folders chosen for export, the formats and the folder (remembered per project),
@@ -246,6 +248,7 @@ public:
     void workerDialogForCapture() { openWorkerDialog(); }
     bool workerDialogCheckStep(int step);            // hidden check: a click on each later field keeps the keyboard there; false when done
     bool sceneBarIdCheckStep(int step);              // hidden check: no two items of the scene bar share an ImGui ID; false when done
+    bool applyPreviousCheckStep();                   // hidden check: confirm a draft, move on, the next scene takes the labels just confirmed
     void hubForCheck(const std::string& address, const std::string& worker, const std::string& token, int waitSeconds = 0);   // --hub --worker --token: joins with these instead of the settings
     bool hubSettled() const;                         // no hub, or the hub has answered, or 5 s have passed, and --hub-wait is over: a hidden check may end
     void applyPreviousForCapture(bool on) { applyPrevious_ = on; }   // ← 이전 적용 for a hidden capture (no preferences are read)
