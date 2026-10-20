@@ -251,6 +251,7 @@ class Hub:
             for key in ("app", "version", "account", "device", "summary"):
                 if key in body:
                     entry[key] = body[key]
+            entry.pop("left", None)     # started again after a bye
             entry.update({"token_hash": hash_, "registered": now(), "last_seen": now(), "session": str(body.get("session", ""))})
             self.sessions[hash_] = worker_id
             self._write_json("workers.json", self.workers)
@@ -271,6 +272,18 @@ class Hub:
             entry["last_seen"] = now()
             return worker_id
 
+    def leave(self, worker_id, session=""):
+        """POST /bye: the labeler closed, so it is not connected from now on (not after its command wait and CONNECTED_SECONDS),
+        until it registers again. A bye from a session the worker has since replaced changes nothing."""
+        with self.lock:
+            entry = self.workers.get(worker_id)
+            current = entry.get("session", "") if entry else ""
+            if entry is None or (session and current and session != current):
+                return
+            entry["left"] = now()
+            self.wake.notify_all()      # its command wait ends now
+        self.say(f"{worker_id} 종료")
+
     def touch(self, worker_id):
         with self.lock:
             if worker_id in self.workers:
@@ -287,7 +300,7 @@ class Hub:
                     recent = False
                 result.append({"id": worker_id, "worker": entry.get("worker", ""), "pc": entry.get("pc", ""),
                                "app": entry.get("app", ""), "version": entry.get("version", ""), "account": entry.get("account", ""),
-                               "connected": recent or self.polling.get(worker_id, 0) > 0,
+                               "connected": not entry.get("left") and (recent or self.polling.get(worker_id, 0) > 0),
                                "last_seen": entry.get("last_seen", ""), "since": entry.get("since", ""),
                                "registered": entry.get("registered", ""), "last_action": self._last_action(worker_id),
                                "device": entry.get("device"), "summary": entry.get("summary"),
@@ -389,9 +402,10 @@ class Hub:
                     current = self.workers.get(worker_id, {}).get("session", "")
                     if session and current and session != current:
                         raise HubError(409, "another session registered")
-                    pending = [record for record in self.commands.values() if record["worker"] == worker_id and record["state"] == "queued"]
+                    left = bool(self.workers.get(worker_id, {}).get("left"))   # said bye: nobody is there to take the commands
+                    pending = [] if left else [record for record in self.commands.values() if record["worker"] == worker_id and record["state"] == "queued"]
                     remaining = deadline - time.monotonic()
-                    if pending or remaining <= 0 or self.closing:
+                    if left or pending or remaining <= 0 or self.closing:
                         break
                     self.wake.wait(remaining)
                 for record in pending:
@@ -559,6 +573,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._empty()
         if parts == ["events"] and method == "POST":
             return self._json({"stored": hub.add_events(worker_id, self._parse(body).get("events"))})
+        if parts == ["bye"] and method == "POST":
+            hub.leave(worker_id, self.headers.get("X-Boccia-Session", "").strip())
+            return self._empty()
         if parts == ["commands"] and method == "GET":
             return self._json({"commands": hub.take_commands(worker_id, self._number(query, "wait", 0, LONGPOLL_MAX), self.headers.get("X-Boccia-Session", "").strip())})
         if len(parts) == 3 and parts[0] == "commands" and parts[2] == "result" and method == "POST":

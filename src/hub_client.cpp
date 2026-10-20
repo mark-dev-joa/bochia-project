@@ -23,6 +23,7 @@ namespace {
 constexpr auto KNOCK_EVERY = 10s;          // while the hub is off
 constexpr size_t BACKFILL_LINES = 2000, BATCH = 100, QUEUE_LIMIT = 5000;
 constexpr int POLL_SECONDS = 25, POLL_TIMEOUT_MS = 30000, UPLOAD_TIMEOUT_MS = 60000;
+constexpr int BYE_TIMEOUT_MS = 500;      // the bye of a closing app: a hub that went away must not hold up the exit
 
 std::wstring wide(const std::string& text) {
     if (text.empty()) return {};
@@ -173,9 +174,10 @@ std::string accountName() {
 
 // ---- Session
 
-Session::Session() {
+Session::Session(int timeoutMs) {
     handle_ = WinHttpOpen(L"BocciaHub/1", WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (handle_) WinHttpSetTimeouts(handle_, 3000, 3000, 5000, 5000);
+    if (handle_ && timeoutMs > 0) WinHttpSetTimeouts(handle_, timeoutMs, timeoutMs, timeoutMs, timeoutMs);
+    else if (handle_) WinHttpSetTimeouts(handle_, 3000, 3000, 5000, 5000);
 }
 Session::~Session() { if (handle_) WinHttpCloseHandle(handle_); }
 
@@ -444,10 +446,20 @@ Client::Client(Settings settings, fs::path outbox, std::function<fs::path()> log
 }
 
 Client::~Client() {
-    { std::lock_guard guard(core_->lock); core_->stop = true; }
+    const bool connected = core_->state == State::Connected;   // before the cancels below: a call they cut marks it Offline
+    Settings current;
+    std::string instance;
+    { std::lock_guard guard(core_->lock); core_->stop = true; current = core_->settings; instance = core_->sessionId; }
     core_->wake.notify_all();
     core_->senderSession.cancel();   // a request in progress (the 25 s command wait above all) returns now
     core_->pollerSession.cancel();
+    // POST /bye: the hub shows this app as gone at once, not after the command wait just cut and its 15 s after the last
+    // call (2026-10-20 user report). A crash still shows that way.
+    if (connected) {
+        auto headers = authHeaders(current);
+        headers.push_back("X-Boccia-Session: " + instance);
+        Session(BYE_TIMEOUT_MS).request(current.address, "POST", "/bye", "{}", headers, BYE_TIMEOUT_MS);
+    }
     bool senderDone = false, pollerDone = false;
     {
         std::unique_lock guard(core_->lock);

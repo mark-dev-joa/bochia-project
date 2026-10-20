@@ -23,7 +23,7 @@ struct Reply { int status = 0; std::string body, error; };   // status 0: no ans
 // Another thread may end the request in progress (interrupt) or end it and refuse the next ones (cancel).
 class Session {
 public:
-    Session();
+    explicit Session(int timeoutMs = 0);   // > 0: every phase of a call (name, connection, send, answer) waits at most that long
     ~Session();
     Session(const Session&) = delete;
     Session& operator=(const Session&) = delete;

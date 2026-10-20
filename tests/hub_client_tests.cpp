@@ -208,9 +208,12 @@ int main() { try {
         check(waitUntil([&] { return client->state() == Client::State::Connected; }, 15), "did not reconnect to the restarted hub");
         check(waitUntil([&] { for (const auto& file : api(again.address(), "GET", idPath + "/files/log")) if (file["name"] == "labeler-2026-10-19.log") return true; return false; }, 5), "outbox file did not upload");
         check(waitUntil([&] { const auto found = worker(again.address(), id); return !found.is_null() && found["status"].value("page", "") == "tools"; }, 5), "status set while offline must arrive after reconnect");
+        client->event("종료");   // what the labeler writes as it closes: the sender may be inside that call below
         started = Clock::now();
         client.reset();   // a connected client, inside its 25 s command wait
         check(secondsSince(started) < .5, "destroying a connected client must take under half a second");
+        // 2026-10-20 user report: a closed labeler stayed connected in the hub for its command wait and 15 s more
+        check(!worker(again.address(), id).value("connected", true), "a closed client must show as gone in the hub at once");
         std::cout << "offline calls returned at once, outbox uploaded after the hub came back, shutdown prompt\n";
     }
     {   // lines of another worker in the same log stay theirs; a re-registration sends the status again by itself

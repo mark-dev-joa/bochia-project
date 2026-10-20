@@ -213,6 +213,47 @@ class HubTest(unittest.TestCase):
         self.assertEqual([c["id"] for c in poll("b", 0)[1]["commands"]], [cid])
         self.assertEqual(poll("", 0)[0], 200)                              # no session header: as before
 
+    def session_call(self, token, session, method, path, wait=20):
+        """status, body of an app call that carries a session header (the labeler's client sends one with every call)."""
+        data = b"{}" if method == "POST" else None
+        request = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=data, method=method)
+        request.add_header("Authorization", f"Bearer {token}")
+        request.add_header("X-Boccia-Session", session)
+        if data:
+            request.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(request, timeout=wait) as response:
+                raw = response.read()
+                return response.status, json.loads(raw) if raw else None
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read())
+
+    def test_bye_shows_the_worker_gone_at_once(self):
+        # 2026-10-20 user report: a closed labeler stayed connected in the hub for its 25 s command wait and 15 s more
+        token = self.hub.invite("홍길동")
+        self.call("POST", "/register", {"app": "labeler", "worker": "홍길동", "pc": "joonyeon", "session": "a"}, token)
+        polled = {}
+        thread = threading.Thread(target=lambda: polled.update(result=self.session_call(token, "a", "GET", "/commands?wait=10")), daemon=True)
+        thread.start()
+        time.sleep(0.3)
+        self.assertTrue(self.call("GET", "/api/workers")[1][0]["connected"])
+        started = time.monotonic()
+        self.assertEqual(self.session_call(token, "a", "POST", "/bye")[0], 204)
+        self.assertFalse(self.call("GET", "/api/workers")[1][0]["connected"])
+        self.assertEqual(self.call("GET", "/api/status")[1]["connected"], 0)
+        thread.join(5)
+        self.assertLess(time.monotonic() - started, 3)                     # its command wait ends too
+        self.assertFalse(self.call("GET", "/api/workers")[1][0]["connected"])
+        self.call("POST", "/register", {"app": "labeler", "worker": "홍길동", "pc": "joonyeon", "session": "b"}, token)
+        self.assertTrue(self.call("GET", "/api/workers")[1][0]["connected"])  # started again
+
+    def test_bye_of_a_replaced_session_changes_nothing(self):
+        token = self.hub.invite("홍길동")
+        for session in ("a", "b"):   # a second labeler of the same worker on the same PC took over
+            self.call("POST", "/register", {"app": "labeler", "worker": "홍길동", "pc": "joonyeon", "session": session}, token)
+        self.assertEqual(self.session_call(token, "a", "POST", "/bye")[0], 204)
+        self.assertTrue(self.call("GET", "/api/workers")[1][0]["connected"])
+
     def test_control_api_refuses_addresses_not_allowed(self):
         self.assertTrue(self.hub.control_allowed("127.0.0.1") and self.hub.control_allowed("::1"))
         self.assertFalse(self.hub.control_allowed("100.64.0.5"))
