@@ -62,6 +62,7 @@ private:
     std::thread sender_, poller_;
 };
 std::string hostName();      // this PC's name (DNS host name)
+std::string gpuName();       // the first NVIDIA adapter's name, else the first hardware adapter's, else ""
 std::string accountName();   // the Windows account
 std::string percentEncode(const std::string& utf8);   // for ids in paths and the X-Boccia-Pc header
 std::string nowStamp();      // "YYYY-MM-DD HH:MM:SS.mmm", local time, the log's stamp

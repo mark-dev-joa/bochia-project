@@ -35,6 +35,7 @@ Application::Application(Configuration config): config_(std::move(config)), poll
     if(startScreen&&std::filesystem::is_regular_file(legacyProject)){const auto path=utf8(legacyProject);bool found=false;for(const auto& item:recentProjects_)found|=item.value("path","")==path;if(!found)recentProjects_.push_back({{"path",path},{"name","기존 라벨 작업"},{"legacy",true}});}
 }
 Application::~Application() {
+    logLine("종료");
     setLogSink(nullptr);hub_.reset();   // the hub client stops first: its threads touch nothing of the app after this
     if(task_.valid()) task_.wait(); if(thumbTask_.valid()) thumbTask_.wait(); if(ahead_.valid()) ahead_.wait();
     if(config_.rememberUi){try{rememberPosition();}catch(...){}try{if(projectOpened())rememberProject(workspace_.empty()?config_.project:workspace_);}catch(...){}} releaseFrames();deleteDoomed();
@@ -299,7 +300,7 @@ void Application::apply() {
             if(existing[replacement_].contains("color"))box["color"]=existing[replacement_]["color"];
             existing[replacement_]=box;selected_=replacement_;
         } else {existing.push_back(box);selected_=int(existing.size())-1;}
-        logLine((added?"공 추가 · ":"공 수정 · ")+cameraLabel(current().member)+(added?std::string(" · ")+(!brushMask_.empty()?"브러시":tool_==Tool::Polygon?"폴리곤":tool_==Tool::Box?"박스":"클릭 분할"):" · 공 "+std::to_string(selected_+1)));
+        logLine((added?"공 추가 · ":"공 수정 · ")+cameraLabel(current().member)+(added?std::string():" · 공 "+std::to_string(selected_+1))+" · "+(!brushMask_.empty()?"브러시":tool_==Tool::Polygon?"폴리곤":tool_==Tool::Box?"박스":"클릭 분할"));
         cancel();changed();message_=std::string("윤곽 반영 · ")+note;
         // A found ball, once applied, takes the user back to the three-tile view (2026-10-08 user request).
         adding_=false;
@@ -624,7 +625,7 @@ void Application::confirmOcclusion(){
     }
     ImGui::PopStyleVar(2);
 }
-void Application::undo(){if(busy())return;if(pending()){cancel();return;}auto& f=current();if(f.history.empty())return;f.annotation=f.history.back();f.history.pop_back();selected_=f.annotation["boxes"].empty()?-1:std::min(selected_,int(f.annotation["boxes"].size())-1);changed();}
+void Application::undo(){if(busy())return;if(pending()){cancel();return;}auto& f=current();if(f.history.empty())return;logLine("되돌리기 · "+cameraLabel(f.member));f.annotation=f.history.back();f.history.pop_back();selected_=f.annotation["boxes"].empty()?-1:std::min(selected_,int(f.annotation["boxes"].size())-1);changed();}
 void Application::segment(cv::Point2d point,bool negative) {
     if(busy())return;
     if(!proposal_.is_null()&&proposal_.value("source","")!="efficientsam"){message_="현재 윤곽을 먼저 반영하거나 취소하세요.";return;}
@@ -686,7 +687,7 @@ void Application::review(Scope scope,bool hold,int member) {
         for(auto& f:frames_)if(std::find(keys.begin(),keys.end(),f.annotation["key"])!=keys.end()){f.annotation["reviewed"]=!hold;f.annotation["review_status"]=hold?"hold":"reviewed";}
         for(const size_t i:carried)if(i<frames_.size()){frames_[i].dirty=false;frames_[i].applied.clear();}
         if(!hold)propagatePending_=result.data.value("propagate_pending",0);
-        {int balls=0;for(const auto& frame:frames_)balls+=int(frame.annotation.value("boxes",Json::array()).size());logLine((hold?"보류 · ":"확인 · ")+hubSceneName()+(hold?std::string():" · 공 "+std::to_string(balls)+"개"));}
+        {int balls=0;for(const auto& frame:frames_)balls+=int(frame.annotation.value("boxes",Json::array()).size());logLine((hold?"보류 · ":"장면 확인 · ")+hubSceneName()+(hold?std::string():" · 공 "+std::to_string(balls)+"개"));}
         message_=hold?"보류로 표시했습니다":"확인했습니다";
         // A hold moves on at once; a confirmation stops at a prompt, and a second Space moves on (2026-10-08 user request).
         if(hold&&moveOn)advance();else if(scope==Scope::Scene)nextAsk_=true;});
@@ -750,6 +751,13 @@ void Application::tick(){
     }
     // Every notice and error the screen shows goes to the log as well (labeler_log.hpp).
     if(error_!=loggedError_){if(!error_.empty())logLine("오류 · "+error_);loggedError_=error_;}
+    // An export's end, once, whoever saw it end (the export tab polls its export itself, so the status poll may not).
+    if(!exportDemo_&&exportStatus_.is_object()){const std::string state=exportStatus_.value("status",""),path=exportStatus_.value("path","");
+        if(!path.empty()&&!state.empty()&&state!="running"&&path!=exportLogged_){exportLogged_=path;
+            std::string formats;for(const auto& [on,name]:{std::pair{exportYolo_,"YOLO"},{exportCocoDetection_,"COCO 검출"},{exportCocoMask_,"COCO 마스크"},{exportCrops_,"크롭"}})if(on)formats+=std::string(formats.empty()?"":" · ")+name;
+            if(exportStatus_.contains("error"))logLine("오류 · 내보내기 · "+(exportStatus_["error"].is_string()?exportStatus_["error"].get<std::string>():exportStatus_["error"].dump()));
+            else if(state=="stopped")logLine("내보내기 중단");
+            else logLine("내보내기 · "+formats+" · "+grouped(exportStatus_.value("total",0))+"장 · "+utf8(fromUtf8(path).make_preferred()));}}
     if(message_!=loggedMessage_){if(!message_.empty())logLine("알림 · "+message_);loggedMessage_=message_;}
     if(task_.valid()&&task_.wait_for(std::chrono::seconds(0))==std::future_status::ready){
         auto complete=std::move(completion_);
@@ -778,12 +786,13 @@ void Application::poll(){
             propagationStatus_=result.data["propagation"];
             const bool marking=occlusionStatus_.value("status","")=="running";occlusionStatus_=result.data["occlusion"];
             if(marking&&occlusionStatus_.value("status","")!="running"){
-                if(occlusionStatus_.value("status","")!="complete")message_="가림 판정이 실패했습니다: "+occlusionStatus_.value("error","");
-                else if(occlusionStatus_.value("dry_run",false)){message_="가림 시험 완료 · "+grouped(occlusionStatus_.value("frames",0))+"장의 공 "+grouped(occlusionStatus_.value("balls",0))+"개가 가려진 것으로 판정 (저장 안 함)";loadMissingSamples(occlusionStatus_.value("samples",Json::array()));}
-                else{message_="공 "+grouped(occlusionStatus_.value("applied_balls",0))+"개를 일부 가림으로 표시했습니다 ("+grouped(occlusionStatus_.value("applied_frames",0))+"장).";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}}
+                if(occlusionStatus_.value("status","")!="complete"){message_="가림 판정이 실패했습니다: "+occlusionStatus_.value("error","");logLine("오류 · 가려진 공 표시 · "+occlusionStatus_.value("error",""));}
+                else if(occlusionStatus_.value("dry_run",false)){logLine("가려진 공 표시 · 시험 · 공 "+grouped(occlusionStatus_.value("balls",0))+"개 · "+grouped(occlusionStatus_.value("frames",0))+"장");message_="가림 시험 완료 · "+grouped(occlusionStatus_.value("frames",0))+"장의 공 "+grouped(occlusionStatus_.value("balls",0))+"개가 가려진 것으로 판정 (저장 안 함)";loadMissingSamples(occlusionStatus_.value("samples",Json::array()));}
+                else{logLine("가려진 공 표시 · 공 "+grouped(occlusionStatus_.value("applied_balls",0))+"개 · "+grouped(occlusionStatus_.value("applied_frames",0))+"장");message_="공 "+grouped(occlusionStatus_.value("applied_balls",0))+"개를 일부 가림으로 표시했습니다 ("+grouped(occlusionStatus_.value("applied_frames",0))+"장).";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}}
             if(propagating&&propagationStatus_.value("status","")!="running"){
                 if(propagationStatus_.value("live",false)){if(propagationStatus_.value("carried",0)+propagationStatus_.value("frames",0)>0)message_="확인한 라벨을 다음 초안 "+grouped(propagationStatus_.value("carried",0))+"장과 반복 "+grouped(propagationStatus_.value("frames",0))+"장에 맞췄습니다.";}
                 else{if(propagationStatus_.value("status","")=="complete")logLine("전파 → · 반복 "+grouped(propagationStatus_.value("frames",0))+"장 · 초안 "+grouped(propagationStatus_.value("carried",0))+"장");
+                    if(propagationStatus_.value("status","")!="complete")logLine("오류 · 전파 · "+propagationStatus_.value("error",""));
                     message_=propagationStatus_.value("status","")=="complete"?"반복 프레임 "+grouped(propagationStatus_.value("frames",0))+"장에 라벨을 전파하고 초안 "+grouped(propagationStatus_.value("carried",0))+"장을 채웠습니다 (공 "+grouped(propagationStatus_.value("balls",0))+"개).":"라벨 전파가 실패했습니다: "+propagationStatus_.value("error","");if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
                 }
             {   // 초안 다시 만들기 finished: say so and show the new drafts
@@ -791,18 +800,23 @@ void Application::poll(){
                 if(redrafting&&redraftStatus_.value("status","")!="running"){
                     const std::string state=redraftStatus_.value("status","");
                     message_=state=="complete"?"초안을 다시 만들었습니다 · "+grouped(redraftStatus_.value("drafted",0))+"장":state=="stopped"?"초안 다시 만들기를 중단했습니다.":"초안 다시 만들기가 실패했습니다: "+redraftStatus_.value("error","");
+                    logLine(state=="complete"?"초안 다시 만들기 · "+grouped(redraftStatus_.value("drafted",0))+"장":state=="stopped"?std::string("초안 다시 만들기 중단"):"오류 · 초안 다시 만들기 · "+redraftStatus_.value("error",""));
                     if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;
                     if(batchTools_)queued_=[this]{refreshBatchScope();};}
             }
             autoStatus_=result.data["auto"];exportStatus_=result.data["export"];colorStatus_=result.data["color"];circleStatus_=result.data["circle"];missingStatus_=result.data["missing"];
             if(filling&&missingStatus_.value("status","")!="running"){
                 const bool trial=missingStatus_.value("dry_run",false);
+                const bool circles=missingStatus_.value("method","")=="circles";const std::string tool=circles?"원형 검출":"빠진 공 찾기";
+                if(missingStatus_.value("status","")=="complete"&&trial)logLine(tool+(circles?" · 찾기":" · 시험")+" · 공 "+grouped(missingStatus_.value("balls",0))+"개 · "+grouped(missingStatus_.value("frames",0))+"장");
+                else if(missingStatus_.value("status","")=="complete")logLine(tool+(circles?" · 더하기":"")+" · 공 "+grouped(missingStatus_.value("applied_balls",0))+"개 · "+grouped(missingStatus_.value("applied_frames",0))+"장");
+                else logLine("오류 · "+tool+" · "+missingStatus_.value("error",""));
                 if(missingStatus_.value("status","")!="complete")message_="누락 공 채우기가 실패했습니다: "+missingStatus_.value("error","");
                 else if(trial&&missingStatus_.value("method","")=="circles"){message_="원형 검출 · 새 공 "+grouped(missingStatus_.value("balls",0))+"개 · "+grouped(missingStatus_.value("frames",0))+"장";loadMissingSamples();}
                 else if(trial){message_="시험 실행 완료 · "+grouped(missingStatus_.value("frames",0))+"장에 공 "+grouped(missingStatus_.value("balls",0))+"개 (저장 안 함)";loadMissingSamples();}
                 else{message_="누락 공 "+grouped(missingStatus_.value("applied_balls",0))+"개를 "+grouped(missingStatus_.value("applied_frames",0))+"장에 추가했습니다.";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}}
-            if(refining&&circleStatus_.value("status","")!="running"){message_=circleStatus_.value("status","")=="complete"?"공 "+grouped(circleStatus_.value("balls",0))+"개의 둘레를 다시 쟀습니다. 건너뛴 공 "+grouped(circleStatus_.value("skipped",0))+"개.":"둘레 다듬기가 실패했습니다.";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
-            if(coloring&&colorStatus_.value("status","")!="running"){message_=colorStatus_.value("status","")=="complete"?"공 "+grouped(colorStatus_.value("filled",0))+"개의 색상을 채웠습니다.":"색상 채우기가 실패했습니다.";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
+            if(refining&&circleStatus_.value("status","")!="running"){logLine(circleStatus_.value("status","")=="complete"?"둘레 다듬기 · 공 "+grouped(circleStatus_.value("balls",0))+"개":std::string("오류 · 둘레 다듬기"));message_=circleStatus_.value("status","")=="complete"?"공 "+grouped(circleStatus_.value("balls",0))+"개의 둘레를 다시 쟀습니다. 건너뛴 공 "+grouped(circleStatus_.value("skipped",0))+"개.":"둘레 다듬기가 실패했습니다.";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
+            if(coloring&&colorStatus_.value("status","")!="running"){logLine(colorStatus_.value("status","")=="complete"?"색 채우기 · 공 "+grouped(colorStatus_.value("filled",0))+"개":std::string("오류 · 색 채우기"));message_=colorStatus_.value("status","")=="complete"?"공 "+grouped(colorStatus_.value("filled",0))+"개의 색상을 채웠습니다.":"색상 채우기가 실패했습니다.";if(page_==Page::Review)loadScene(scene_,editor_,camera_,message_);else stale_=true;}
             const Json revisions=result.data.value("revisions",Json::object());
             const bool changed=oldRevision!=revisions.value("revision",0)||oldAuto!=revisions.value("auto_revision",0);
             if(changed||runningJobs()<runningBefore)refreshCatalog(changed);   // the catalog, then the scene again when the labels moved under it

@@ -218,6 +218,10 @@ private:
     std::shared_ptr<hub::Client> hub_;               // shared: the log sink holds it weakly, from any thread that logs
     std::shared_ptr<HubShared> hubShared_ = std::make_shared<HubShared>();
     std::chrono::steady_clock::time_point hubTicked_{}, hubStarted_{};
+    Json hubProgress_;                               // hubProgress(): counted again when the labels' revision changes or every 10 s
+    int hubProgressRevision_ = -1;
+    std::chrono::steady_clock::time_point hubProgressAt_{};
+    std::string exportLogged_;                       // the folder of the last export whose end went to the log
     std::chrono::seconds hubWait_{0};                // --hub-wait: a hidden run stays at least this long, so a check can send it commands
     bool workerDialog_ = false;
     std::string hubNotice_;

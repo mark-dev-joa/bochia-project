@@ -18,6 +18,7 @@ void fill(char* buffer, size_t size, const std::string& text) {
     std::memcpy(buffer, text.data(), count);
     buffer[count] = 0;
 }
+const std::string& thisGpu() { static const std::string name = hub::gpuName(); return name; }   // asked once: DXGI is not free
 std::string trimmed(const char* text) {
     std::string result = text;
     while (!result.empty() && (result.back() == ' ' || result.back() == '\t' || result.back() == '\r' || result.back() == '\n')) result.pop_back();
@@ -105,7 +106,7 @@ void Application::workerPopup() {
 
 hub::Registration Application::currentRegistration() const {
     hub::Registration made;
-    made.device = Json{{"gpu", modelsOnGpu()}, {"cuda", !yoloCudaRuntime().empty()}, {"problem", gpuProblem()}};
+    made.device = Json{{"gpu", modelsOnGpu()}, {"cuda", !yoloCudaRuntime().empty()}, {"problem", gpuProblem()}, {"name", thisGpu()}};
     Json summary = Json::object();
     if (projectOpened()) {
         summary["project"] = workspace_.empty() ? std::string("기존 라벨 작업") : workspaceName_;
@@ -159,7 +160,15 @@ void Application::hubTick() {
     if (now - hubTicked_ < std::chrono::milliseconds(500)) return;
     hubTicked_ = now;
     const std::string page = page_ == Page::Data ? "data" : page_ == Page::Export ? "export" : "review";
-    hub_->setStatus(hubStatusJson(page, hubScene(), hubJob(), applyPrevious_, modelsOnGpu(), error_));
+    if (projectOpened() && catalog_.is_object()) {   // the progress numbers: again when the labels changed, else every 10 s (the 10-minute window moves)
+        const int revision = catalog_.contains("summary") && catalog_["summary"].is_object() ? catalog_["summary"].value("revision", -1) : -1;
+        if (revision != hubProgressRevision_ || now - hubProgressAt_ > std::chrono::seconds(10)) {
+            hubProgress_ = hubProgress(catalog_, settings_.worker, std::time(nullptr));
+            hubProgressRevision_ = revision;
+            hubProgressAt_ = now;
+        }
+    } else { hubProgress_ = nullptr; hubProgressRevision_ = -1; }
+    hub_->setStatus(hubStatusJson(page, hubScene(), hubJob(), applyPrevious_, modelsOnGpu(), error_, hubProgress_));
     { std::lock_guard guard(hubShared_->lock); hubShared_->registration = currentRegistration(); }
     for (const auto& command : hub_->takeCommands()) {
         if (command.name == "notify") { hubNotice_ = command.value; logLine("허브 알림 · " + command.value); hub_->finish(command, true, "띄움"); }

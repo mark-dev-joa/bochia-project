@@ -1,9 +1,83 @@
 #include "native_labeler_model.hpp"
 #include <opencv2/imgproc.hpp>
+#include <algorithm>
 #include <cstdio>
+#include <iomanip>
+#include <map>
+#include <sstream>
+#include <vector>
 
 namespace boccia::labeler {
-Json hubStatusJson(const std::string& page, const Json& scene, const Json& job, bool applyPrevious, bool gpu, const std::string& error) {
+Json hubProgress(const Json& catalog, const std::string& worker, std::time_t now) {
+    if (!catalog.is_object()) return Json();
+    Json progress{{"target", catalog.value("target_images", 0)}, {"reviewed", catalog.value("reviewed_target_images", 0)}};
+    // Per recording, in scene order: the review targets (selected members) and the confirmed ones among them.
+    Json recordings = Json::array();
+    std::map<int, size_t> where;
+    static const Json none = Json::object();
+    const Json& scenes = catalog.contains("scenes") && catalog["scenes"].is_array() ? catalog["scenes"] : none;
+    for (const auto& scene : scenes) {
+        const int number = scene.value("recording_number", 0);
+        auto found = where.find(number);
+        if (found == where.end()) {
+            char name[48];
+            std::snprintf(name, sizeof name, "%s %02d", scene.value("source_type", "") == "images" ? "이미지 자료" : "촬영", number);
+            found = where.emplace(number, recordings.size()).first;
+            recordings.push_back({{"name", name}, {"reviewed", 0}, {"target", 0}});
+        }
+        auto& entry = recordings[found->second];
+        if (!scene.contains("members") || !scene["members"].is_array()) continue;
+        for (const auto& member : scene["members"]) {
+            if (!member.value("selected", true)) continue;
+            entry["target"] = entry["target"].get<int>() + 1;
+            if (member.value("reviewed", false)) entry["reviewed"] = entry["reviewed"].get<int>() + 1;
+        }
+    }
+    progress["recordings"] = std::move(recordings);
+    // The 7 local dates ending today, at noon so a daylight-saving change cannot skip one.
+    std::tm today{};
+    localtime_s(&today, &now);
+    std::vector<std::string> full, shown;
+    for (int back = 6; back >= 0; --back) {
+        std::tm day = today;
+        day.tm_mday -= back; day.tm_hour = 12; day.tm_min = 0; day.tm_sec = 0; day.tm_isdst = -1;
+        std::mktime(&day);
+        char date[16], label[8];
+        std::strftime(date, sizeof date, "%Y-%m-%d", &day);
+        std::strftime(label, sizeof label, "%m-%d", &day);
+        full.emplace_back(date); shown.emplace_back(label);
+    }
+    std::vector<int> counts(full.size(), 0);
+    int hold = 0, propagated = 0, last10 = 0;
+    const Json& summary = catalog.contains("summary") && catalog["summary"].is_object() ? catalog["summary"] : none;
+    const Json& frames = summary.contains("frames") && summary["frames"].is_object() ? summary["frames"] : none;
+    for (const auto& [key, frame] : frames.items()) {
+        const std::string status = frame.value("review_status", "");
+        if (status == "hold") ++hold;
+        if (frame.value("propagated", false)) ++propagated;
+        if (worker.empty() || status != "reviewed" || frame.value("reviewed_by", "") != worker) continue;
+        const std::string at = frame.value("reviewed_at", "");
+        if (at.size() < 19) continue;
+        const auto day = std::find(full.begin(), full.end(), at.substr(0, 10));
+        if (day == full.end()) continue;
+        ++counts[size_t(day - full.begin())];
+        if (day + 1 != full.end()) continue;   // the last ten minutes are today's
+        std::tm parsed{};
+        std::istringstream(at) >> std::get_time(&parsed, "%Y-%m-%d %H:%M:%S");
+        parsed.tm_isdst = -1;
+        const std::time_t when = std::mktime(&parsed);
+        if (when != -1 && when <= now && now - when <= 600) ++last10;
+    }
+    Json days = Json::array();
+    for (size_t i = 0; i < full.size(); ++i) days.push_back({{"date", shown[i]}, {"count", counts[i]}});
+    progress["days"] = std::move(days);
+    progress["today"] = counts.back();
+    progress["last10"] = last10;
+    progress["hold"] = hold;
+    progress["propagated"] = propagated;
+    return progress;
+}
+Json hubStatusJson(const std::string& page, const Json& scene, const Json& job, bool applyPrevious, bool gpu, const std::string& error, const Json& progress) {
     std::string text = page == "data" ? "자료" : page == "export" ? "내보내기" : "검수";
     if (scene.is_object()) {
         char frame[16];
@@ -12,8 +86,10 @@ Json hubStatusJson(const std::string& page, const Json& scene, const Json& job, 
     }
     if (job.is_object() && !job.value("text", "").empty()) text += " · " + job.value("text", "");
     if (!error.empty()) text += " · 오류";
-    return Json{{"page", page}, {"scene", scene.is_object() ? scene : Json()}, {"job", job.is_object() ? job : Json()},
+    Json status{{"page", page}, {"scene", scene.is_object() ? scene : Json()}, {"job", job.is_object() ? job : Json()},
                 {"apply_previous", applyPrevious}, {"device", gpu ? "GPU" : "CPU"}, {"error", error}, {"text", text}};
+    if (progress.is_object()) status["progress"] = progress;
+    return status;
 }
 }
 #include <cmath>

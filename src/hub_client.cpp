@@ -1,6 +1,8 @@
 #include "hub_client.hpp"
 #include <windows.h>
 #include <winhttp.h>
+#include <dxgi.h>
+#pragma comment(lib, "dxgi.lib")
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -142,6 +144,24 @@ std::string hostName() {
     size = 256;
     if (GetComputerNameW(name, &size) && size) return narrow(std::wstring(name, size));
     return "pc";
+}
+
+std::string gpuName() {
+    IDXGIFactory1* factory = nullptr;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory))) || !factory) return {};
+    std::string first, nvidia;
+    IDXGIAdapter1* adapter = nullptr;
+    for (UINT index = 0; factory->EnumAdapters1(index, &adapter) != DXGI_ERROR_NOT_FOUND; ++index) {
+        DXGI_ADAPTER_DESC1 description{};
+        if (SUCCEEDED(adapter->GetDesc1(&description)) && !(description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+            const std::string name = narrow(description.Description);
+            if (first.empty()) first = name;
+            if (description.VendorId == 0x10DE && nvidia.empty()) nvidia = name;
+        }
+        adapter->Release();
+    }
+    factory->Release();
+    return nvidia.empty() ? first : nvidia;
 }
 
 std::string accountName() {

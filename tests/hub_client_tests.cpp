@@ -113,6 +113,7 @@ const std::string REPLACEMENT = "\xEF\xBF\xBD";   // U+FFFD, what an invalid byt
 
 int main() { try {
     std::cout.setf(std::ios::unitbuf);   // every line reaches the file even when the process dies
+    std::cout << "GPU " << gpuName() << "\n";   // the registration's device name (may be empty on a PC without a GPU)
     if (!pythonAvailable()) { std::cout << "SKIP: python\n"; return 0; }
     const fs::path temp = fs::temp_directory_path() / ("hub-client-test-" + std::to_string(GetCurrentProcessId()));
     fs::remove_all(temp); fs::create_directories(temp);

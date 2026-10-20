@@ -1,6 +1,7 @@
 #include "build_info.hpp"
 #include "labeler_settings.hpp"
 #include <regex>
+#include <ctime>
 #include <cstdlib>
 #include <windows.h>
 #include "native_labeler_model.hpp"
@@ -90,6 +91,38 @@ void viewTests() {
     check(about(float(half.x), 100, 1) && about(float(half.y), 50, 1) && about(float(half.r), 20, 1), "a circle fitted to a half ring, as of a part-hidden ball, must still find the whole ball");
     check(fitCircle({{3, 4}}).r == 0 && fitCircle({}).r == 0, "too few points give no circle");
 }
+// The progress the hub shows (design/hub/PLAN-2.md Task 3): totals, per recording, and this worker's confirmations by day
+// from the label file's reviewed_at/reviewed_by.
+void hubProgressTests() {
+    std::tm noon{}; noon.tm_year = 2026 - 1900; noon.tm_mon = 9; noon.tm_mday = 20; noon.tm_hour = 15; noon.tm_isdst = -1;
+    const std::time_t now = std::mktime(&noon);   // 2026-10-20 15:00:00 local
+    auto frame = [](const char* status, const char* by, const char* at, bool propagated = false) {
+        Json made{{"review_status", status}, {"reviewed", std::string(status) == "reviewed"}, {"propagated", propagated}};
+        if (*by) made["reviewed_by"] = by;
+        if (*at) made["reviewed_at"] = at;
+        return made; };
+    const Json catalog{{"target_images", 7}, {"reviewed_target_images", 4},
+        {"scenes", Json::array({
+            {{"recording_number", 1}, {"members", Json::array({{{"key", "a"}, {"selected", true}, {"reviewed", true}}, {{"key", "b"}, {"selected", true}, {"reviewed", true}}})}},
+            {{"recording_number", 2}, {"members", Json::array({{{"key", "c"}, {"selected", true}, {"reviewed", true}}, {{"key", "x"}, {"selected", false}, {"reviewed", false}}})}},
+            {{"recording_number", 3}, {"source_type", "images"}, {"members", Json::array({{{"key", "p"}, {"reviewed", false}}})}}})},
+        {"summary", {{"frames", {
+            {"a", frame("reviewed", "홍길동", "2026-10-20 14:55:00")}, {"b", frame("reviewed", "홍길동", "2026-10-20 09:00:00")},
+            {"c", frame("reviewed", "홍길동", "2026-10-17 10:00:00")}, {"d", frame("reviewed", "김민수", "2026-10-20 14:58:00")},
+            {"e", frame("reviewed", "", "")}, {"f", frame("hold", "홍길동", "2026-10-20 14:59:00")},
+            {"g", frame("draft", "", "", true)}, {"h", frame("reviewed", "홍길동", "2026-10-12 10:00:00")}}}}}};
+    const Json progress = hubProgress(catalog, "홍길동", now);
+    check(progress["target"] == 7 && progress["reviewed"] == 4 && progress["hold"] == 1 && progress["propagated"] == 1, "progress totals");
+    check(progress["recordings"] == Json::array({{{"name", "촬영 01"}, {"reviewed", 2}, {"target", 2}}, {{"name", "촬영 02"}, {"reviewed", 1}, {"target", 1}},
+                                                 {{"name", "이미지 자료 03"}, {"reviewed", 0}, {"target", 1}}}), "progress per recording");
+    Json dates = Json::array(), counts = Json::array();
+    for (const auto& day : progress["days"]) { dates.push_back(day["date"]); counts.push_back(day["count"]); }
+    check(dates == Json::array({"10-14", "10-15", "10-16", "10-17", "10-18", "10-19", "10-20"}) && counts == Json::array({0, 0, 0, 1, 0, 0, 2}),
+          "seven days of this worker's confirmations, older and other workers' left out");
+    check(progress["today"] == 2 && progress["last10"] == 1, "today and the last ten minutes");
+    check(hubStatusJson("review", nullptr, nullptr, false, true, "", progress)["progress"]["today"] == 2, "the status carries the progress");
+    check(!hubStatusJson("review", nullptr, nullptr, false, true, "").contains("progress"), "no progress, no key");
+}
 // The PC's settings file (실행 장치 and the hub) and the status line the hub gets (design/hub/PLAN-1.md Task 5).
 void settingsTests() {
     namespace fs = std::filesystem;
@@ -120,6 +153,7 @@ void settingsTests() {
 int main(int argc,char** argv){try{
     viewTests();
     settingsTests();
+    hubProgressTests();
     check(std::regex_match(boccia::versionString(), std::regex(R"(\d{4}-\d{2}-\d{2} \d{2}:\d{2} · \S+)")), "version string shape");
     cv::Mat mask(9,13,CV_8UC1,cv::Scalar(0));mask(cv::Rect(4,2,5,5)).setTo(1);mask.at<uchar>(4,6)=0;
     auto rle=encodeMask(mask);auto decoded=decodeMask(rle,13,9);check(cv::countNonZero(mask!=decoded)==0,"RLE hole/column order lost");
