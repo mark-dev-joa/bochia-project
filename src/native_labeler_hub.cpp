@@ -202,7 +202,7 @@ void Application::hubTick() {
             hubProgressAt_ = now;
         }
     } else { hubProgress_ = nullptr; hubProgressRevision_ = -1; }
-    Json status = hubStatusJson(page, hubScene(), hubJob(), applyPrevious_, modelsOnGpu(), error_, hubProgress_);
+    Json status = hubStatusJson(page, hubScene(), hubJob(), modelsOnGpu(), error_, hubProgress_);
     // The registration goes out when the labeler starts, usually before a project is open: the status carries the project.
     if (projectOpened()) status["project"] = workspace_.empty() ? std::string("기존 라벨 작업") : workspaceName_;
     hub_->setStatus(std::move(status));

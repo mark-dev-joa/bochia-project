@@ -11,7 +11,7 @@ from hub.hub import Hub
 from hub.tests.edge import EDGE, HeadlessEdge
 
 WORKER = urllib.parse.quote("홍길동@joonyeon")
-STATUS = {"page": "review", "text": "검수 · 촬영 03 · 프레임 0142", "device": "GPU", "apply_previous": True,
+STATUS = {"page": "review", "text": "검수 · 촬영 03 · 프레임 0142", "device": "GPU",
           "scene": {"recording": "촬영 03", "index": 142}, "job": None, "error": "",
           "progress": {"target": 3869, "reviewed": 1214, "hold": 12, "propagated": 1302, "today": 412, "last10": 12,
                        "recordings": [{"name": "촬영 01", "reviewed": 612, "target": 612}, {"name": "촬영 02", "reviewed": 4, "target": 604}],

@@ -45,7 +45,7 @@ std::filesystem::path Application::preferencesPath() const { return config_.proj
 void Application::rememberPosition() const {
     if(frames_.empty())return;
     const auto& scene=catalog_["scenes"][scene_];
-    Json state={{"recording",scene["recording"]},{"index",scene["index"]},{"camera",frames_[camera_].member["camera"]},{"editor",editor_},{"page",int(page_)},{"brightness",brightness_},{"export",exportSettings()},{"apply_previous",applyPrevious_},{"fit",fitCircle_},{"representatives",representatives_},{"filter",filter_},{"masks",masks_},{"boxes",boxes_},{"circles",circles_},{"outlines",outlines_},{"view",view_},{"fit_circle",fitCircle_},{"panels",{listOpen_,sideOpen_,summaryOpen_}}};
+    Json state={{"recording",scene["recording"]},{"index",scene["index"]},{"camera",frames_[camera_].member["camera"]},{"editor",editor_},{"page",int(page_)},{"brightness",brightness_},{"export",exportSettings()},{"fit",fitCircle_},{"representatives",representatives_},{"filter",filter_},{"masks",masks_},{"boxes",boxes_},{"circles",circles_},{"outlines",outlines_},{"view",view_},{"fit_circle",fitCircle_},{"panels",{listOpen_,sideOpen_,summaryOpen_}}};
     auto path=preferencesPath();std::filesystem::create_directories(path.parent_path());
     auto temporary=path;temporary+=L"."+std::to_wstring(Clock::now().time_since_epoch().count())+L".tmp";std::ofstream stream(temporary,std::ios::binary);stream<<state.dump(2);stream.close();
     if(!stream)throw std::runtime_error("작업 위치 저장 실패");
@@ -56,7 +56,7 @@ void Application::restorePosition() {
     if(config_.rememberUi){try {
         std::ifstream input(preferencesPath(),std::ios::binary);auto state=Json::parse(input);
         const int savedPage=state.value("page",int(page_));if(!config_.training&&(savedPage==0||savedPage==1))page_=Page(savedPage);
-        brightness_=std::clamp(state.value("brightness",1.65f),.5f,3.f);restoreExportSettings(state.value("export",Json()));applyPrevious_=state.value("apply_previous",false);fitCircle_=state.value("fit",true);representatives_=state.value("representatives",true);filter_=std::clamp(state.value("filter",0),0,3);masks_=state.value("masks",true);boxes_=state.value("boxes",true);circles_=state.value("circles",true);view_=std::clamp(state.value("view",0),0,viewCount-1);outlines_=state.value("outlines",true);fitCircle_=state.value("fit_circle",true);
+        brightness_=std::clamp(state.value("brightness",1.65f),.5f,3.f);restoreExportSettings(state.value("export",Json()));fitCircle_=state.value("fit",true);representatives_=state.value("representatives",true);filter_=std::clamp(state.value("filter",0),0,3);masks_=state.value("masks",true);boxes_=state.value("boxes",true);circles_=state.value("circles",true);view_=std::clamp(state.value("view",0),0,viewCount-1);outlines_=state.value("outlines",true);fitCircle_=state.value("fit_circle",true);
         if(state.contains("panels")&&state["panels"].is_array()&&state["panels"].size()==3){listOpen_=state["panels"][0];sideOpen_=state["panels"][1];summaryOpen_=state["panels"][2];}
         for(int i=0;i<int(catalog_["scenes"].size());++i){auto& scene=catalog_["scenes"][i];if(scene["recording"]==state.at("recording")&&scene["index"]==state.at("index")){
             index=i;editor=state.value("editor",false);for(int c=0;c<int(scene["members"].size());++c)if(scene["members"][c]["camera"]==state.at("camera"))camera=c;break;
@@ -126,27 +126,13 @@ void Application::releaseFrames(){for(auto& frame:frames_){if(frame.texture)doom
 void Application::deleteDoomed(){if(!doomed_.empty()){glDeleteTextures(GLsizei(doomed_.size()),doomed_.data());doomed_.clear();}}
 namespace {
 // The cameras of one scene are read at the same time, each on its own thread.
-JobResult fetchScene(const std::shared_ptr<Engine>& engine,const Json& scene,bool applyPrevious) {
+JobResult fetchScene(const std::shared_ptr<Engine>& engine,const Json& scene) {
     const auto recording=scene.at("recording").get<std::string>();
     std::vector<std::future<FrameView>> cameras;
     for(const auto& member:scene.at("members"))cameras.push_back(std::async(std::launch::async,[engine,member,recording]{
         const auto camera=member.at("camera").get<std::string>();const int index=member.at("index").get<int>();
         FrameView frame;frame.member=member;frame.annotation=engine->frame(recording,camera,index);frame.image=engine->image(recording,camera,index);return frame;}));
     JobResult result;result.data=Json::object();for(auto& camera:cameras)result.frames.push_back(camera.get());
-    // 이전 라벨 가져오기 (2026-10-19 user request; ← 이전 적용 until 2026-10-20): the untouched drafts of a camera scene open with the nearest earlier confirmed
-    // frame's labels, saved only when the scene is confirmed. 전파 →: what a confirmed scene has still to give.
-    Json keys=Json::array(),untouched=Json::array();bool confirmed=!result.frames.empty();
-    for(const auto& frame:result.frames){keys.push_back(frame.annotation.at("key"));
-        if(!frame.annotation.value("human_touched",false)&&!frame.annotation.value("reviewed",false))untouched.push_back(frame.annotation.at("key"));
-        if(frame.member.value("selected",true)&&!frame.member.value("reviewed",false))confirmed=false;}
-    const bool photo=result.frames.size()==1&&result.frames[0].member.value("camera","")=="images";
-    if(applyPrevious&&!photo&&!untouched.empty()){
-        try{const Json preview=engine->nativeAction("carry-preview",{{"keys",untouched}});
-            for(auto& frame:result.frames){const std::string key=frame.annotation.at("key");if(!preview["frames"].contains(key))continue;
-                frame.annotation["boxes"]=preview["frames"][key]["boxes"];frame.applied=preview["frames"][key].value("from","");}}
-        catch(const std::exception&){}   // the drafts stay as they are
-    }
-    if(confirmed&&!photo){try{const Json counts=engine->nativeAction("propagation-counts",{{"sources",keys}});result.data["propagate_pending"]=counts.value("pending",0)+counts.value("carry",0);}catch(const std::exception&){}}
     return result;
 }
 }
@@ -161,48 +147,55 @@ void Application::loadScene(int index,bool editor,int camera,std::string note) {
         const auto& members=catalog_["scenes"][index]["members"];
         for(size_t i=0;i<result.frames.size()&&i<members.size();++i){result.frames[i].member=members[i];result.frames[i].annotation["review_status"]=members[i].value("status","draft");}
         if(backing_)backing_=false;else if(!frames_.empty()&&scene_!=index){history_.push_back(scene_);if(history_.size()>50)history_.erase(history_.begin());}
-        releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor||(frames_.size()==1&&frames_[0].member.value("camera","")=="images");adding_=false;stale_=false;aheadDirty_=true;scrollToCurrent_=true;cancel();propagatePending_=result.data.is_object()?result.data.value("propagate_pending",0):0;
-        std::string from;for(const auto& f:frames_)if(!f.applied.empty())from=f.applied.substr(f.applied.rfind('/')+1);
-        std::string shown=note;
-        if(shown.empty()&&!from.empty()){char text[48];std::snprintf(text,sizeof text,"이전 라벨 · 프레임 %04d",std::atoi(from.c_str()));shown=text;}
-        message_=shown.empty()?"원본과 저장 라벨 표시 중":shown;};
+        releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor||(frames_.size()==1&&frames_[0].member.value("camera","")=="images");adding_=false;stale_=false;aheadDirty_=true;scrollToCurrent_=true;cancel();
+        message_=note.empty()?"원본과 저장 라벨 표시 중":note;};
     // A scene fetched ahead is used only if no automatic draft has been written since.
-    if(index==aheadScene_&&ahead_.valid()&&aheadAuto_==catalog_["summary"].value("auto_revision",0)&&(!aheadApply_||aheadRevision_==catalog_["summary"].value("revision",0))){
+    if(index==aheadScene_&&ahead_.valid()&&aheadAuto_==catalog_["summary"].value("auto_revision",0)){
         const auto fetched=ahead_.share();aheadScene_=-1;++aheadHits_;
         if(fetched.wait_for(std::chrono::seconds(0))!=std::future_status::ready){launch("카메라 이미지 불러오기",[fetched]{return fetched.get();},show);return;}
         try{show(fetched.get());return;}catch(...){}   // fetch again below, so a failure is reported the usual way
     }
-    const auto scene=catalog_["scenes"][index];const auto engine=engine_;const bool apply=applyPrevious_;
-    launch("카메라 이미지 불러오기",[engine,scene,apply]{return fetchScene(engine,scene,apply);},show);
+    const auto scene=catalog_["scenes"][index];const auto engine=engine_;
+    launch("카메라 이미지 불러오기",[engine,scene]{return fetchScene(engine,scene);},show);
 }
 // Fetches the next unreviewed scene in the background, so confirming a scene does not wait for the images.
-// Hidden check (2026-10-20 user report around 프레임 0022 → 0023): with 이전 라벨 가져오기 on, confirming a draft and moving on must
-// show the next scene with the labels of the scene just confirmed, not of the one before it.
+// Hidden check of 이전 라벨 가져오기 (2026-10-20: a button in place of the on/off): pressed on the first draft it carries
+// the labels of the nearest earlier confirmed frame as unsaved edits, or says the draft already agrees; that scene
+// confirmed and the next one opened, pressing it there carries the labels just confirmed, and 되돌리기 takes them back.
 bool Application::applyPreviousCheckStep() {
     static int first = -1, phase = 0, waited = 0;
+    static std::vector<Json> before;
     if (busy()) return true;
+    const auto source = [this] {   // the frame the bottom bar names, "이전 라벨 · 프레임 0030", or -1
+        const std::string head = "이전 라벨 · 프레임 ";
+        return message_.rfind(head, 0) == 0 ? std::atoi(message_.c_str() + head.size()) : -1;
+    };
+    const auto edited = [this] { int count = 0; for (const auto& frame : frames_) count += frame.dirty; return count; };
     switch (phase) {
     case 0:
         first = nextUnreviewedIndex();
         if (first < 0) throw std::runtime_error("apply-previous check: no draft scene");
-        applyPrevious_ = true; aheadScene_ = -1; aheadDirty_ = true;
-        loadScene(first); phase = 1; waited = 0; return true;
-    case 1:   // the draft is shown and the scene after it has been fetched ahead, before this one is confirmed
-        if (scene_ != first || !ahead_.valid() || ahead_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
-            if (++waited > 600) throw std::runtime_error("apply-previous check: nothing was fetched ahead");
-            return true;
-        }
-        review(Scope::Scene, false); phase = 2; return true;
-    case 2:   // confirmed: the prompt, where Space moves on
+        loadScene(first); phase = 1; return true;
+    case 1:
+        if (scene_ != first) { if (++waited > 600) throw std::runtime_error("apply-previous check: the draft did not open"); return true; }
+        applyPreviousLabels(); phase = 2; return true;
+    case 2:
+        if ((edited() == 0 || source() < 0) && message_ != "이전 라벨과 같음") throw std::runtime_error("apply-previous check: the first draft got " + message_);
+        review(Scope::Scene, false); phase = 3; return true;
+    case 3:   // confirmed: the prompt, where Space moves on
         if (!nextAsk_) return true;
-        nextAsk_ = false; advance(); phase = 3; waited = 0; return true;
-    case 3: {
+        nextAsk_ = false; advance(); phase = 4; waited = 0; return true;
+    case 4:
         if (scene_ == first) { if (++waited > 600) throw std::runtime_error("apply-previous check: did not move on"); return true; }
+        before.clear(); for (const auto& frame : frames_) before.push_back(frame.annotation["boxes"]);
+        applyPreviousLabels(); phase = 5; return true;
+    case 5: {
         const int expected = catalog_["scenes"][first].value("index", -1);
-        std::string from;
-        for (const auto& frame : frames_) if (!frame.applied.empty()) from = frame.applied.substr(frame.applied.rfind('/') + 1);
-        if (from.empty()) throw std::runtime_error("apply-previous check: the next scene shows nothing applied");
-        if (std::stoi(from) != expected) throw std::runtime_error("apply-previous check: applied from frame " + from + ", not from the scene just confirmed (" + std::to_string(expected) + ")");
+        if (source() != expected) throw std::runtime_error("apply-previous check: the next scene got " + message_ + ", not the labels of the scene just confirmed (" + std::to_string(expected) + ")");
+        const int slot = dirtySlot();
+        if (slot < 0) throw std::runtime_error("apply-previous check: no frame of the next scene changed");
+        camera_ = slot; undo();
+        if (frames_[size_t(slot)].annotation["boxes"] != before[size_t(slot)]) throw std::runtime_error("apply-previous check: 되돌리기 did not take the carried labels back");
         return false;
     }
     default: return false;
@@ -210,19 +203,17 @@ bool Application::applyPreviousCheckStep() {
 }
 void Application::prefetch() {
     if(!aheadDirty_||!ready()||busy()||page_!=Page::Review)return;
-    const int next=advanceIndex(),revision=catalog_["summary"].value("auto_revision",0),labels=catalog_["summary"].value("revision",0);
+    const int next=advanceIndex(),revision=catalog_["summary"].value("auto_revision",0);
     if(ahead_.valid()){
-        // With 이전 라벨 가져오기 the scene fetched ahead also depends on the frames confirmed before it: a confirmation since makes it stale.
-        if(aheadScene_==next&&aheadAuto_==revision&&(!aheadApply_||aheadRevision_==labels)){aheadDirty_=false;return;}
+        if(aheadScene_==next&&aheadAuto_==revision){aheadDirty_=false;return;}
         if(ahead_.wait_for(std::chrono::seconds(0))!=std::future_status::ready)return;   // dropping a running fetch would block until it ends
         try{ahead_.get();}catch(...){}
     }
     aheadDirty_=false;aheadScene_=-1;
     if(next<0||next==scene_)return;
     const auto engine=engine_;const auto scene=catalog_["scenes"][next];
-    aheadScene_=next;aheadAuto_=revision;aheadRevision_=labels;aheadApply_=applyPrevious_;
-    const bool apply=applyPrevious_;
-    ahead_=std::async(std::launch::async,[engine,scene,apply]{return fetchScene(engine,scene,apply);});
+    aheadScene_=next;aheadAuto_=revision;
+    ahead_=std::async(std::launch::async,[engine,scene]{return fetchScene(engine,scene);});
 }
 bool Application::pending() const { return !proposal_.is_null()||!polygon_.empty()||!points_.empty()||dragging_; }
 bool Application::guard(){if(busy()){message_="처리가 끝난 뒤 이동하세요. 화면 확대·이동은 계속할 수 있습니다.";return false;}if(pending()){message_="미확정 윤곽을 반영하거나 취소하세요.";return false;}return true;}
@@ -285,8 +276,10 @@ void Application::nudge(int edge,bool expand) {
     if(trial.at("detection_bbox")==trial.at("bbox"))trial.erase("detection_bbox");
     checkpoint();box=trial;boxes_=true;changed(masks_||outlines_);   // the overlay is rebuilt only when the mask is shown: doing it always made every key press lag
 }
-void Application::checkpoint(){auto& f=current();f.history.push_back(f.annotation);if(f.history.size()>40)f.history.erase(f.history.begin());}
-void Application::changed(bool repaint){auto& f=current();f.dirty=true;if(repaint)f.repaint=true;f.annotation["reviewed"]=false;f.annotation["review_status"]="editing";f.member["reviewed"]=false;f.member["status"]="editing";catalog_["split_confirmed"]=false;rowsDirty_=true;changed_=Clock::now();message_="수정됨 · 자동 저장 대기";}
+void Application::checkpoint(){checkpoint(current());}
+void Application::checkpoint(FrameView& f){f.history.push_back(f.annotation);if(f.history.size()>40)f.history.erase(f.history.begin());}
+void Application::changed(bool repaint){edited(current(),repaint);message_="수정됨 · 자동 저장 대기";}
+void Application::edited(FrameView& f,bool repaint){f.dirty=true;if(repaint)f.repaint=true;f.annotation["reviewed"]=false;f.annotation["review_status"]="editing";f.member["reviewed"]=false;f.member["status"]="editing";catalog_["split_confirmed"]=false;rowsDirty_=true;changed_=Clock::now();}
 int Application::dirtySlot() const {
     if(!frames_.empty()&&camera_>=0&&camera_<int(frames_.size())&&frames_[size_t(camera_)].dirty)return camera_;
     for(int slot=0;slot<int(frames_.size());++slot)if(frames_[size_t(slot)].dirty)return slot;
@@ -380,9 +373,6 @@ void Application::confirmNext(){
         if(theme::primaryButton("다음 장면  Space",{160,36})||ImGui::IsKeyPressed(ImGuiKey_Space,false)||ImGui::IsKeyPressed(ImGuiKey_Enter,false)||ImGui::IsKeyPressed(ImGuiKey_KeypadEnter,false)){later_=[this]{advance();};close=true;}
         ImGui::PopFont();ImGui::SameLine();
         if(ImGui::Button("머물기  Esc",{110,36})||ImGui::IsKeyPressed(ImGuiKey_Escape,false))close=true;
-        if(propagatePending_>0&&propagationStatus_.value("status","")!="running"){   // 전파 → from here, then stay (2026-10-19)
-            ImGui::SameLine();char text[32];std::snprintf(text,sizeof text,"전파 → %d  P",propagatePending_);
-            if(ImGui::Button(text,{130,36})||ImGui::IsKeyPressed(ImGuiKey_P,false)){later_=[this]{propagateScene();};close=true;}}
         if(close){nextAsk_=false;ImGui::CloseCurrentPopup();}
         ImGui::EndPopup();
     }
@@ -573,25 +563,29 @@ void Application::confirmMissing(){
     }
     ImGui::PopStyleVar(2);
 }
-// Confirmed labels carried to the repeated frames the filter left out of the review (2026-10-08 user request).
-// After a confirmation: its labels carried into the drafts that follow it, and into its repeated frames, in the engine's
-// background thread. A propagation already running takes the keys afterwards.
-// 전파 → (2026-10-19 user request, in place of the carry that ran on every confirmation): this scene's confirmed labels
-// to its repeated frames and to the drafts of the next 1.5 s, in the background; the status check shows what it did.
-void Application::propagateScene(){
-    if(frames_.empty()||busy()||!engine_||propagationStatus_.value("status","")=="running")return;
-    Json keys=Json::array();for(const auto& frame:frames_)keys.push_back(frame.annotation.at("key"));
-    const auto engine=engine_;
-    launch("전파",[engine,keys]{return JobResult{engine->nativeAction("propagate-reviewed",{{"carry",true},{"sources",keys}}),{}};},
-           [this](JobResult result){propagationStatus_=result.data;propagatePending_=0;message_="전파 중";poll_={};});
+// 이전 라벨 가져오기 (2026-10-20 user request: a button, in place of the on/off that showed them on every draft): the labels
+// of the nearest earlier confirmed frame of each camera, carried onto the frames of this scene now, as an edit of each frame
+// they change (되돌리기 per camera, saved like any edit). Unsaved edits are saved first: the carry starts from the saved frames.
+void Application::applyPreviousLabels(){
+    if(frames_.empty()||imageScene()||!engine_||!guard())return;
+    if(const int slot=dirtySlot();slot>=0){save([this]{applyPreviousLabels();},slot);return;}
+    Json keys=Json::array();for(const auto& frame:frames_)keys.push_back(frame.annotation.at("key"));   // the repeated cameras too
+    const auto engine=engine_;const int scene=scene_;
+    launch("이전 라벨 가져오기",[engine,keys]{return JobResult{engine->nativeAction("carry-preview",{{"keys",keys},{"touched",true}}),{}};},
+           [this,scene](JobResult result){
+        if(scene_!=scene)return;   // another scene opened meanwhile
+        std::string from;int changes=0;
+        for(auto& frame:frames_){const std::string key=frame.annotation.at("key");if(!result.data["frames"].contains(key))continue;
+            const Json& carried=result.data["frames"][key];
+            checkpoint(frame);frame.annotation["boxes"]=carried["boxes"];edited(frame,true);from=carried.value("from","");++changes;}
+        if(!changes){message_=result.data.value("same",Json::array()).empty()?"이전 확인본 없음":"이전 라벨과 같음";return;}
+        selected_=-1;
+        char number[16];std::snprintf(number,sizeof number,"%04d",std::atoi(from.substr(from.rfind('/')+1).c_str()));
+        message_=std::string("이전 라벨 · 프레임 ")+number;
+        logLine("이전 라벨 가져오기 · "+hubSceneName()+" ← "+number);});
 }
-// 이전 라벨 가져오기 on or off: the scene shown is fetched again with the new setting; a scene fetched ahead with the old one is dropped.
-void Application::toggleApplyPrevious(){
-    if(busy())return;applyPrevious_=!applyPrevious_;aheadScene_=-1;aheadDirty_=true;
-    logLine(applyPrevious_?"이전 라벨 가져오기 켬":"이전 라벨 가져오기 끔");
-    if(!frames_.empty()&&dirtySlot()<0&&!pending())loadScene(scene_,editor_,camera_,applyPrevious_?"이전 라벨 가져오기 켬":"이전 라벨 가져오기 끔");
-    else message_=applyPrevious_?"이전 라벨 가져오기 켬 · 다음 장면부터":"이전 라벨 가져오기 끔";
-}
+// Confirmed labels carried to the repeated frames the filter left out of the review (2026-10-08 user request), and into the
+// drafts that follow a confirmed frame, in the engine's background thread (전파 → on the scene bar until 2026-10-20).
 void Application::startPropagation(){
     if(busy())return;const auto engine=engine_;Json payload=batchPayload_;payload.update({{"force",propagateForce_},{"carry",propagateCarry_}});
     launch("라벨 전파 시작",[engine,payload]{return JobResult{engine->nativeAction("propagate-reviewed",payload),{}};},[this](JobResult result){propagationStatus_=result.data;message_="반복 프레임에 라벨을 전파하는 중입니다. 그동안 계속 작업할 수 있습니다.";});
@@ -698,28 +692,25 @@ void Application::review(Scope scope,bool hold,int member) {
     if(scope==Scope::Camera)keys.push_back(frames_.at(member>=0?member:camera_).annotation.at("key"));
     else for(auto& frame:frames_)if(frame.member.value("selected",true)&&(!hold||!frame.member.value("reviewed",false)))keys.push_back(frame.annotation.at("key"));
     if(keys.empty())return;
-    // The screen's unsaved edits and the labels 이전 라벨 가져오기 showed go in the same write as the confirmation (2026-10-19: a
-    // save and then a confirmation wrote the label file twice). An edited frame outside it is saved first, as before.
+    // The screen's unsaved edits go in the same write as the confirmation (2026-10-19: a save and then a confirmation wrote
+    // the label file twice). An edited frame outside it is saved first, as before.
     Json edits=Json::object();std::vector<size_t> carried;
     for(size_t i=0;i<frames_.size();++i){auto& frame=frames_[i];const std::string key=frame.annotation.at("key");
         const bool inKeys=std::find(keys.begin(),keys.end(),Json(key))!=keys.end();
-        if((frame.dirty||!frame.applied.empty())&&inKeys){Json boxes=frame.annotation["boxes"];for(auto& box:boxes)box.erase("contours");edits[key]=std::move(boxes);carried.push_back(i);}
+        if(frame.dirty&&inKeys){Json boxes=frame.annotation["boxes"];for(auto& box:boxes)box.erase("contours");edits[key]=std::move(boxes);carried.push_back(i);}
         else if(frame.dirty){save([this,scope,hold,member]{review(scope,hold,member);},int(i));return;}}
     const bool moveOn=scope==Scope::Scene||hold;
     // The engine refuses when it holds a different number of balls than this screen shows, as after an automatic draft.
     Json seen=Json::object();for(const auto& frame:frames_)seen[frame.annotation.at("key").get<std::string>()]=frame.annotation["boxes"].size();
     const auto engine=engine_;Json payload={{"keys",keys},{"seen",seen},{"edits",edits},{"status",hold?"hold":"reviewed"},{"expected_revision",catalog_["summary"]["revision"]},{"worker",settings_.worker}};
-    launch(hold?"보류 상태 저장":"확인 저장",[engine,payload,keys,hold]{
-        try{Json result=engine->nativeAction("review",payload);
-            if(!hold){try{const Json counts=engine->nativeAction("propagation-counts",{{"sources",keys}});result["propagate_pending"]=counts.value("pending",0)+counts.value("carry",0);}catch(const std::exception&){}}
-            return JobResult{result,{}};}
+    launch(hold?"보류 상태 저장":"확인 저장",[engine,payload]{
+        try{return JobResult{engine->nativeAction("review",payload),{}};}
         catch(const Conflict&){return JobResult{{{"conflict",true},{"catalog",engine->nativeCatalog(false)}},{}};}
     },[this,moveOn,hold,keys,scope,carried](JobResult result){
         if(result.data.contains("conflict")){updateCatalog(result.data["catalog"]);loadScene(scene_,editor_,camera_,"저장된 라벨이 화면과 달라 다시 불러왔습니다. 확인한 뒤 다시 누르세요.");return;}
         updateSummary(result.data.at("summary"));
         for(auto& f:frames_)if(std::find(keys.begin(),keys.end(),f.annotation["key"])!=keys.end()){f.annotation["reviewed"]=!hold;f.annotation["review_status"]=hold?"hold":"reviewed";}
-        for(const size_t i:carried)if(i<frames_.size()){frames_[i].dirty=false;frames_[i].applied.clear();}
-        if(!hold)propagatePending_=result.data.value("propagate_pending",0);
+        for(const size_t i:carried)if(i<frames_.size())frames_[i].dirty=false;
         {int balls=0;for(const auto& frame:frames_)balls+=int(frame.annotation.value("boxes",Json::array()).size());logLine((hold?"보류 · ":"장면 확인 · ")+hubSceneName()+(hold?std::string():" · 공 "+std::to_string(balls)+"개"));}
         message_=hold?"보류로 표시했습니다":"확인했습니다";
         // A hold moves on at once; a confirmation stops at a prompt, and a second Space moves on (2026-10-08 user request).

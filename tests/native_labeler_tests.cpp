@@ -120,8 +120,8 @@ void hubProgressTests() {
     check(dates == Json::array({"10-14", "10-15", "10-16", "10-17", "10-18", "10-19", "10-20"}) && counts == Json::array({0, 0, 0, 1, 0, 0, 2}),
           "seven days of this worker's confirmations, older and other workers' left out");
     check(progress["today"] == 2 && progress["last10"] == 1, "today and the last ten minutes");
-    check(hubStatusJson("review", nullptr, nullptr, false, true, "", progress)["progress"]["today"] == 2, "the status carries the progress");
-    check(!hubStatusJson("review", nullptr, nullptr, false, true, "").contains("progress"), "no progress, no key");
+    check(hubStatusJson("review", nullptr, nullptr, true, "", progress)["progress"]["today"] == 2, "the status carries the progress");
+    check(!hubStatusJson("review", nullptr, nullptr, true, "").contains("progress"), "no progress, no key");
 }
 // The PC's settings file (실행 장치 and the hub) and the status line the hub gets (design/hub/PLAN-1.md Task 5).
 void settingsTests() {
@@ -142,10 +142,10 @@ void settingsTests() {
     const auto stored = Json::parse(std::ifstream(root / "Boccia/labeler-settings.json", std::ios::binary));
     check(stored["device"] == "cpu" && stored["extra"] == 1 && stored["hub"]["worker"] == "홍길동" && stored["hub"]["token"] == "abc" && stored["hub"]["address"] == "mark-hong-pc.tail68c059.ts.net:8790", "saving must keep the device and unknown keys");
     check(loadLabelerSettings().worker == "홍길동" && !loadLabelerSettings().gpu, "saved settings must read back");
-    const Json status = hubStatusJson("review", Json{{"recording", "촬영 03"}, {"index", 142}}, Json{{"kind", "redraft"}, {"text", "초안 212 / 498"}, {"fraction", .43}}, true, true, "");
-    check(status["page"] == "review" && status["scene"]["index"] == 142 && status["job"]["kind"] == "redraft" && status["apply_previous"] == true && status["device"] == "GPU" && status["error"] == "", "status json fields");
+    const Json status = hubStatusJson("review", Json{{"recording", "촬영 03"}, {"index", 142}}, Json{{"kind", "redraft"}, {"text", "초안 212 / 498"}, {"fraction", .43}}, true, "");
+    check(status["page"] == "review" && status["scene"]["index"] == 142 && status["job"]["kind"] == "redraft" && !status.contains("apply_previous") && status["device"] == "GPU" && status["error"] == "", "status json fields");
     check(status["text"] == "검수 · 촬영 03 · 프레임 0142 · 초안 212 / 498", "status text must read as one line");
-    const Json bare = hubStatusJson("data", nullptr, nullptr, false, false, "디스크 가득 참");
+    const Json bare = hubStatusJson("data", nullptr, nullptr, false, "디스크 가득 참");
     check(bare["scene"].is_null() && bare["job"].is_null() && bare["device"] == "CPU" && bare["text"] == "자료 · 오류", "status json without a scene or a job");
     _wputenv_s(L"LOCALAPPDATA", original);
     fs::remove_all(root);

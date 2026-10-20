@@ -16,9 +16,9 @@ Json maskAnnotation(const cv::Mat& mask, const Json& previous, const std::string
 cv::Rect2d detectionBox(const Json& box);
 bool nudgeEdge(Json& box, int edge, bool expand, int width, int height);
 Json annotationPayload(const Json& frame, int revision);
-// The status the hub shows for this labeler (design/hub): the page, the scene, the running job, 이전 라벨 가져오기, the device and
+// The status the hub shows for this labeler (design/hub): the page, the scene, the running job, the device and
 // the error, with `text` saying the same in one line.
-Json hubStatusJson(const std::string& page, const Json& scene, const Json& job, bool applyPrevious, bool gpu, const std::string& error,
+Json hubStatusJson(const std::string& page, const Json& scene, const Json& job, bool gpu, const std::string& error,
                    const Json& progress = nullptr);   // progress (hubProgress) goes in when it is an object
 // The hub's progress numbers for this labeler (design/hub/PLAN-2.md Task 3): the top bar's 검수 totals, per recording, holds,
 // propagated frames, and this worker's confirmations over the last 7 local days, today and the last 10 minutes, read from

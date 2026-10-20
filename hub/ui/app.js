@@ -79,7 +79,7 @@ function ago(text) {
   if (seconds < 3600) return `${Math.floor(seconds / 60)}분 전`;
   return hhmm(text.replace("T", " "));
 }
-function nowLine(worker) {   // what the worker is on: the page and the scene; the running job or 이전 라벨 가져오기 below
+function nowLine(worker) {   // what the worker is on: the page and the scene; the running job below
   const status = worker.status || {};
   if (!worker.connected || !status.page) return { main: "—", sub: "", warn: false };
   const page = { data: "자료", review: "검수", export: "내보내기" }[status.page] || status.page;
@@ -87,7 +87,7 @@ function nowLine(worker) {   // what the worker is on: the page and the scene; t
   if (status.scene) main += ` · ${status.scene.recording} · ${status.scene.image ? "이미지" : "프레임"} ${pad(status.scene.index || 0, 4)}`;
   if (status.error) return { main, sub: `오류 · ${status.error}`, warn: true };
   if (status.job && status.job.text) return { main, sub: status.job.text, warn: false };
-  return { main, sub: status.apply_previous ? "이전 라벨 가져오기 켬" : "", warn: false };
+  return { main, sub: "", warn: false };
 }
 
 // ---- pieces of the screen

@@ -85,7 +85,7 @@ std::string jobEndProblem(const std::string& job, const Json& status) {
     if (status.is_object() && status.contains("error")) reason = status["error"].is_string() ? status["error"].get<std::string>() : status["error"].dump();
     return "오류 · " + job + (reason.empty() ? std::string() : " · " + reason);
 }
-Json hubStatusJson(const std::string& page, const Json& scene, const Json& job, bool applyPrevious, bool gpu, const std::string& error, const Json& progress) {
+Json hubStatusJson(const std::string& page, const Json& scene, const Json& job, bool gpu, const std::string& error, const Json& progress) {
     std::string text = page == "data" ? "자료" : page == "export" ? "내보내기" : "검수";
     if (scene.is_object()) {
         char frame[16];
@@ -95,7 +95,7 @@ Json hubStatusJson(const std::string& page, const Json& scene, const Json& job, 
     if (job.is_object() && !job.value("text", "").empty()) text += " · " + job.value("text", "");
     if (!error.empty()) text += " · 오류";
     Json status{{"page", page}, {"scene", scene.is_object() ? scene : Json()}, {"job", job.is_object() ? job : Json()},
-                {"apply_previous", applyPrevious}, {"device", gpu ? "GPU" : "CPU"}, {"error", error}, {"text", text}};
+                {"device", gpu ? "GPU" : "CPU"}, {"error", error}, {"text", text}};
     if (progress.is_object()) status["progress"] = progress;
     return status;
 }

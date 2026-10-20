@@ -112,7 +112,7 @@ void Application::resetProjectViews() {
     releaseFrames();
     for (auto& [key, id] : thumbs_) if (id) glDeleteTextures(1, &id);
     thumbs_.clear(); thumbWanted_.clear(); rows_.clear(); history_.clear(); lastView_.clear(); picked_.clear();
-    catalog_ = nullptr; engine_.reset(); groups_ = splits_ = Json::object(); propagatePending_ = 0;
+    catalog_ = nullptr; engine_.reset(); groups_ = splits_ = Json::object();
     autoStatus_ = colorStatus_ = circleStatus_ = missingStatus_ = propagationStatus_ = occlusionStatus_ = exportStatus_ = Json::object();
     scene_ = camera_ = 0; selected_ = -1; filter_ = 0; editor_ = false; planEdited_ = false; backing_ = false; stale_ = false;
     aheadScene_ = -1; aheadAuto_ = -1; generation_++; queued_ = nullptr; thumbWanted_.clear();
