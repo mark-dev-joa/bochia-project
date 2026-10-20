@@ -226,6 +226,8 @@ private:
     bool workerDialog_ = false;
     std::string hubNotice_;
     char workerName_[128] = "", workerToken_[128] = "", hubAddress_[256] = "";
+    std::array<ImGuiID, 3> workerFieldIds_{};       // the dialog's three fields as drawn last, for workerDialogCheckStep
+    std::array<ImVec2, 3> workerFieldMin_{}, workerFieldMax_{};
     void startHub();                                 // the client from settings_, or its new settings; none without a worker name
     void hubTick();                                  // at the end of tick(): the status, the registration and the commands
     void openWorkerDialog();
@@ -242,6 +244,7 @@ public:
     void recentForCapture(const std::filesystem::path& file);   // a recent-project list for the hidden start-screen capture
     void projectSettingsForCapture() { beginProjectSettings(); }
     void workerDialogForCapture() { openWorkerDialog(); }
+    bool workerDialogCheckStep(int step);            // hidden check: a click on each later field keeps the keyboard there; false when done
     void hubForCheck(const std::string& address, const std::string& worker, const std::string& token, int waitSeconds = 0);   // --hub --worker --token: joins with these instead of the settings
     bool hubSettled() const;                         // no hub, or the hub has answered, or 5 s have passed, and --hub-wait is over: a hidden check may end
     void applyPreviousForCapture(bool on) { applyPrevious_ = on; }   // ← 이전 적용 for a hidden capture (no preferences are read)

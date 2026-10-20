@@ -6,6 +6,7 @@
 #include "labeler_sam.hpp"
 #include "yolo_detector.hpp"
 #include "build_info.hpp"
+#include <imgui_internal.h>
 #include <windows.h>
 #include <cstdio>
 #include <cstring>
@@ -58,6 +59,35 @@ bool Application::hubSettled() const {
     return since >= hubWait_ && (hub_->state() != hub::Client::State::Offline || since > std::chrono::seconds(5));
 }
 
+// Hidden check of the worker dialog (2026-10-20 user report: after the name, the other fields could not be reached).
+// Clicks go through ImGui's own input queue of this hidden window, never to a window on the screen.
+bool Application::workerDialogCheckStep(int step) {
+    auto& io = ImGui::GetIO();
+    const auto click = [&](int field) {
+        io.AddMousePosEvent((workerFieldMin_[field].x + workerFieldMax_[field].x) / 2, (workerFieldMin_[field].y + workerFieldMax_[field].y) / 2);
+        io.AddMouseButtonEvent(0, true);
+    };
+    switch (step) {
+    case 0: openWorkerDialog(); return true;
+    case 1: case 2: case 3: return true;   // the dialog appears and its first field takes the keyboard
+    case 4:
+        if (ImGui::GetActiveID() != workerFieldIds_[0]) throw std::runtime_error("worker dialog: the name field must have the keyboard when the dialog opens");
+        click(1); return true;
+    case 5: io.AddMouseButtonEvent(0, false); return true;
+    case 6: case 7: return true;
+    case 8:
+        if (ImGui::GetActiveID() != workerFieldIds_[1]) throw std::runtime_error("worker dialog: a click on 초대 코드 must keep the keyboard there");
+        click(2); return true;
+    case 9: io.AddMouseButtonEvent(0, false); return true;
+    case 10: case 11: return true;
+    case 12:
+        if (ImGui::GetActiveID() != workerFieldIds_[2]) throw std::runtime_error("worker dialog: a click on 허브 주소 must keep the keyboard there");
+        workerDialog_ = false;
+        return false;
+    default: return false;
+    }
+}
+
 void Application::openWorkerDialog() {
     fill(workerName_, sizeof workerName_, settings_.worker);
     fill(workerToken_, sizeof workerToken_, settings_.token);
@@ -83,14 +113,18 @@ void Application::workerPopup() {
     if (theme::beginDialog("작업자", "작업자", 460, &close)) {
         if (!workerDialog_ || close) { workerDialog_ = false; ImGui::CloseCurrentPopup(); }
         const float full = ImGui::GetContentRegionAvail().x;
+        const auto remember = [this](int field) { workerFieldIds_[field] = ImGui::GetItemID(); workerFieldMin_[field] = ImGui::GetItemRectMin(); workerFieldMax_[field] = ImGui::GetItemRectMax(); };
         theme::fieldLabel("이름");
-        theme::textField("##workerName", workerName_, sizeof workerName_, full, true);
+        theme::textField("##workerName", workerName_, sizeof workerName_, full, ImGui::IsWindowAppearing());   // the keyboard once, when the dialog opens
+        remember(0);
         ImGui::Dummy({full, 10});
         theme::fieldLabel("초대 코드");
         theme::textField("##workerToken", workerToken_, sizeof workerToken_, full);
+        remember(1);
         ImGui::Dummy({full, 10});
         theme::fieldLabel("허브 주소");
         theme::textField("##hubAddress", hubAddress_, sizeof hubAddress_, full);
+        remember(2);
         if (hub_ && hub_->state() == hub::Client::State::Unauthorized) {
             ImGui::Dummy({full, 8});
             theme::write(ImGui::GetWindowDrawList(), ImGui::GetCursorScreenPos(), theme::warn, "초대 코드 확인", theme::caption);
