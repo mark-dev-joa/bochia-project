@@ -33,7 +33,7 @@ struct FrameView {
     std::vector<std::vector<std::vector<cv::Point>>> contours;   // per ball, refreshed by repaint()
     std::vector<Circle> circles;                                 // per ball, fitted to the mask by repaint()
     bool dirty = false, repaint = true;
-    std::string applied;                                         // 이전 적용: the confirmed frame whose labels this draft shows, saved only with the confirmation
+    std::string applied;                                         // 이전 라벨 가져오기: the confirmed frame whose labels this draft shows, saved only with the confirmation
     float scale = 0, offsetX = 0, offsetY = 0;                   // scale 0 = fit or zoom to the selected ball on next draw
 };
 struct JobResult {
@@ -132,10 +132,10 @@ private:
     // The batch drawer (design/labeler-v3 batch.png): scope, 초안 다시 만들기, 빠진 공 찾기, 가려진 공 표시 and the
     // automatic settings. Trials run on the whole scope, so what the drawer shows is what 적용 writes.
     Json redraftStatus_ = Json::object();
-    bool applyPrevious_ = false;                     // ← 이전 적용: a draft opens with the nearest earlier confirmed frame's labels (kept for the PC)
+    bool applyPrevious_ = false;                     // 이전 라벨 가져오기: a draft opens with the nearest earlier confirmed frame's labels (kept for the PC)
     int propagatePending_ = 0;                       // 전파 →: the repeated frames and drafts this scene's confirmation has still to fill
     int aheadRevision_ = -1;                         // the labels' revision when the scene ahead was fetched
-    bool aheadApply_ = false;                        // that fetch showed 이전 적용, so a later confirmation makes it stale
+    bool aheadApply_ = false;                        // that fetch showed 이전 라벨 가져오기, so a later confirmation makes it stale
     void toggleApplyPrevious();
     bool missingAvailable_ = false;                  // the project finds missing balls (its YOLO model, or the 10-02 file)
     // The export tab: the captures and folders chosen for export, the formats and the folder (remembered per project),
@@ -251,7 +251,7 @@ public:
     bool applyPreviousCheckStep();                   // hidden check: confirm a draft, move on, the next scene takes the labels just confirmed
     void hubForCheck(const std::string& address, const std::string& worker, const std::string& token, int waitSeconds = 0);   // --hub --worker --token: joins with these instead of the settings
     bool hubSettled() const;                         // no hub, or the hub has answered, or 5 s have passed, and --hub-wait is over: a hidden check may end
-    void applyPreviousForCapture(bool on) { applyPrevious_ = on; }   // ← 이전 적용 for a hidden capture (no preferences are read)
+    void applyPreviousForCapture(bool on) { applyPrevious_ = on; }   // 이전 라벨 가져오기 for a hidden capture (no preferences are read)
     void importStateForCapture(const std::string& state);       // the import dialog while it checks or copies, for a capture
 private:
     enum class Tool { Select, Ai, Polygon, Brush, Box };

@@ -249,7 +249,7 @@ class HubTest(unittest.TestCase):
     # ---- stage 2: the screen (design/hub/PLAN-2.md Task 1)
 
     def test_classify_kinds(self):
-        cases = {"장면 확인 · 촬영 03 · 프레임 0142 · 공 6개": "action", "확인 · 촬영 01 · 프레임 0003": "action", "이전 적용 켬": "action",
+        cases = {"장면 확인 · 촬영 03 · 프레임 0142 · 공 6개": "action", "확인 · 촬영 01 · 프레임 0003": "action", "이전 라벨 가져오기 켬": "action", "이전 적용 켬": "action",
                  "전파 → · 반복 4장 · 초안 7장": "action", "공 수정 · 모노 A · 공 2 · 클릭 분할": "action", "되돌리기 · 모노 A": "action",
                  "오류 · 내보내기 · 디스크 공간 부족": "error", "초안 실패 · 촬영 04 · x": "error", "임포트 복사 실패 · x": "error",
                  "알림 · 원본과 저장 라벨 표시 중": "notice", "초안 다시 만들기 · 498장": "job", "시작 · D:\\x · CUDA 없음": "job", "확인한 라벨": "job"}

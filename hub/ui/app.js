@@ -79,7 +79,7 @@ function ago(text) {
   if (seconds < 3600) return `${Math.floor(seconds / 60)}분 전`;
   return hhmm(text.replace("T", " "));
 }
-function nowLine(worker) {   // what the worker is on: the page and the scene; the running job or 이전 적용 below
+function nowLine(worker) {   // what the worker is on: the page and the scene; the running job or 이전 라벨 가져오기 below
   const status = worker.status || {};
   if (!worker.connected || !status.page) return { main: "—", sub: "", warn: false };
   const page = { data: "자료", review: "검수", export: "내보내기" }[status.page] || status.page;
@@ -87,7 +87,7 @@ function nowLine(worker) {   // what the worker is on: the page and the scene; t
   if (status.scene) main += ` · ${status.scene.recording} · ${status.scene.image ? "이미지" : "프레임"} ${pad(status.scene.index || 0, 4)}`;
   if (status.error) return { main, sub: `오류 · ${status.error}`, warn: true };
   if (status.job && status.job.text) return { main, sub: status.job.text, warn: false };
-  return { main, sub: status.apply_previous ? "← 이전 적용 켬" : "", warn: false };
+  return { main, sub: status.apply_previous ? "이전 라벨 가져오기 켬" : "", warn: false };
 }
 
 // ---- pieces of the screen
@@ -137,7 +137,7 @@ function workersPage() {
 }
 
 const ICONS = [   // the activity line's icon by its first words
-  [["장면 확인", "확인", "임포트 끝", "시작"], "check", "ok"], [["공 추가", "공 수정"], "edit", ""], [["이전 적용"], "back", "bl"],
+  [["장면 확인", "확인", "임포트 끝", "시작"], "check", "ok"], [["공 추가", "공 수정"], "edit", ""], [["이전 라벨 가져오기", "이전 적용"], "back", "bl"],
   [["전파 →"], "fwd", "bl"], [["보류"], "pause", ""], [["공 삭제"], "trash", ""], [["내보내기"], "down", ""],
   [["프로젝트 열기", "프로젝트 닫기"], "folder", ""], [["허브 알림"], "bell", ""],
   [["초안 다시 만들기", "빠진 공 찾기", "원형 검출", "가려진 공 표시", "둘레 다듬기", "색 채우기", "초안 끝", "자동 초안"], "refresh", ""],

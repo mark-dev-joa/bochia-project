@@ -36,7 +36,7 @@ CONTENT_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg
                  ".woff2": "font/woff2", ".svg": "image/svg+xml", ".ico": "image/x-icon"}
 CACHE_LINES = 20_000      # activity kept in memory per worker; the files keep everything
 # The kind of an activity line, by the words before its first " · " (design/hub/PLAN-2.md, Global Constraints).
-ACTIONS = ("장면 확인", "확인", "보류", "공 추가", "공 수정", "공 삭제", "되돌리기", "이전 적용", "전파 →")
+ACTIONS = ("장면 확인", "확인", "보류", "공 추가", "공 수정", "공 삭제", "되돌리기", "이전 라벨 가져오기", "이전 적용", "전파 →")   # 이전 적용: its name in lines written before 2026-10-20
 ERRORS = ("오류", "자동 초안 오류", "초안 실패", "임포트 복사 실패", "GPU 못 씀")
 NOTICES = ("알림",)
 

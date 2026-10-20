@@ -133,7 +133,7 @@ JobResult fetchScene(const std::shared_ptr<Engine>& engine,const Json& scene,boo
         const auto camera=member.at("camera").get<std::string>();const int index=member.at("index").get<int>();
         FrameView frame;frame.member=member;frame.annotation=engine->frame(recording,camera,index);frame.image=engine->image(recording,camera,index);return frame;}));
     JobResult result;result.data=Json::object();for(auto& camera:cameras)result.frames.push_back(camera.get());
-    // 이전 적용 (2026-10-19 user request): the untouched drafts of a camera scene open with the nearest earlier confirmed
+    // 이전 라벨 가져오기 (2026-10-19 user request; ← 이전 적용 until 2026-10-20): the untouched drafts of a camera scene open with the nearest earlier confirmed
     // frame's labels, saved only when the scene is confirmed. 전파 →: what a confirmed scene has still to give.
     Json keys=Json::array(),untouched=Json::array();bool confirmed=!result.frames.empty();
     for(const auto& frame:result.frames){keys.push_back(frame.annotation.at("key"));
@@ -164,7 +164,7 @@ void Application::loadScene(int index,bool editor,int camera,std::string note) {
         releaseFrames();frames_=std::move(result.frames);scene_=index;camera_=std::clamp(camera,0,int(frames_.size())-1);selected_=-1;editor_=editor||(frames_.size()==1&&frames_[0].member.value("camera","")=="images");adding_=false;stale_=false;aheadDirty_=true;scrollToCurrent_=true;cancel();propagatePending_=result.data.is_object()?result.data.value("propagate_pending",0):0;
         std::string from;for(const auto& f:frames_)if(!f.applied.empty())from=f.applied.substr(f.applied.rfind('/')+1);
         std::string shown=note;
-        if(shown.empty()&&!from.empty()){char text[48];std::snprintf(text,sizeof text,"이전 적용 · 프레임 %04d",std::atoi(from.c_str()));shown=text;}
+        if(shown.empty()&&!from.empty()){char text[48];std::snprintf(text,sizeof text,"이전 라벨 · 프레임 %04d",std::atoi(from.c_str()));shown=text;}
         message_=shown.empty()?"원본과 저장 라벨 표시 중":shown;};
     // A scene fetched ahead is used only if no automatic draft has been written since.
     if(index==aheadScene_&&ahead_.valid()&&aheadAuto_==catalog_["summary"].value("auto_revision",0)&&(!aheadApply_||aheadRevision_==catalog_["summary"].value("revision",0))){
@@ -176,7 +176,7 @@ void Application::loadScene(int index,bool editor,int camera,std::string note) {
     launch("카메라 이미지 불러오기",[engine,scene,apply]{return fetchScene(engine,scene,apply);},show);
 }
 // Fetches the next unreviewed scene in the background, so confirming a scene does not wait for the images.
-// Hidden check (2026-10-20 user report around 프레임 0022 → 0023): with 이전 적용 on, confirming a draft and moving on must
+// Hidden check (2026-10-20 user report around 프레임 0022 → 0023): with 이전 라벨 가져오기 on, confirming a draft and moving on must
 // show the next scene with the labels of the scene just confirmed, not of the one before it.
 bool Application::applyPreviousCheckStep() {
     static int first = -1, phase = 0, waited = 0;
@@ -212,7 +212,7 @@ void Application::prefetch() {
     if(!aheadDirty_||!ready()||busy()||page_!=Page::Review)return;
     const int next=advanceIndex(),revision=catalog_["summary"].value("auto_revision",0),labels=catalog_["summary"].value("revision",0);
     if(ahead_.valid()){
-        // With 이전 적용 the scene fetched ahead also depends on the frames confirmed before it: a confirmation since makes it stale.
+        // With 이전 라벨 가져오기 the scene fetched ahead also depends on the frames confirmed before it: a confirmation since makes it stale.
         if(aheadScene_==next&&aheadAuto_==revision&&(!aheadApply_||aheadRevision_==labels)){aheadDirty_=false;return;}
         if(ahead_.wait_for(std::chrono::seconds(0))!=std::future_status::ready)return;   // dropping a running fetch would block until it ends
         try{ahead_.get();}catch(...){}
@@ -585,12 +585,12 @@ void Application::propagateScene(){
     launch("전파",[engine,keys]{return JobResult{engine->nativeAction("propagate-reviewed",{{"carry",true},{"sources",keys}}),{}};},
            [this](JobResult result){propagationStatus_=result.data;propagatePending_=0;message_="전파 중";poll_={};});
 }
-// ← 이전 적용 on or off: the scene shown is fetched again with the new setting; a scene fetched ahead with the old one is dropped.
+// 이전 라벨 가져오기 on or off: the scene shown is fetched again with the new setting; a scene fetched ahead with the old one is dropped.
 void Application::toggleApplyPrevious(){
     if(busy())return;applyPrevious_=!applyPrevious_;aheadScene_=-1;aheadDirty_=true;
-    logLine(applyPrevious_?"이전 적용 켬":"이전 적용 끔");
-    if(!frames_.empty()&&dirtySlot()<0&&!pending())loadScene(scene_,editor_,camera_,applyPrevious_?"이전 적용 켬":"이전 적용 끔");
-    else message_=applyPrevious_?"이전 적용 켬 · 다음 장면부터":"이전 적용 끔";
+    logLine(applyPrevious_?"이전 라벨 가져오기 켬":"이전 라벨 가져오기 끔");
+    if(!frames_.empty()&&dirtySlot()<0&&!pending())loadScene(scene_,editor_,camera_,applyPrevious_?"이전 라벨 가져오기 켬":"이전 라벨 가져오기 끔");
+    else message_=applyPrevious_?"이전 라벨 가져오기 켬 · 다음 장면부터":"이전 라벨 가져오기 끔";
 }
 void Application::startPropagation(){
     if(busy())return;const auto engine=engine_;Json payload=batchPayload_;payload.update({{"force",propagateForce_},{"carry",propagateCarry_}});
@@ -698,7 +698,7 @@ void Application::review(Scope scope,bool hold,int member) {
     if(scope==Scope::Camera)keys.push_back(frames_.at(member>=0?member:camera_).annotation.at("key"));
     else for(auto& frame:frames_)if(frame.member.value("selected",true)&&(!hold||!frame.member.value("reviewed",false)))keys.push_back(frame.annotation.at("key"));
     if(keys.empty())return;
-    // The screen's unsaved edits and the labels 이전 적용 showed go in the same write as the confirmation (2026-10-19: a
+    // The screen's unsaved edits and the labels 이전 라벨 가져오기 showed go in the same write as the confirmation (2026-10-19: a
     // save and then a confirmation wrote the label file twice). An edited frame outside it is saved first, as before.
     Json edits=Json::object();std::vector<size_t> carried;
     for(size_t i=0;i<frames_.size();++i){auto& frame=frames_[i];const std::string key=frame.annotation.at("key");
