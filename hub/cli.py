@@ -125,6 +125,11 @@ def send(api, text, name, value, wait):
         print(f"아직 응답 없음 · {wait}초")
 
 
+def stop(api):
+    api.call("POST", "/api/shutdown", {})
+    print("허브 끔")
+
+
 def invite(api, worker):
     print(api.call("POST", "/api/invites", {"worker": worker})["token"])
 
@@ -157,6 +162,7 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("serve", help="run the hub (python hub/hub.py serve …)")
     commands.add_parser("status")
+    commands.add_parser("stop")
     commands.add_parser("workers")
     sub = commands.add_parser("events")
     sub.add_argument("worker")
@@ -174,6 +180,8 @@ def main(argv=None):
     try:
         if args.command == "status":
             status(api)
+        elif args.command == "stop":
+            stop(api)
         elif args.command == "workers":
             workers(api)
         elif args.command == "events":

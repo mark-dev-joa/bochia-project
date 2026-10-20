@@ -112,6 +112,10 @@ class CliTest(unittest.TestCase):
         self.assertEqual((code, out), (0, "새 줄 하나\n새 줄 둘\n"))
         self.assertEqual(self.run_cli("logs", "홍길동@joonyeon")[0], 0)
 
+    def test_stop(self):
+        self.assertEqual(self.run_cli("stop"), (0, "허브 끔\n"))
+        self.assertTrue(self.hub.stopped.wait(3))
+
     def test_unreachable_hub(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):

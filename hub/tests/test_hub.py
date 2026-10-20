@@ -10,9 +10,10 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from hub.hub import Hub
+from hub.hub import Hub, classify
 
 SAFE = "/?=&%@-._~:"
+REPOSITORY = Path(__file__).resolve().parents[2]
 
 
 class HubTest(unittest.TestCase):
@@ -42,6 +43,21 @@ class HubTest(unittest.TestCase):
     def call(self, method, path, body=None, token=None):
         data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
         return self.call_raw(method, path, data, token, "application/json" if data else None)
+
+    def fetch(self, path):
+        """status, body, Content-Type and Cache-Control of a GET."""
+        request = urllib.request.Request(f"http://127.0.0.1:{self.port}{urllib.parse.quote(path, safe=SAFE)}")
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return response.status, response.read(), response.headers.get("Content-Type", ""), response.headers.get("Cache-Control", "")
+        except urllib.error.HTTPError as error:
+            return error.code, error.read(), error.headers.get("Content-Type", ""), ""
+
+    def restart(self, **options):
+        self.hub.shutdown()
+        self.hub = Hub(options.pop("storage", self.temp), **options)
+        self.server = self.hub.serve(["127.0.0.1"], 0)
+        self.port = self.server.server_port
 
     def register(self, worker="홍길동", pc="joonyeon"):
         token = self.hub.invite(worker)
@@ -228,6 +244,81 @@ class HubTest(unittest.TestCase):
         status, body = self.call("POST", "/register", {"app": "labeler", "worker": "홍길동", "pc": "joonyeon"}, token)
         self.assertEqual((status, body["since"]), (200, "2026-10-19 14:31:07.112"))
         self.assertEqual(self.call("POST", "/events", {"events": [{"time": "2026-10-19 14:31:07.112", "text": "확인"}]}, token)[1]["stored"], 0)
+
+    # ---- stage 2: the screen (design/hub/PLAN-2.md Task 1)
+
+    def test_classify_kinds(self):
+        cases = {"장면 확인 · 촬영 03 · 프레임 0142 · 공 6개": "action", "확인 · 촬영 01 · 프레임 0003": "action", "이전 적용 켬": "action",
+                 "전파 → · 반복 4장 · 초안 7장": "action", "공 수정 · 모노 A · 공 2 · 클릭 분할": "action", "되돌리기 · 모노 A": "action",
+                 "오류 · 내보내기 · 디스크 공간 부족": "error", "초안 실패 · 촬영 04 · x": "error", "임포트 복사 실패 · x": "error",
+                 "알림 · 원본과 저장 라벨 표시 중": "notice", "초안 다시 만들기 · 498장": "job", "시작 · D:\\x · CUDA 없음": "job", "확인한 라벨": "job"}
+        self.assertEqual({text: classify(text) for text in cases}, cases)
+
+    def test_events_carry_kind_and_worker_list_has_last_action(self):
+        token = self.register()
+        self.call("POST", "/events", {"events": [{"time": "2026-10-20 09:00:00.000", "text": "장면 확인 · 촬영 01 · 프레임 0001 · 공 2개"},
+                                                 {"time": "2026-10-20 09:00:01.000", "text": "알림 · 확인했습니다"}]}, token)
+        self.assertEqual([e["kind"] for e in self.call("GET", "/api/workers/홍길동@joonyeon/events")[1]], ["action", "notice"])
+        worker = self.call("GET", "/api/workers")[1][0]
+        self.assertEqual(worker["last_action"]["text"], "장면 확인 · 촬영 01 · 프레임 0001 · 공 2개")
+        self.assertEqual(worker["last_action"]["kind"], "action")
+        self.assertTrue(worker["registered"])
+
+    def test_events_fast_with_many(self):
+        token = self.register()
+        for chunk in range(20):
+            self.call("POST", "/events", {"events": [{"time": f"2026-10-20 09:{chunk:02d}:{i // 1000:02d}.{i % 1000:03d}", "text": f"줄 {chunk}-{i}"} for i in range(1000)]}, token)
+        last = self.call("GET", "/api/workers/홍길동@joonyeon/events?limit=1")[1][0]["received"]
+        started = time.monotonic()
+        for _ in range(20):
+            self.assertEqual(self.call("GET", f"/api/workers/홍길동@joonyeon/events?since={last}&limit=0")[1], [])
+        self.assertLess(time.monotonic() - started, 1.0)
+
+    def test_cache_reloads_after_restart(self):
+        token = self.register()
+        lines = [{"time": "2026-10-20 09:00:00.000", "text": "장면 확인 · 촬영 01 · 프레임 0001 · 공 2개"},
+                 {"time": "2026-10-20 09:00:02.000", "text": "오류 · 내보내기 · 디스크 공간 부족"}]
+        self.call("POST", "/events", {"events": lines}, token)
+        self.restart()
+        self.call("POST", "/register", {"app": "labeler", "worker": "홍길동", "pc": "joonyeon"}, token)
+        listed = self.call("GET", "/api/workers/홍길동@joonyeon/events")[1]
+        self.assertEqual([(e["text"], e["kind"]) for e in listed], [(lines[0]["text"], "action"), (lines[1]["text"], "error")])
+        self.assertEqual(self.call("POST", "/events", {"events": lines}, token)[1]["stored"], 0)
+
+    def test_static_ui_only_for_allowed(self):
+        ui = self.temp / "ui"
+        ui.mkdir()
+        (ui / "index.html").write_text("<!doctype html><title>Boccia Hub</title>", "utf-8")
+        (ui / "app.js").write_text("let x = 1;", "utf-8")
+        self.restart(storage=self.temp / "store", ui=ui)
+        status, body, kind, cache = self.fetch("/")
+        self.assertEqual((status, kind.split(";")[0], cache), (200, "text/html", "no-store"))
+        self.assertIn(b"Boccia Hub", body)
+        status, body, kind, _ = self.fetch("/ui/app.js")
+        self.assertEqual((status, kind.split(";")[0], body), (200, "text/javascript", b"let x = 1;"))
+        self.assertEqual(self.fetch("/ui/none.js")[0], 404)
+        self.assertIn(self.fetch("/ui/..%5chub.py")[0], (400, 404))
+        self.hub.control_allowed = lambda address: False
+        self.assertEqual(self.fetch("/")[0], 403)
+        self.assertEqual(self.fetch("/ui/app.js")[0], 403)
+
+    def test_fonts_fall_back_to_assets(self):
+        font = REPOSITORY / "assets" / "fonts" / "NotoSansKR.ttf"
+        status, body, kind, _ = self.fetch("/ui/fonts/NotoSansKR.ttf")
+        self.assertEqual((status, kind, len(body)), (200, "font/ttf", font.stat().st_size))
+
+    def test_shutdown_stops_the_hub(self):
+        self.assertEqual(self.call("POST", "/api/shutdown", {}), (200, {"ok": True}))
+        self.assertTrue(self.hub.stopped.wait(3))
+        with self.assertRaises(urllib.error.URLError):
+            urllib.request.urlopen(f"http://127.0.0.1:{self.port}/ping", timeout=3)
+
+    def test_hub_log_written(self):
+        self.register()
+        self.assertIn("홍길동@joonyeon 접속", (self.temp / "hub.log").read_text("utf-8"))
+
+    def test_status_has_address(self):
+        self.assertIsInstance(self.call("GET", "/api/status")[1]["address"], str)
 
 
 if __name__ == "__main__":
