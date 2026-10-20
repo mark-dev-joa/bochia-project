@@ -223,7 +223,7 @@ powershell -File tools/collect_release.ps1
 세 앱이 같이 쓰는 `bin/release/models/`에 넣습니다. `boccia/`에는 학습한 YOLO 모델(새 프로젝트의 기본 초안은 `yolo26n-20261012-1280x960-u8.onnx`)과
 그 라이선스(`LICENSE-Ultralytics-AGPL-3.0.txt`, YOLO26 가중치는 AGPL-3.0), `efficientsam/`에는 EfficientSAM 모델 파일이 들어갑니다.
 다른 도구는 `bin/release/` 아래 제 폴더를 갖습니다. `bin/`은 git에 넣지 않습니다.
-이때 실행 아이콘 `Boccia Labeler.exe`도 함께 둡니다.
+이때 런처 `BocciaLauncher.exe`(같은 폴더의 `boccia_labeler.exe`를 띄움, 2026-10-20 전 이름 `Boccia Labeler.exe`)도 함께 둡니다.
 현재 PC의 바탕화면 바로가기는 `powershell -ExecutionPolicy Bypass -File tools/create-labeler-launch-icons.ps1 -Desktop`으로 만듭니다.
 
 엔진은 정적 라이브러리 `labeler_engine`으로 앱에 들어 있습니다(`src/labeler_*.cpp`). 촬영 탐색과 프로젝트 열기는 시작할 때
