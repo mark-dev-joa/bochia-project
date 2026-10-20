@@ -154,6 +154,11 @@ int main(int argc,char** argv){try{
     viewTests();
     settingsTests();
     hubProgressTests();
+    // A batch job's end that is not a completion (final review M3): the user's stop is no error, a failure keeps its reason.
+    check(jobEndProblem("가려진 공 표시", Json{{"status", "stopped"}}) == "가려진 공 표시 중단", "a stopped job is no error");
+    check(jobEndProblem("둘레 다듬기", Json{{"status", "error"}, {"error", "디스크 공간 부족"}}) == "오류 · 둘레 다듬기 · 디스크 공간 부족", "a failure keeps its reason");
+    check(jobEndProblem("색 채우기", Json{{"status", "error"}}) == "오류 · 색 채우기", "a failure without a reason");
+    check(jobEndProblem("전파", Json{{"status", "complete"}}).empty(), "a completed job has no problem line");
     check(std::regex_match(boccia::versionString(), std::regex(R"(\d{4}-\d{2}-\d{2} \d{2}:\d{2} · \S+)")), "version string shape");
     cv::Mat mask(9,13,CV_8UC1,cv::Scalar(0));mask(cv::Rect(4,2,5,5)).setTo(1);mask.at<uchar>(4,6)=0;
     auto rle=encodeMask(mask);auto decoded=decodeMask(rle,13,9);check(cv::countNonZero(mask!=decoded)==0,"RLE hole/column order lost");

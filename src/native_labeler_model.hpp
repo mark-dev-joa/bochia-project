@@ -24,4 +24,7 @@ Json hubStatusJson(const std::string& page, const Json& scene, const Json& job, 
 // propagated frames, and this worker's confirmations over the last 7 local days, today and the last 10 minutes, read from
 // the label file's reviewed_at/reviewed_by in catalog.summary.frames.
 Json hubProgress(const Json& catalog, const std::string& worker, std::time_t now);
+// The activity line of a batch job that ended without completing: "<job> 중단" when the user stopped it, "오류 · <job> ·
+// <reason>" when it failed; "" when it completed.
+std::string jobEndProblem(const std::string& job, const Json& status);
 }

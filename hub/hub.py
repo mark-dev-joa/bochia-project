@@ -13,6 +13,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import subprocess
 import sys
 import threading
@@ -88,6 +89,7 @@ class Hub:
         self.stopped = threading.Event()
         self.started = now()
         self.public_name = ""   # this PC's Tailscale name, set by main(); the address labelers use
+        self.local_names = set()   # this PC's own names and addresses when the hub serves 0.0.0.0 (--bind all)
         self.servers = []
         self.cache = {}         # worker id -> {"records", "received", "seen"}: the latest CACHE_LINES activity lines
         for folder in ("status", "events") + FILE_KINDS:
@@ -206,6 +208,23 @@ class Hub:
     def control_allowed(self, address):
         """The control API answers this PC and the addresses named by --control-from; worker PCs on the same tailnet get 403."""
         return address in ("127.0.0.1", "::1") or address in self.control_from
+
+    def host_allowed(self, host):
+        """The Host a browser sent for the screen or the control API: one of this hub's own names. A page whose DNS name
+        was rebound to 127.0.0.1 (DNS rebinding) carries its own name and is refused. No Host is no browser."""
+        name = host.strip().lower()
+        if not name:
+            return True
+        if name.startswith("["):
+            name = name[1:name.find("]")] if "]" in name else name
+        elif name.count(":") == 1:
+            name = name.split(":")[0]
+        with self.lock:
+            allowed = {"127.0.0.1", "localhost", "::1"} | {address.lower() for address in self.control_from} | self.local_names
+            allowed |= {server.server_address[0].lower() for server in self.servers}
+        if self.public_name:
+            allowed.add(self.public_name.lower())
+        return name in allowed
 
     def invite(self, worker):
         if not valid_name(worker):
@@ -439,6 +458,12 @@ class Hub:
     def serve(self, bind, port):
         first = None
         for address in bind:
+            if address == "0.0.0.0":   # the screen may then be asked for by any of this PC's names
+                try:
+                    host, aliases, addresses = socket.gethostbyname_ex(socket.gethostname())
+                    self.local_names |= {name.lower() for name in [host, *aliases, *addresses]}
+                except OSError:
+                    pass
             server = Server((address, first.server_port if first else port), Handler)
             server.hub = self
             threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.5}, daemon=True, name=f"hub {address}").start()
@@ -547,6 +572,8 @@ class Handler(BaseHTTPRequestHandler):
         """The hub's screen (hub/ui): for the same addresses as the control API."""
         if not hub.control_allowed(self.client_address[0]):
             raise HubError(403, "screen: only this PC and --control-from addresses")
+        if not hub.host_allowed(self.headers.get("Host", "")):
+            raise HubError(403, "screen: unknown host name")
         if method != "GET":
             raise HubError(405, "GET only")
         if not parts:
@@ -560,6 +587,8 @@ class Handler(BaseHTTPRequestHandler):
     def _control(self, hub, method, parts, query, body):
         if not hub.control_allowed(self.client_address[0]):
             raise HubError(403, "control API: only this PC and --control-from addresses")
+        if not hub.host_allowed(self.headers.get("Host", "")):
+            raise HubError(403, "control API: unknown host name")
         if method == "POST" and not self.headers.get("Content-Type", "").startswith("application/json"):
             raise HubError(415, "control API: send JSON (Content-Type: application/json)")   # also keeps a browser's no-cors POST out
         if parts == ["shutdown"] and method == "POST":
@@ -653,10 +682,13 @@ class Handler(BaseHTTPRequestHandler):
 
 # ---- command line
 
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)   # under pythonw every console child would open a window of its own
+
+
 def tailscale_ip():
     for exe in ("tailscale", r"C:\Program Files\Tailscale\tailscale.exe"):
         try:
-            result = subprocess.run([exe, "ip", "-4"], capture_output=True, text=True, timeout=5)
+            result = subprocess.run([exe, "ip", "-4"], capture_output=True, text=True, timeout=5, creationflags=NO_WINDOW)
         except (OSError, subprocess.SubprocessError):
             continue
         if result.returncode == 0 and result.stdout.split():
@@ -668,13 +700,31 @@ def tailscale_name():
     """This PC's MagicDNS name (mark-hong-pc.tail68c059.ts.net), or "" without Tailscale."""
     for exe in ("tailscale", r"C:\Program Files\Tailscale\tailscale.exe"):
         try:
-            result = subprocess.run([exe, "status", "--json"], capture_output=True, text=True, encoding="utf-8", timeout=5)
+            result = subprocess.run([exe, "status", "--json"], capture_output=True, text=True, encoding="utf-8", timeout=5, creationflags=NO_WINDOW)
             name = json.loads(result.stdout).get("Self", {}).get("DNSName", "") if result.returncode == 0 else ""
         except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
             continue
         if name:
             return name.rstrip(".")
     return ""
+
+
+def rebind(hub, port):
+    """--bind auto: Tailscale may come up after the hub (a login start); once it has an address, serve that too and learn the name."""
+    ip = tailscale_ip()
+    if not ip:
+        return
+    with hub.lock:
+        bound = {server.server_address[0] for server in hub.servers}
+    if ip not in bound:
+        try:
+            hub.serve([ip], port)
+        except OSError as error:
+            hub.say(f"{ip}:{port} 묶기 실패 · {error}")
+            return
+        hub.say(f"허브 http://{ip}:{port} · 저장소 {hub.storage}")
+    if not hub.public_name:
+        hub.public_name = tailscale_name()
 
 
 def bind_addresses(choice):
@@ -708,6 +758,7 @@ def main(argv=None):
         try:
             server = hub.serve([address], first.server_port if first else args.port)
         except OSError as error:
+            hub.say(f"{address}:{args.port} 묶기 실패 · {error}")   # pythonw has no stderr: hub.log keeps it
             print(f"{address}:{args.port} 묶기 실패 · {error}", file=sys.stderr, flush=True)
             if first is None:
                 return 1
@@ -720,8 +771,9 @@ def main(argv=None):
     if args.bind in ("auto", "all"):
         hub.public_name = tailscale_name()
     try:
-        while not hub.stopped.wait(1):   # until /api/shutdown (or Ctrl+C)
-            pass
+        while not hub.stopped.wait(30):   # until /api/shutdown (or Ctrl+C)
+            if args.bind == "auto":
+                rebind(hub, first.server_port)
     except KeyboardInterrupt:
         pass
     finally:

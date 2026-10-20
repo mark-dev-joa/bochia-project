@@ -1,6 +1,7 @@
 """The hub server: tokens, registration, status, events, commands, files and the control API (design/hub/PLAN-1.md Task 1)."""
 import json
 import shutil
+import subprocess
 import tempfile
 import threading
 import time
@@ -319,6 +320,62 @@ class HubTest(unittest.TestCase):
 
     def test_status_has_address(self):
         self.assertIsInstance(self.call("GET", "/api/status")[1]["address"], str)
+
+    # ---- final review fixes (design/hub/PLAN-2.md)
+
+    def test_tailscale_runs_without_a_window(self):
+        # Under pythonw every console child (tailscale.exe) would open a console window of its own.
+        import hub.hub as module
+        seen = []
+
+        def fake_run(command, **options):
+            seen.append(options.get("creationflags", 0))
+            return subprocess.CompletedProcess(command, 0, stdout='{"Self": {"DNSName": "pc.example.ts.net."}}' if "status" in command else "100.64.0.7\n", stderr="")
+
+        original = module.subprocess.run
+        module.subprocess.run = fake_run
+        try:
+            self.assertEqual((module.tailscale_ip(), module.tailscale_name()), ("100.64.0.7", "pc.example.ts.net"))
+        finally:
+            module.subprocess.run = original
+        self.assertTrue(seen and all(flags & 0x08000000 for flags in seen))   # CREATE_NO_WINDOW
+
+    def test_rebind_adds_the_tailscale_address_later(self):
+        # A hub started at login before Tailscale is up serves 127.0.0.1 only; it binds the Tailscale address once there is one.
+        import hub.hub as module
+        answers = {"ip": "", "name": ""}
+        original = (module.tailscale_ip, module.tailscale_name)
+        module.tailscale_ip, module.tailscale_name = (lambda: answers["ip"]), (lambda: answers["name"])
+        try:
+            module.rebind(self.hub, self.port)
+            self.assertEqual((len(self.hub.servers), self.hub.public_name), (1, ""))
+            answers.update(ip="127.0.0.2", name="pc.example.ts.net")
+            module.rebind(self.hub, self.port)
+            self.assertEqual(sorted(server.server_address[0] for server in self.hub.servers), ["127.0.0.1", "127.0.0.2"])
+            self.assertEqual(self.hub.public_name, "pc.example.ts.net")
+            module.rebind(self.hub, self.port)
+            self.assertEqual(len(self.hub.servers), 2)
+        finally:
+            module.tailscale_ip, module.tailscale_name = original
+        self.assertIn("127.0.0.2", (self.temp / "hub.log").read_text("utf-8"))
+
+    def test_control_refuses_a_foreign_host_name(self):
+        # DNS rebinding: a page whose name now points at 127.0.0.1 must not reach the screen or the control API.
+        def get(path, host):
+            request = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}")
+            request.add_header("Host", host)
+            try:
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    return response.status
+            except urllib.error.HTTPError as error:
+                return error.code
+        self.assertEqual(get("/api/status", f"attacker.example:{self.port}"), 403)
+        self.assertEqual(get("/", f"attacker.example:{self.port}"), 403)
+        self.assertEqual(get("/api/status", f"127.0.0.1:{self.port}"), 200)
+        self.assertEqual(get("/api/status", f"localhost:{self.port}"), 200)
+        self.hub.public_name = "pc.example.ts.net"
+        self.assertEqual(get("/api/status", f"pc.example.ts.net:{self.port}"), 200)
+        self.assertEqual(get("/ping", "attacker.example"), 200)   # the app API has its tokens
 
 
 if __name__ == "__main__":

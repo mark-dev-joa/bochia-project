@@ -77,6 +77,14 @@ Json hubProgress(const Json& catalog, const std::string& worker, std::time_t now
     progress["propagated"] = propagated;
     return progress;
 }
+std::string jobEndProblem(const std::string& job, const Json& status) {
+    const std::string state = status.is_object() ? status.value("status", "") : std::string();
+    if (state == "complete") return {};
+    if (state == "stopped") return job + " 중단";
+    std::string reason;
+    if (status.is_object() && status.contains("error")) reason = status["error"].is_string() ? status["error"].get<std::string>() : status["error"].dump();
+    return "오류 · " + job + (reason.empty() ? std::string() : " · " + reason);
+}
 Json hubStatusJson(const std::string& page, const Json& scene, const Json& job, bool applyPrevious, bool gpu, const std::string& error, const Json& progress) {
     std::string text = page == "data" ? "자료" : page == "export" ? "내보내기" : "검수";
     if (scene.is_object()) {
