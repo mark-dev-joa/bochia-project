@@ -674,7 +674,7 @@ void Application::review(Scope scope,bool hold,int member) {
     const bool moveOn=scope==Scope::Scene||hold;
     // The engine refuses when it holds a different number of balls than this screen shows, as after an automatic draft.
     Json seen=Json::object();for(const auto& frame:frames_)seen[frame.annotation.at("key").get<std::string>()]=frame.annotation["boxes"].size();
-    const auto engine=engine_;Json payload={{"keys",keys},{"seen",seen},{"edits",edits},{"status",hold?"hold":"reviewed"},{"expected_revision",catalog_["summary"]["revision"]}};
+    const auto engine=engine_;Json payload={{"keys",keys},{"seen",seen},{"edits",edits},{"status",hold?"hold":"reviewed"},{"expected_revision",catalog_["summary"]["revision"]},{"worker",settings_.worker}};
     launch(hold?"보류 상태 저장":"확인 저장",[engine,payload,keys,hold]{
         try{Json result=engine->nativeAction("review",payload);
             if(!hold){try{const Json counts=engine->nativeAction("propagation-counts",{{"sources",keys}});result["propagate_pending"]=counts.value("pending",0)+counts.value("carry",0);}catch(const std::exception&){}}

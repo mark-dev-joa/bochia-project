@@ -106,6 +106,7 @@ Json Project::summary() const {
                        {"automatic", isAutomatic}, {"human_touched", item.value("human_touched", Json(false))},
                        {"needs_attention", item.contains("automatic") && item["automatic"].is_object() ? item["automatic"].value("needs_attention", Json(false)) : Json(false)},
                        {"selected", included}, {"representative", decision.value("representative", key)}, {"selection_reason", decision.value("reason", "unfiltered")}};
+        for (const char* stamp : {"reviewed_at", "reviewed_by"}) if (item.contains(stamp)) frames[key][stamp] = item[stamp];   // the hub's daily counts
         reviewed += done; if (done) boxes += count; if ((done && included) || propagated) { ++exportFrames; exportBoxes += count; }
         automatic += isAutomatic; if (!done) drafts += count;
     }

@@ -17,6 +17,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <ctime>
+#include <iomanip>
+#include <regex>
+#include <sstream>
 #include <atomic>
 #include <chrono>
 #include <random>
@@ -453,6 +457,22 @@ void nativeTests() {
     check(fails([&] { nativeAction(project, "review", {{"keys", {scene0[0], fixture.ids[1] + "/camera-0/0"}}, {"expected_revision", prior["revision"]}}); }, "한 장면의 촬영만"), "two recordings reviewed together");
     check(fails([&] { nativeAction(project, "review", {{"keys", Json::array()}, {"expected_revision", 0}}); }, "검수 상태 요청") && fails([&] { nativeAction(project, "review", {{"keys", scene0}, {"status", "later"}, {"expected_revision", 0}}); }, "검수 상태 요청"), "bad review requests accepted");
     check(fails([&] { nativeAction(project, "review", {{"keys", scene0}, {"expected_revision", 0}}); }, "다른 창에서"), "stale review revision accepted");
+    {   // 2026-10-20 hub stage 2: a confirmation stores its local time and worker; the summary carries them
+        Project stamped(catalog, fixture.temp.path / "stamp-project.json", fixture.temp.path / "stamp-exports");   // its own label file: scenes 0 and 1 are untouched in it
+        const Json scene2 = sceneKeysOf(sceneIndex(catalog)[0]);
+        const std::time_t before = std::time(nullptr);
+        nativeAction(stamped, "review", {{"keys", scene2}, {"status", "reviewed"}, {"worker", "홍길동"}, {"expected_revision", stamped.state["revision"]}});
+        const Json frame = stamped.state["frames"][scene2[0].get<std::string>()];
+        std::tm parsed{}; std::istringstream(frame.value("reviewed_at", "")) >> std::get_time(&parsed, "%Y-%m-%d %H:%M:%S"); parsed.tm_isdst = -1;
+        check(std::regex_match(frame.value("reviewed_at", ""), std::regex(R"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")) && std::abs(double(std::mktime(&parsed) - before)) <= 5,
+              "a confirmation must store the local time");
+        check(frame.value("reviewed_by", "") == "홍길동" && stamped.summary()["frames"][scene2[0].get<std::string>()].value("reviewed_by", "") == "홍길동",
+              "the worker must be stored and summarized");
+        const Json scene3 = sceneKeysOf(sceneIndex(catalog)[1]);
+        nativeAction(stamped, "review", {{"keys", scene3}, {"status", "hold"}, {"expected_revision", stamped.state["revision"]}});
+        check(stamped.state["frames"][scene3[0].get<std::string>()].contains("reviewed_at") && !stamped.state["frames"][scene3[0].get<std::string>()].contains("reviewed_by"),
+              "a hold is stamped too, and no worker means no reviewed_by");
+    }
     check(fails([&] { nativeAction(project, "nope", Json::object()); }, "지원하지 않는"), "unknown action accepted");
     // test_groups_never_cross_splits_and_insufficient_groups_rejected
     reviewAll(project);

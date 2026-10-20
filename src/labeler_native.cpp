@@ -405,12 +405,16 @@ Json nativeAction(Project& project, const std::string& action, const Json& paylo
             if (differs) throw Conflict("저장된 라벨이 화면에 표시된 것과 다릅니다. 장면을 다시 불러온 뒤 확인하세요.");
         }
         const bool reviewed = status == "reviewed";
+        // When and by whom (2026-10-20 hub stage 2): the hub's daily counts come from these, so they hold while the hub is off.
+        const std::string worker = payload.contains("worker") && payload["worker"].is_string() ? payload["worker"].get<std::string>() : std::string();
+        const std::string reviewedAt = formatLocal(int64_t(std::time(nullptr)), "%Y-%m-%d %H:%M:%S");
         const Json summary = project.mutate(payload.at("expected_revision").get<int>(), [&](Json& state) {
             for (const auto& [key, frame] : entries) {
                 Json annotation = Json::object();
                 for (const char* name : {"recording", "camera", "index", "width", "height", "boxes", "automatic"}) if (frame.contains(name)) annotation[name] = frame[name];
                 for (auto& box : annotation["boxes"]) box.erase("contours");   // the frame response includes transient contours; never store them
                 annotation["reviewed"] = reviewed; annotation["review_status"] = status; annotation["human_touched"] = true;
+                annotation["reviewed_at"] = reviewedAt; if (!worker.empty()) annotation["reviewed_by"] = worker;
                 state["frames"][key] = std::move(annotation);
             }
             state.erase("native_split");
