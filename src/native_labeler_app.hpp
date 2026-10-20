@@ -292,6 +292,7 @@ private:
     std::function<void(JobResult)> completion_;
     std::function<void()> later_;                                // UI actions run after the frame is drawn
     std::function<void()> queued_;                               // a Space pressed while a job ran: done as soon as the job ends
+    bool carryWanted_ = false;                                   // F1 pressed while a job ran: 이전 라벨 가져오기 as soon as it ends
     std::vector<GLuint> doomed_;                                 // textures of replaced frames: deleted at the start of the next frame,
                                                                  // since a draw list built this frame may still show them
     std::vector<SceneRow> rows_;

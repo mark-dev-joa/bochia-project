@@ -161,10 +161,14 @@ void Application::loadScene(int index,bool editor,int camera,std::string note) {
 // Fetches the next unreviewed scene in the background, so confirming a scene does not wait for the images.
 // Hidden check of 이전 라벨 가져오기 (2026-10-20: a button in place of the on/off): pressed on the first draft it carries
 // the labels of the nearest earlier confirmed frame as unsaved edits, or says the draft already agrees; that scene
-// confirmed and the next one opened, pressing it there carries the labels just confirmed, and 되돌리기 takes them back.
+// confirmed and the next one opened, F1 pressed there while a save runs carries the labels just confirmed once the save
+// is done, and 되돌리기 takes them back.
 bool Application::applyPreviousCheckStep() {
     static int first = -1, phase = 0, waited = 0;
+    static bool keyDown = false;
     static std::vector<Json> before;
+    auto& io = ImGui::GetIO();
+    if (keyDown) { io.AddKeyEvent(ImGuiKey_F1, false); keyDown = false; }   // F1 is let go the frame after it went down
     if (busy()) return true;
     const auto source = [this] {   // the frame the bottom bar names, "이전 라벨 · 프레임 0030", or -1
         const std::string head = "이전 라벨 · 프레임 ";
@@ -188,7 +192,9 @@ bool Application::applyPreviousCheckStep() {
     case 4:
         if (scene_ == first) { if (++waited > 600) throw std::runtime_error("apply-previous check: did not move on"); return true; }
         before.clear(); for (const auto& frame : frames_) before.push_back(frame.annotation["boxes"]);
-        applyPreviousLabels(); phase = 5; return true;
+        changed(); save({}, dirtySlot());   // F1 (the user's key, 2026-10-20) while a save runs: it carries once the save is done
+        if (!busy()) throw std::runtime_error("apply-previous check: the save did not start");
+        io.AddKeyEvent(ImGuiKey_F1, true); keyDown = true; phase = 5; return true;
     case 5: {
         const int expected = catalog_["scenes"][first].value("index", -1);
         if (source() != expected) throw std::runtime_error("apply-previous check: the next scene got " + message_ + ", not the labels of the scene just confirmed (" + std::to_string(expected) + ")");
@@ -567,7 +573,9 @@ void Application::confirmMissing(){
 // of the nearest earlier confirmed frame of each camera, carried onto the frames of this scene now, as an edit of each frame
 // they change (되돌리기 per camera, saved like any edit). Unsaved edits are saved first: the carry starts from the saved frames.
 void Application::applyPreviousLabels(){
-    if(frames_.empty()||imageScene()||!engine_||!guard())return;
+    if(frames_.empty()||imageScene()||!engine_)return;
+    if(busy()&&!pending()){carryWanted_=true;message_=busyLabel_+" 중 · 끝나면 이전 라벨을 가져옵니다";return;}   // F1 during a load or a save
+    if(!guard())return;
     if(const int slot=dirtySlot();slot>=0){save([this]{applyPreviousLabels();},slot);return;}
     Json keys=Json::array();for(const auto& frame:frames_)keys.push_back(frame.annotation.at("key"));   // the repeated cameras too
     const auto engine=engine_;const int scene=scene_;
@@ -790,7 +798,8 @@ void Application::tick(){
             if(!frames_.empty()&&current().dirty){try{preserveRecovery();message_="저장 실패 · 변경은 메모리와 recovery 폴더에 보관했습니다.";}catch(...) {}}
         }
     }
-    // The key pressed during the job: done now, or dropped when the job failed.
+    // The key pressed during the job: done now, or dropped when the job failed. F1 first: F1 then Space confirms what it carried.
+    if(carryWanted_){if(!error_.empty())carryWanted_=false;else if(!busy()){carryWanted_=false;applyPreviousLabels();}}
     if(queued_){if(!error_.empty())queued_=nullptr;else if(!busy()){auto action=std::move(queued_);queued_=nullptr;action();}}
     pumpThumbs();prefetch();hubTick();
     if(ready()&&!busy()&&!pending()&&dirtySlot()>=0&&Clock::now()-changed_>std::chrono::milliseconds(450)&&error_.empty())save({},dirtySlot());
@@ -1075,6 +1084,7 @@ void Application::keys() {
     if(pressed(ImGuiKey_E))review(io.KeyShift&&editor_?Scope::Camera:Scope::Scene,false);
     if(pressed(ImGuiKey_Q))review(editor_?Scope::Camera:Scope::Scene,true);
     if(pressed(ImGuiKey_N)&&guard())nextUnreviewed();
+    if(pressed(ImGuiKey_F1))applyPreviousLabels();   // 이전 라벨 가져오기 (2026-10-20 user choice: F1)
     if(pressed(ImGuiKey_Backspace))back();
     if(pressed(ImGuiKey_A))stepRow(-1);
     if(pressed(ImGuiKey_D))stepRow(1);
@@ -1158,7 +1168,7 @@ void Application::topBar() {
 }
 // The key list lives here instead of in hint lines all over the screens.
 void Application::shortcutsPopup(ImVec2 below) {
-    static const char* const rows[][2]={{"Space / E","세 장 확인 완료 · 팝업에서 Space 한 번 더 누르면 다음 장면"},{"Shift+Space / Shift+E","크게 보는 카메라 한 장만 확인"},{"Q","보류"},{"N","다음 미검수 장면"},
+    static const char* const rows[][2]={{"Space / E","세 장 확인 완료 · 팝업에서 Space 한 번 더 누르면 다음 장면"},{"Shift+Space / Shift+E","크게 보는 카메라 한 장만 확인"},{"Q","보류"},{"N","다음 미검수 장면"},{"F1","이전 라벨 가져오기"},
         {"A / D","이전 / 다음 장면"},{"Backspace","이전에 보던 장면으로"},{"1 / 2 / 3","그 카메라를 크게"},{"Tab / Shift+Tab","다음 / 이전 공"},
         {"방향키","선택한 공의 그 방향 경계를 1픽셀 바깥으로"},{"Shift+방향키","1픽셀 안으로"},{"V / S / B / P / R","선택 / AI 분할 / 브러시 / 폴리곤 / 박스"},
         {"왼쪽 / 오른쪽 클릭","더하기 / 빼기"},{"[ / ]","브러시 굵기"},{"Space / Esc","윤곽 반영 / 취소, 선택 해제, 세 장 보기"},{"G / M / X / C","윤곽 / 마스크 채움 / 박스 / 원 표시"},{"I","보기: 원본 / 대비 / 흑백 / 에지 / 그래디언트 / 에지 겹침"},
