@@ -7,7 +7,11 @@ $launcherName = 'BocciaLauncher.exe'   # 2026-10-20 user request; it was 'Boccia
 $legacyLauncherName = (-join ([char[]]@(0xB77C,0xBCA8,0xB7EC,0x20,0xC2E4,0xD589)))+'.exe'
 $build = Join-Path $root 'build-labeler/Release/boccia_labeler_launcher.exe'
 if (-not (Test-Path -LiteralPath $build)) { throw 'Build boccia_labeler_launcher first.' }
-Copy-Item -LiteralPath $build -Destination (Join-Path $target $launcherName) -Force
+$placed = Join-Path $target $launcherName
+# The launcher waits while the labeler runs, so its file is locked then; an unchanged launcher is left as it is.
+if (-not ((Test-Path -LiteralPath $placed) -and ((Get-FileHash -LiteralPath $build).Hash -eq (Get-FileHash -LiteralPath $placed).Hash))) {
+    Copy-Item -LiteralPath $build -Destination $placed -Force
+}
 foreach ($earlier in @('Boccia Labeler.exe', $legacyLauncherName)) {   # this launcher under its earlier names
     $path = Join-Path $target $earlier
     if (Test-Path -LiteralPath $path) { try { Remove-Item -LiteralPath $path -Force } catch { Write-Host "In use, kept until it is closed: $path" } }
