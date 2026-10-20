@@ -64,7 +64,10 @@ joonyeon 라벨러·트래커 ─┐
 
 로그 파일 내용은 보내지 않는다. 허브의 **로그** 버튼이 가져온다. 허브는 받은 이벤트를 `logs\events-날짜.jsonl`에 남긴다.
 
-## 화면 (`design/trainer/workers-light.html?screen=list | detail&tab=activity|progress|remote`, `design/trainer/shots/workers-*.png` — 허브 폴더로 옮긴다)
+## 화면 (`hub/ui/`, 2단계 2026-10-20; 시안 `design/trainer/workers-light.html`, 실제 캡처 `design/hub/shots/hub-{list,activity,progress}.png`)
+
+2026-10-20 사용자 결정: 창은 Edge 앱 모드 대신 **`Boccia Hub.exe`의 자기 창**(WebView2, 허브가 꺼져 있으면 켜고 창을 닫아도 허브는 계속).
+확인 수(오늘 · 날짜별 · 10분)는 허브가 받은 활동이 아니라 **라벨 파일**에서 센다(확인·보류할 때 프레임에 `reviewed_at`·`reviewed_by`).
 
 상단 탭: **작업자** · **트래커** · **버전** · 설정. 오른쪽에 허브 주소와 붙은 수.
 

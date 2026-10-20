@@ -1,9 +1,25 @@
 # Boccia Hub
 
-연구소의 라벨러(나중엔 트래커도)를 한 PC에서 지켜보고 명령을 보내는 허브의 1단계(설계 `design/hub/DESIGN.md`).
-Python 3.12만 있으면 되고, 허브 PC에만 필요합니다. 앱은 허브가 켜져 있을 때만 붙습니다.
+연구소의 라벨러(나중엔 트래커도)를 한 PC에서 지켜보고 명령을 보내는 허브(설계 `design/hub/DESIGN.md`, 1단계
+`PLAN-1.md`, 2단계 화면 `PLAN-2.md`). Python 3.10 이상이 허브 PC에만 있으면 됩니다. 앱은 허브가 켜져 있을 때만 붙습니다.
 
-## 켜기
+## 창 (`Boccia Hub.exe`)
+
+`bin\release\hub\Boccia Hub.exe`를 더블클릭하면 허브가 꺼져 있을 때 뒤에서 켜고(`pythonw`, 검은 창 없음) 화면을 자기 창에
+띄웁니다(WebView2). 창을 닫아도 허브는 계속 켜져 있어 라벨러들이 끊기지 않습니다. 이미 열려 있으면 그 창이 앞으로 옵니다.
+
+- 화면: **작업자**(네 칸: 붙은 라벨러 · 오늘 확인 · 지금 속도 · 전체 진행, 표, 초대) → 줄을 누르면 **활동**(전체·작업·동작·오류)
+  · **진행**(촬영별 확인, 날짜별 확인 7일, 요약). **설정**: 주소 · 저장소 · 켠 시각 · 로그인할 때 켜기 · 허브 끄기(두 번 눌러 끔).
+- 처음 실행할 때 로그인하면 허브가 켜지도록 시작프로그램에 `Boccia Hub.lnk`(`--background`)를 만듭니다. 설정에서 끕니다
+  (`%LOCALAPPDATA%\Boccia\hub-settings.json`의 `autostart`).
+- 옵션: `--background`(허브만 켜고 끝), `--check`(숨긴 점검: 허브 → WebView2 → 화면 제목, 창을 띄우지 않음),
+  `--port <n>`(8790), `--storage <폴더>`(`D:\Boccia Hub`).
+- Python 3.10 이상이 없거나, 8790 포트를 다른 프로그램이 쓰면 그 사실 한 줄을 띄우고 끝납니다.
+- 같은 화면을 브라우저로도 봅니다: `http://127.0.0.1:8790/`(다른 기기는 `--control-from`에 주소를 넣은 경우만).
+- 빌드: `powershell -File tools/fetch-webview2.ps1`(WebView2 SDK 1.0.4258.31, SHA-512 확인) 뒤
+  `cmake --build build-labeler --config Release --target boccia_hub`, 배포 `powershell -File tools/collect_hub.ps1`.
+
+## 켜기 (명령줄)
 
 ```
 boccia-hub.cmd serve
@@ -47,6 +63,7 @@ boccia-hub.cmd send 홍길동 ping
 ```
 
 `notify`: 라벨러 아래 막대 왼쪽에 문구(×로 닫음). `log`: 오늘 로그 파일을 허브로 올림. 10초 안에 결과가 오면 `완료 · …`.
+`boccia-hub.cmd stop`: 허브를 끕니다(`허브 끔`).
 
 ## 저장소 (`D:\Boccia Hub`)
 
@@ -70,9 +87,14 @@ screen\<id>\            화면 캡처 (2단계)
 ## 점검
 
 ```
-python -m unittest hub.tests.test_hub hub.tests.test_cli
+python -m unittest hub.tests.test_hub hub.tests.test_cli hub.tests.test_ui
 build-labeler\Release\hub_client_tests.exe
+build-labeler\Release\hub_launch_tests.exe
 powershell -File tools/hub-check.ps1
+powershell -File tools/hub-screen-check.ps1 -Project <QA 프로젝트 폴더>
 ```
 
-마지막 것은 스크래치 저장소에 허브를 띄우고 숨긴 라벨러 둘을 붙여 `workers`, `send notify`, `send log`, `logs`, `events`를 확인합니다.
+`hub-check.ps1`은 스크래치 저장소에 허브를 띄우고 숨긴 라벨러 둘을 붙여 `workers`, `send notify`, `send log`, `logs`, `events`를
+확인합니다. `hub-screen-check.ps1`은 프로젝트 복사본 둘에서 숨긴 라벨러가 장면을 하나씩 확인하게 한 뒤 허브의 숫자와 활동을
+보고, 화면 셋을 `design/hub/shots/hub-{list,activity,progress}.png`로 찍고, `Boccia Hub.exe --check`를 같은 허브에 돌립니다.
+화면 테스트(`test_ui`)와 캡처는 headless Edge를 DevTools로 다룹니다(`hub/tests/edge.py`; 이 PC의 `msedge --dump-dom`은 출력이 없음).

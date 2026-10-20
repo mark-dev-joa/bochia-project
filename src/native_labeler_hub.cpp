@@ -168,7 +168,10 @@ void Application::hubTick() {
             hubProgressAt_ = now;
         }
     } else { hubProgress_ = nullptr; hubProgressRevision_ = -1; }
-    hub_->setStatus(hubStatusJson(page, hubScene(), hubJob(), applyPrevious_, modelsOnGpu(), error_, hubProgress_));
+    Json status = hubStatusJson(page, hubScene(), hubJob(), applyPrevious_, modelsOnGpu(), error_, hubProgress_);
+    // The registration goes out when the labeler starts, usually before a project is open: the status carries the project.
+    if (projectOpened()) status["project"] = workspace_.empty() ? std::string("기존 라벨 작업") : workspaceName_;
+    hub_->setStatus(std::move(status));
     { std::lock_guard guard(hubShared_->lock); hubShared_->registration = currentRegistration(); }
     for (const auto& command : hub_->takeCommands()) {
         if (command.name == "notify") { hubNotice_ = command.value; logLine("허브 알림 · " + command.value); hub_->finish(command, true, "띄움"); }

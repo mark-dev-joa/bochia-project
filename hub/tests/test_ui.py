@@ -60,6 +60,15 @@ class ScreenTest(unittest.TestCase):
         for text in ("Boccia Hub", "홍길동", "joonyeon", "경기장 테스트", "1,214 / 3,869", "412", "12장 / 10분", "촬영 03 · 프레임 0142"):
             self.assertIn(text, dom)
 
+    def test_list_takes_the_project_from_the_status(self):
+        # A labeler registers when it starts, before a project is open: the project comes with its status.
+        token = self.hub.invite("김민수")
+        self.app("POST", "/register", {"app": "labeler", "worker": "김민수", "pc": "lab-pc-02", "version": "2026-10-20 09:12 · 8bab00d",
+                                      "device": {"gpu": False}, "summary": {}}, token)
+        self.app("POST", "/status", {"page": "review", "project": "사진 10-15", "progress": {"target": 120, "reviewed": 97}}, token)
+        dom = self.dump("#/workers", "김민수")
+        self.assertIn("사진 10-15", dom)
+
     def test_activity_lists_events_and_hides_notices(self):
         dom = self.dump(f"#/workers/{WORKER}/activity", "장면 확인")
         self.assertIn("장면 확인", dom)

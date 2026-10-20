@@ -69,7 +69,7 @@ const fresh = (worker) => (worker.status && (worker.status.received || "").slice
 const todayOf = (worker) => { const p = progressOf(worker); return p && fresh(worker) ? p.today || 0 : 0; };
 const last10Of = (worker) => { const p = progressOf(worker); return p && worker.connected && fresh(worker) ? p.last10 || 0 : 0; };
 const usesGpu = (worker) => worker.status && worker.status.device ? worker.status.device === "GPU" : !!(worker.device && worker.device.gpu);
-const project = (worker) => (worker.summary && worker.summary.project) || "—";
+const project = (worker) => (worker.status && worker.status.project) || (worker.summary && worker.summary.project) || "—";   // the status has it once a project is open
 const head = (text) => (text || "").split(" · ")[0];
 function ago(text) {
   const when = localTime(text);
