@@ -245,6 +245,7 @@ public:
     void projectSettingsForCapture() { beginProjectSettings(); }
     void workerDialogForCapture() { openWorkerDialog(); }
     bool workerDialogCheckStep(int step);            // hidden check: a click on each later field keeps the keyboard there; false when done
+    bool sceneBarIdCheckStep(int step);              // hidden check: no two items of the scene bar share an ImGui ID; false when done
     void hubForCheck(const std::string& address, const std::string& worker, const std::string& token, int waitSeconds = 0);   // --hub --worker --token: joins with these instead of the settings
     bool hubSettled() const;                         // no hub, or the hub has answered, or 5 s have passed, and --hub-wait is over: a hidden check may end
     void applyPreviousForCapture(bool on) { applyPrevious_ = on; }   // ← 이전 적용 for a hidden capture (no preferences are read)
@@ -404,6 +405,7 @@ private:
     void queue();
     void reviewPane();
     void sceneBar(ImVec2 pos, float width);
+    ImVec2 sceneBarMin_{}, sceneBarMax_{};             // the scene bar as drawn last, for sceneBarIdCheckStep
     void overviewTile(int slot, ImVec2 pos, ImVec2 size);
     void smallTile(int slot, ImVec2 pos, ImVec2 size);
     void focusTile(int slot, ImVec2 pos, ImVec2 size);

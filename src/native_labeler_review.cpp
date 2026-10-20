@@ -1,5 +1,6 @@
 // Review screen of the v2 design: scene list, three camera tiles that enlarge in place, and the side panel.
 #include "native_labeler_app.hpp"
+#include <imgui_internal.h>
 #include "native_labeler_theme.hpp"
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
@@ -304,8 +305,19 @@ void Application::reviewPane() {
         ImGui::PopID();
     }
 }
+// Hidden check (2026-10-20 user report: ImGui's "2 visible items with conflicting ID" over 원형 검출): the mouse goes
+// along the scene bar through this hidden window's own input queue, and ImGui must not find two items with one ID.
+bool Application::sceneBarIdCheckStep(int step) {
+    const int stops = int((sceneBarMax_.x - sceneBarMin_.x) / 12), stop = step / 3;
+    if (stops <= 0 || stop >= stops) return false;
+    if (step % 3 == 0) ImGui::GetIO().AddMousePosEvent(sceneBarMin_.x + 6 + 12.f * float(stop), (sceneBarMin_.y + sceneBarMax_.y) / 2);
+    else if (step % 3 == 2 && ImGui::GetCurrentContext()->DebugDrawIdConflictsId != 0)
+        throw std::runtime_error("scene bar: two items share an ID at x " + std::to_string(12 * stop + 6));
+    return true;
+}
 void Application::sceneBar(ImVec2 pos, float width) {
     auto draw = ImGui::GetWindowDrawList();
+    sceneBarMin_ = pos; sceneBarMax_ = {pos.x + width, pos.y + 42};
     const auto& scene = catalog_["scenes"][scene_];
     const std::string recording = "촬영 " + padded(scene.value("recording_number", 0), 2), frame = "프레임 " + padded(scene.value("index", 0), 4);
     float x = pos.x + 2;
