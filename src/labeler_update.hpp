@@ -1,0 +1,35 @@
+#pragma once
+// The launcher's update engine (design/hub/LAUNCHER.md): what the hub lists against what this install holds, the files
+// that differ fetched and checked by SHA-256, swapped in with the old ones kept in update\backup, and the update taken
+// back when the new labeler dies at once. Static CRT and system DLLs only: the launcher runs before any of it is here.
+#include <nlohmann/json.hpp>
+#include <cstdint>
+#include <filesystem>
+#include <functional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace boccia::update {
+struct ReleaseFile { std::string path; std::uint64_t size = 0; std::string sha256; };   // path: relative, '/'-separated, UTF-8
+struct Manifest { std::string app, id, version; std::vector<ReleaseFile> files; };
+Manifest parseManifest(const nlohmann::json& json);            // std::runtime_error on an unsafe path or a malformed hash
+std::string fileSha256(const std::filesystem::path& file);      // lower-case hex
+std::string sha256Hex(std::string_view bytes);
+
+// Writes the whole file to `part` or throws, telling `received` the size of each piece written.
+using Fetch = std::function<void(const ReleaseFile& file, const std::filesystem::path& part,
+                                 const std::function<void(std::uint64_t bytes)>& received)>;
+using Progress = std::function<void(std::uint64_t done, std::uint64_t total)>;
+enum class Outcome { UpToDate, Updated, Busy, BadVersion, Failed };
+struct SyncResult { Outcome outcome = Outcome::Failed; std::string error; std::uint64_t downloaded = 0; bool firstInstall = false; };
+
+// A launcher install (update\state.json), or a folder that holds nothing but the launcher and hidden or system files.
+bool installable(const std::filesystem::path& root, const std::filesystem::path& launcher);
+// Makes the install under `root` the manifest's: nothing in place changes until every differing file is fetched and right.
+SyncResult sync(const std::filesystem::path& root, const Manifest& manifest, const Fetch& fetch, const Progress& progress);
+bool pendingCheck(const std::filesystem::path& root);        // the last sync replaced a version whose first start is not yet seen
+void confirmStart(const std::filesystem::path& root);
+std::string revertLastUpdate(const std::filesystem::path& root);   // the version taken back, "" when there is nothing to take back
+std::string installedVersion(const std::filesystem::path& root);
+}
