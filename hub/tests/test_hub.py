@@ -72,12 +72,19 @@ class HubTest(unittest.TestCase):
         self.assertEqual(body["hub"], "boccia")
         self.assertIn("time", body)
 
-    def test_register_requires_token_and_matching_name(self):
+    def test_register_takes_the_name_from_the_invite_code(self):
+        # 2026-10-21: a worker typed a name other than the invite's and stayed out (403); the code alone names the worker now
         self.assertEqual(self.call("POST", "/register", {"app": "labeler", "worker": "홍길동", "pc": "joonyeon"})[0], 401)
         token = self.hub.invite("홍길동")
-        self.assertEqual(self.call("POST", "/register", {"app": "labeler", "worker": "김민수", "pc": "joonyeon"}, token)[0], 403)
-        status, body = self.call("POST", "/register", {"app": "labeler", "worker": "홍길동", "pc": "joonyeon", "version": "1"}, token)
-        self.assertEqual((status, body["id"], body["since"]), (200, "홍길동@joonyeon", ""))
+        for sent in ({"worker": "김민수"}, {}):
+            status, body = self.call("POST", "/register", {"app": "labeler", "pc": "joonyeon", "version": "1", **sent}, token)
+            self.assertEqual((status, body["id"], body["worker"], body["since"]), (200, "홍길동@joonyeon", "홍길동", ""))
+        self.assertEqual([worker["id"] for worker in self.call("GET", "/api/workers")[1]], ["홍길동@joonyeon"])
+
+    def test_me_names_the_invite_code(self):
+        self.assertEqual(self.call("GET", "/me")[0], 401)
+        self.assertEqual(self.call("GET", "/me", None, "nope")[0], 401)
+        self.assertEqual(self.call("GET", "/me", None, self.hub.invite("홍길동")), (200, {"worker": "홍길동"}))
 
     def test_same_name_two_pcs_are_two_workers(self):
         token = self.hub.invite("홍길동")

@@ -245,15 +245,15 @@ class Hub:
         return token
 
     def register(self, hash_, body):
-        worker, pc = body.get("worker"), body.get("pc")
-        if not (valid_name(worker) and valid_name(pc)):
-            raise HubError(400, "worker and pc are required")
+        """The invite code names the worker; a name the app sends is not asked for (2026-10-21: a worker who typed a name
+        apart from the invite's stayed out with 403)."""
+        pc = body.get("pc")
+        if not valid_name(pc):
+            raise HubError(400, "pc is required")
         with self.lock:
-            owner = self.tokens.get(hash_)
-            if owner is None:
+            worker = self.tokens.get(hash_)
+            if worker is None:
                 raise HubError(401, "unknown token")
-            if owner != worker:
-                raise HubError(403, "token belongs to another worker")
             worker_id = f"{worker}@{pc}"
             entry = self.workers.setdefault(worker_id, {"worker": worker, "pc": pc, "since": ""})
             for key in ("app", "version", "account", "device", "summary"):
@@ -265,7 +265,7 @@ class Hub:
             self._write_json("workers.json", self.workers)
             self.wake.notify_all()      # a poll of an older session of this worker ends now
         self.say(f"{worker_id} 접속 · {entry.get('app', '')} {entry.get('version', '')}".rstrip())
-        return {"ok": True, "id": worker_id, "since": entry.get("since", "")}
+        return {"ok": True, "id": worker_id, "worker": worker, "since": entry.get("since", "")}
 
     def resolve(self, hash_, pc=""):
         """The worker id behind a token: the PC named by the request, else the PC that registered last with this token."""
@@ -293,7 +293,8 @@ class Hub:
         self.say(f"{worker_id} 종료")
 
     def token_owner(self, hash_):
-        """The worker an invite code belongs to; what the launcher needs to take a release (no /register)."""
+        """The worker an invite code belongs to: what the launcher needs to take a release (no /register), and the name
+        GET /me tells the apps, so no worker types it."""
         with self.lock:
             owner = self.tokens.get(hash_)
         if owner is None:
@@ -581,6 +582,8 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ["ping"] and method == "GET":
             return self._json({"hub": "boccia", "time": now()})
         hash_ = self._token_hash()
+        if parts == ["me"] and method == "GET":
+            return self._json({"worker": hub.token_owner(hash_)})
         if parts[:1] == ["releases"] and method == "GET":   # the launcher (design/hub/LAUNCHER.md): an invite code, no registration
             hub.token_owner(hash_)
             if len(parts) == 2:
