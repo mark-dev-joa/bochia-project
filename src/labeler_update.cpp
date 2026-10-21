@@ -60,6 +60,12 @@ std::string toUtf8(const fs::path& path) {
     const auto text = path.u8string();
     return std::string(reinterpret_cast<const char*>(text.data()), text.size());
 }
+// A name as Windows compares it: case does not count.
+std::wstring foldedWide(std::wstring text) {
+    if (!text.empty()) CharLowerBuffW(text.data(), static_cast<DWORD>(text.size()));
+    return text;
+}
+std::string folded(const std::string& path) { return toUtf8(fs::path(foldedWide(fromUtf8(path).wstring()))); }
 fs::path statePath(const fs::path& root) { return root / "update" / "state.json"; }
 fs::path backupFolder(const fs::path& root) { return root / "update" / "backup"; }
 fs::path asideFolder(const fs::path& root) { return root / "update" / "reverted"; }   // what a revert moved away; a running launcher can be moved, not deleted
@@ -86,10 +92,16 @@ void writeState(const fs::path& root, const Json& state) {   // a temporary file
     }
     if (!MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING)) throw std::runtime_error("cannot write the install state");
 }
+// A rename; a file held for a moment (a virus scanner reading a new DLL) is waited for, up to 2 s.
 void move(const fs::path& from, const fs::path& to) {
     fs::create_directories(to.parent_path());
-    if (!MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING))
-        throw std::runtime_error("cannot move " + toUtf8(from) + " (error " + std::to_string(GetLastError()) + ")");
+    for (int attempt = 0;; ++attempt) {
+        if (MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING)) return;
+        const DWORD error = GetLastError();
+        if ((error != ERROR_SHARING_VIOLATION && error != ERROR_ACCESS_DENIED && error != ERROR_LOCK_VIOLATION) || attempt == 10)
+            throw std::runtime_error("cannot move " + toUtf8(from) + " (error " + std::to_string(error) + ")");
+        Sleep(200);
+    }
 }
 
 // One sync or revert of a folder at a time, across processes (a second launcher started by a double click).
@@ -171,13 +183,39 @@ Manifest parseManifest(const Json& json) {
     if (manifest.app.empty() || manifest.id.empty() || manifest.version.empty()) throw std::runtime_error("the release list lacks its app, id or version");
     const Json files = json.value("files", Json::array());
     if (!files.is_array() || files.empty()) throw std::runtime_error("the release list has no files");
+    std::set<std::string> seen;
+    bool launcher = false, labeler = false;
     for (const auto& item : files) {
         ReleaseFile file{item.value("path", ""), item.value("size", std::uint64_t{0}), item.value("sha256", "")};
         if (!safePath(file.path)) throw std::runtime_error("an unsafe path in the release list: " + file.path);
         if (!hexHash(file.sha256)) throw std::runtime_error("a malformed hash in the release list: " + file.path);
+        const auto key = folded(file.path);
+        if (!seen.insert(key).second) throw std::runtime_error("two paths of the release list are one file on Windows: " + file.path);
+        for (const std::string worker : {"labeler/data", "labeler/logs", "update"})   // the worker's labels and logs, the launcher's own folder
+            if (key == worker || key.rfind(worker + "/", 0) == 0) throw std::runtime_error("the release list reaches into " + file.path);
+        launcher = launcher || key == "boccialauncher.exe";
+        labeler = labeler || key == "labeler/boccia_labeler.exe";
         manifest.files.push_back(std::move(file));
     }
+    if (!launcher || !labeler) throw std::runtime_error("the release list lacks BocciaLauncher.exe or labeler/boccia_labeler.exe");
     return manifest;
+}
+
+bool temporaryOrRemovable(const fs::path& root) {
+    std::error_code error;
+    fs::path full = fs::weakly_canonical(fs::absolute(root, error), error);
+    if (error || full.empty()) full = root;
+    const auto place = foldedWide(full.wstring());
+    std::wstring temp(MAX_PATH + 1, L'\0');
+    temp.resize(GetTempPathW(static_cast<DWORD>(temp.size()), temp.data()));
+    if (!temp.empty()) {
+        fs::path tempFull = fs::weakly_canonical(fs::path(temp), error);
+        std::wstring key = foldedWide((error || tempFull.empty() ? fs::path(temp) : tempFull).wstring());
+        while (!key.empty() && (key.back() == L'\\' || key.back() == L'/')) key.pop_back();
+        if (!key.empty() && (place == key || place.rfind(key + L"\\", 0) == 0)) return true;
+    }
+    const auto drive = full.root_path().wstring();
+    return !drive.empty() && GetDriveTypeW(drive.c_str()) == DRIVE_REMOVABLE;
 }
 
 bool installable(const fs::path& root, const fs::path& launcher) {
@@ -198,7 +236,7 @@ SyncResult sync(const fs::path& root, const Manifest& manifest, const Fetch& fet
     SyncResult result;
     const Lock lock(root);
     if (!lock.held()) { result.outcome = Outcome::Busy; return result; }
-    std::vector<fs::path> parts;   // fetched pieces not yet in place, removed on any failure
+    std::vector<fs::path> spare;   // copies of a content, gone with a failure; a checked piece stays for the next start
     try {
         Json state = readState(root);
         if (contains(state.value("bad", Json::array()), manifest.id)) { result.outcome = Outcome::BadVersion; return result; }
@@ -209,31 +247,44 @@ SyncResult sync(const fs::path& root, const Manifest& manifest, const Fetch& fet
             writeState(root, Json{{"version", ""}, {"id", ""}, {"files", Json::object()}, {"bad", Json::array()}, {"check", false}});
         Json known = state.value("files", Json::object());
         if (!known.is_object()) known = Json::object();
+        std::map<std::string, std::string> spelled;   // folded path -> the state's spelling: Windows paths ignore case
+        for (auto it = known.begin(); it != known.end(); ++it) spelled[folded(it.key())] = it.key();
         Json files = Json::object();
-        struct Item { const ReleaseFile* file; fs::path target, part; };
+        struct Item { const ReleaseFile* file; fs::path target, part; bool ready; };
         std::vector<Item> wanted;
         std::set<std::string> listed;
         std::map<std::string, int> copies;   // per content: each path its own part, the content fetched once
         std::uint64_t total = 0;
         for (const auto& file : manifest.files) {
-            listed.insert(file.path);
+            const auto key = folded(file.path);
+            listed.insert(key);
             const auto target = root / fromUtf8(file.path);
+            if (fs::is_directory(target)) throw std::runtime_error("a folder is where " + file.path + " goes");   // never moved: it may hold a worker's files
             if (fs::is_regular_file(target)) {
                 const auto size = fs::file_size(target);
                 const auto time = writeTime(target);
-                const Json entry = known.value(file.path, Json());
+                const auto spelling = spelled.find(key);
+                const Json entry = spelling == spelled.end() ? Json() : known[spelling->second];
                 std::string have;
                 if (entry.is_object() && entry.value("size", std::uint64_t{0}) == size && entry.value("time", std::int64_t{0}) == time) have = entry.value("sha256", "");
                 if (have.empty()) have = fileSha256(target);
                 if (have == file.sha256) { files[file.path] = {{"size", size}, {"time", time}, {"sha256", have}}; continue; }
             }
             const int copy = copies[file.sha256]++;
-            wanted.push_back({&file, target, root / "update" / (file.sha256 + (copy ? "." + std::to_string(copy) : "") + ".part")});
-            if (!copy) total += file.size;
+            const auto part = root / "update" / (file.sha256 + (copy ? "." + std::to_string(copy) : "") + ".part");
+            const bool ready = !copy && fs::is_regular_file(part) && fileSha256(part) == file.sha256;   // checked before a cut
+            wanted.push_back({&file, target, part, ready});
+            if (!copy && !ready) total += file.size;
         }
         std::vector<std::string> removed;
-        for (auto it = known.begin(); it != known.end(); ++it)
-            if (!listed.count(it.key()) && fs::exists(root / fromUtf8(it.key()))) removed.push_back(it.key());
+        for (const auto& [key, spelling] : spelled)
+            if (!listed.count(key) && fs::is_regular_file(root / fromUtf8(spelling))) removed.push_back(spelling);   // a folder is never moved
+        std::set<std::wstring> wantedParts;   // pieces of older lists go
+        for (const auto& item : wanted) wantedParts.insert(foldedWide(item.part.filename().wstring()));
+        if (fs::is_directory(root / "update"))
+            for (const auto& entry : fs::directory_iterator(root / "update", ignored))
+                if (entry.path().extension() == ".part" && entry.is_regular_file(ignored) && !wantedParts.count(foldedWide(entry.path().filename().wstring())))
+                    fs::remove(entry.path(), ignored);
         if (wanted.empty() && removed.empty()) {
             if (state.value("id", "") != manifest.id || known != files) {
                 state["version"] = manifest.version;
@@ -244,22 +295,36 @@ SyncResult sync(const fs::path& root, const Manifest& manifest, const Fetch& fet
             result.outcome = Outcome::UpToDate;
             return result;
         }
-        // Everything first: nothing in place changes until every differing file is here and right.
+        // Everything first: nothing in place changes until every differing file is here and right. A file that fails is
+        // tried three times (a blip of the link, a virus scanner); one that never comes leaves the checked ones for later.
         std::uint64_t done = 0;
         std::map<std::string, fs::path> fetched;   // content -> its checked part
         for (const auto& item : wanted) {
-            fs::remove(item.part, ignored);   // a piece left by a cut; a folder in its place stays, and the write fails
-            parts.push_back(item.part);
             if (const auto same = fetched.find(item.file->sha256); same != fetched.end()) {   // the same bytes at another path
+                spare.push_back(item.part);
+                fs::remove(item.part, ignored);
                 if (!CopyFileW(same->second.c_str(), item.part.c_str(), FALSE)) throw std::runtime_error("cannot copy " + item.file->path);
                 continue;
             }
-            fetch(*item.file, item.part, [&](std::uint64_t bytes) {
-                done += bytes;
-                result.downloaded += bytes;
-                if (progress) progress(done, total);
-            });
-            if (!fs::is_regular_file(item.part) || fileSha256(item.part) != item.file->sha256) throw std::runtime_error("wrong content for " + item.file->path);
+            for (int attempt = 1; !item.ready; ++attempt) {
+                std::uint64_t got = 0;
+                fs::remove(item.part, ignored);   // a piece left by a cut; a folder in its place stays, and the write fails
+                try {
+                    fetch(*item.file, item.part, [&](std::uint64_t bytes) {
+                        got += bytes;
+                        done += bytes;
+                        result.downloaded += bytes;
+                        if (progress) progress(done, total);
+                    });
+                    if (!fs::is_regular_file(item.part) || fileSha256(item.part) != item.file->sha256) throw std::runtime_error("wrong content for " + item.file->path);
+                    break;
+                } catch (const std::exception&) {
+                    fs::remove(item.part, ignored);
+                    done -= got;
+                    if (attempt == 3) throw;
+                    Sleep(attempt == 1 ? 500 : 2000);
+                }
+            }
             fetched[item.file->sha256] = item.part;
         }
         // The swap: each old file to update\backup, the new one in; a failure puts back everything moved, last first.
@@ -274,7 +339,7 @@ SyncResult sync(const fs::path& root, const Manifest& manifest, const Fetch& fet
                     move(item.target, saved);
                     moved.emplace_back(item.target, saved);
                     replaced.push_back(item.file->path);
-                    if (known.contains(item.file->path)) before[item.file->path] = known[item.file->path];
+                    if (const auto spelling = spelled.find(folded(item.file->path)); spelling != spelled.end()) before[item.file->path] = known[spelling->second];
                 } else {
                     added.push_back(item.file->path);
                 }
@@ -293,7 +358,7 @@ SyncResult sync(const fs::path& root, const Manifest& manifest, const Fetch& fet
             for (auto it = moved.rbegin(); it != moved.rend(); ++it) MoveFileExW(it->second.c_str(), it->first.c_str(), MOVEFILE_REPLACE_EXISTING);
             throw;
         }
-        parts.clear();
+        spare.clear();
         const std::string fromId = state.value("id", "");
         state["last"] = {{"from_version", state.value("version", "")}, {"from_id", fromId}, {"to_version", manifest.version}, {"to_id", manifest.id},
                          {"replaced", replaced}, {"added", added}, {"removed", gone}, {"before", before}};
@@ -307,7 +372,7 @@ SyncResult sync(const fs::path& root, const Manifest& manifest, const Fetch& fet
         return result;
     } catch (const std::exception& error) {
         std::error_code ignored;
-        for (const auto& part : parts) fs::remove(part, ignored);
+        for (const auto& part : spare) fs::remove(part, ignored);
         result.outcome = Outcome::Failed;
         result.error = error.what();
         return result;

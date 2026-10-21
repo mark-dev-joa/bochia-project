@@ -98,6 +98,15 @@ class ReleaseTest(unittest.TestCase):
         for name in ("abc", "0" * 64, "../files", "A" * 64):
             self.assertIsNone(blob(self.storage, name))
 
+    def test_register_refuses_a_release_without_the_programs(self):
+        # final review 2026-10-21: a list without the launcher would make every launcher move itself out of its install
+        for program in ("labeler/BocciaLauncher.exe", "labeler/boccia_labeler.exe"):
+            (self.root / program).unlink()
+            with self.assertRaises(ValueError):
+                register(self.storage, "labeler", self.root, "v1")
+            tree(self.root, {program: FILES[program]})
+        self.assertIsNone(current(self.storage, "labeler"))
+
     def test_no_release_yet(self):
         self.assertIsNone(current(self.storage, "labeler"))
 

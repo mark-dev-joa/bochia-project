@@ -350,11 +350,13 @@ SyncResult syncShowing(const fs::path& root, const Manifest& manifest, const Hub
 }
 
 int install(const fs::path& root, const fs::path& launcher, const Options& options) {
-    if (!installable(root, launcher)) {
+    if (temporaryOrRemovable(root) || !installable(root, launcher)) {   // a zip's temp folder or a USB stick is no place for labels
         if (!options.noWindow) MessageBoxW(nullptr, L"빈 폴더에 넣어 주세요", TITLE, MB_OK | MB_ICONINFORMATION);
         return NotEmpty;
     }
     auto settings = boccia::labeler::loadLabelerSettings();
+    const auto labeler = root / "labeler" / "boccia_labeler.exe";
+    const bool installed = fs::is_regular_file(labeler) && !installedVersion(root).empty();
     const auto ask = [&]() {   // the settings window; false when it was closed or cannot be shown
         if (options.noWindow) return false;
         SettingsWindow window(settings, false);
@@ -362,17 +364,18 @@ int install(const fs::path& root, const fs::path& launcher, const Options& optio
         boccia::labeler::saveLabelerSettings(settings);
         return true;
     };
-    if ((settings.worker.empty() || settings.token.empty()) && !ask()) return options.noWindow ? WrongCode : Done;
-    const auto labeler = root / "labeler" / "boccia_labeler.exe";
-    const bool installed = fs::is_regular_file(labeler) && !installedVersion(root).empty();
-    if (!(installed && running(labeler))) {   // the labeler of this install is not open: its files may change
+    // Without the hub's answer an installed labeler still starts, off the hub (final review: a replaced invite code).
+    const bool asked = !(settings.worker.empty() || settings.token.empty()) || ask();
+    if (!asked && !installed) return options.noWindow ? WrongCode : Done;
+    if (asked && !(installed && running(labeler))) {   // the labeler of this install is not open: its files may change
         for (;;) {
             Manifest manifest;
             const HubAddress hub{settings.hubAddress, settings.token};
             const auto answer = fetchManifest(hub, "labeler", manifest);
             if (answer == Answer::Unauthorized) {
-                if (!ask()) return options.noWindow ? WrongCode : Done;
-                continue;
+                if (ask()) continue;
+                if (installed) break;
+                return options.noWindow ? WrongCode : Done;
             }
             if (answer == Answer::Ok) {
                 const auto result = syncShowing(root, manifest, hub, options.noWindow);

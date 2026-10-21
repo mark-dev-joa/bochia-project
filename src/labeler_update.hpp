@@ -13,7 +13,9 @@
 namespace boccia::update {
 struct ReleaseFile { std::string path; std::uint64_t size = 0; std::string sha256; };   // path: relative, '/'-separated, UTF-8
 struct Manifest { std::string app, id, version; std::vector<ReleaseFile> files; };
-Manifest parseManifest(const nlohmann::json& json);            // std::runtime_error on an unsafe path or a malformed hash
+// std::runtime_error on an unsafe or worker-folder path (labeler/data, labeler/logs, update), a malformed hash, two paths
+// equal but for case, or a list without BocciaLauncher.exe and labeler/boccia_labeler.exe.
+Manifest parseManifest(const nlohmann::json& json);
 std::string fileSha256(const std::filesystem::path& file);      // lower-case hex
 std::string sha256Hex(std::string_view bytes);
 
@@ -26,6 +28,8 @@ struct SyncResult { Outcome outcome = Outcome::Failed; std::string error; std::u
 
 // A launcher install (update\state.json), or a folder that holds nothing but the launcher and hidden or system files.
 bool installable(const std::filesystem::path& root, const std::filesystem::path& launcher);
+// Under %TEMP% (a launcher run from inside a zip is extracted alone there) or on a removable drive: no place for an install.
+bool temporaryOrRemovable(const std::filesystem::path& root);
 // Makes the install under `root` the manifest's: nothing in place changes until every differing file is fetched and right.
 SyncResult sync(const std::filesystem::path& root, const Manifest& manifest, const Fetch& fetch, const Progress& progress);
 bool pendingCheck(const std::filesystem::path& root);        // the last sync replaced a version whose first start is not yet seen

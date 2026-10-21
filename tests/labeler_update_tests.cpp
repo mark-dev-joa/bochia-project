@@ -6,7 +6,10 @@
 #include <algorithm>
 #include <cstdio>
 #include <chrono>
+#include <functional>
 #include <memory>
+#include <set>
+#include <vector>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -241,6 +244,111 @@ void revert_restores_the_files_before() {
     check(revertLastUpdate(root).empty(), "nothing more to revert");
 }
 
+// ---- the final review's findings (2026-10-21): the list's shape is checked by the launcher too, paths compare as
+// Windows does, a cut keeps the pieces already checked, and short failures are tried again
+
+bool throws(const std::function<void()>& work) {
+    try { work(); } catch (const std::exception&) { return true; }
+    return false;
+}
+nlohmann::json listWith(std::initializer_list<const char*> paths) {
+    nlohmann::json list = {{"app", "labeler"}, {"id", "v1"}, {"version", "v1"}, {"files", nlohmann::json::array()}};
+    for (const char* path : paths) list["files"].push_back({{"path", path}, {"size", 1}, {"sha256", std::string(64, 'a')}});
+    return list;
+}
+
+void a_list_without_the_programs_is_refused() {
+    check(!throws([] { parseManifest(listWith({"BocciaLauncher.exe", "labeler/boccia_labeler.exe"})); }), "a list with both programs is taken");
+    check(throws([] { parseManifest(listWith({"labeler/boccia_labeler.exe", "labeler/a.dll"})); }), "a list without the launcher must be refused");
+    check(throws([] { parseManifest(listWith({"BocciaLauncher.exe", "labeler/a.dll"})); }), "a list without the labeler must be refused");
+}
+
+void paths_into_worker_folders_are_refused() {
+    for (const char* path : {"labeler/data", "labeler/data/x", "Labeler/Logs/y", "update/state.json", "UPDATE"})
+        check(throws([&] { parseManifest(listWith({"BocciaLauncher.exe", "labeler/boccia_labeler.exe", path})); }), std::string("a list must not reach ") + path);
+}
+
+void two_paths_equal_but_for_case_are_refused() {
+    check(throws([] { parseManifest(listWith({"BocciaLauncher.exe", "labeler/boccia_labeler.exe", "labeler/License.txt", "labeler/license.txt"})); }),
+          "two paths that differ only by case are one file on Windows");
+}
+
+void a_folder_at_a_file_path_is_not_moved() {
+    Scratch scratch("folder");
+    const auto root = installed(scratch);
+    write(root / "labeler" / "thing" / "inside.txt", "mine");
+    auto release = first();
+    release.files["labeler/thing"] = "a file now";
+    check(sync(root, release.manifest("v2"), release.fetch(), {}).outcome == Outcome::Failed, "a folder where a file goes must fail the update");
+    check(read(root / "labeler" / "thing" / "inside.txt") == "mine", "and the folder must stay as it is");
+}
+
+void a_case_only_rename_keeps_the_file() {
+    Scratch scratch("case");
+    const auto root = scratch.path / "root";
+    write(root / "BocciaLauncher.exe", "launcher");
+    auto v1 = first();
+    v1.files["labeler/License.txt"] = "license one";
+    check(sync(root, v1.manifest("v1"), v1.fetch(), {}).outcome == Outcome::Updated, "v1");
+    auto v2 = first();
+    v2.files["labeler/license.txt"] = "license one";
+    check(sync(root, v2.manifest("v2"), v2.fetch(), {}).outcome != Outcome::Failed && read(root / "labeler" / "license.txt") == "license one",
+          "a case-only rename must keep the file");
+    auto v3 = first();
+    v3.files["labeler/LICENSE.txt"] = "license two";
+    check(sync(root, v3.manifest("v3"), v3.fetch(), {}).outcome == Outcome::Updated && read(root / "labeler" / "license.txt") == "license two", "new bytes under a new case");
+    check(revertLastUpdate(root) == "v3" && read(root / "labeler" / "license.txt") == "license one", "the revert brings back the bytes before");
+}
+
+void a_cut_keeps_the_checked_pieces() {
+    Scratch scratch("pieces");
+    const auto root = installed(scratch);
+    auto release = first();
+    release.files["labeler/one.dll"] = "the first new file";
+    release.files["labeler/two.dll"] = "the second new file";
+    const auto plain = release.fetch();
+    const Fetch cut = [&](const ReleaseFile& file, const fs::path& part, const std::function<void(std::uint64_t)>& received) {
+        if (file.path == "labeler/two.dll") throw std::runtime_error("the link broke");
+        plain(file, part, received);
+    };
+    check(sync(root, release.manifest("v2"), cut, {}).outcome == Outcome::Failed, "a cut must fail");
+    check(fs::exists(root / "update" / (sha256Hex("the first new file") + ".part")), "the piece already checked must stay for the next start");
+    std::set<std::string> fetched;
+    const Fetch counting = [&](const ReleaseFile& file, const fs::path& part, const std::function<void(std::uint64_t)>& received) {
+        fetched.insert(file.path);
+        plain(file, part, received);
+    };
+    check(sync(root, release.manifest("v2"), counting, {}).outcome == Outcome::Updated, "the next start finishes");
+    check(fetched == std::set<std::string>{"labeler/two.dll"} && read(root / "labeler" / "one.dll") == "the first new file", "only the missing piece comes again");
+}
+
+void a_fetch_that_fails_once_is_retried() {
+    Scratch scratch("retry");
+    const auto root = installed(scratch);
+    auto release = first();
+    release.files["labeler/a.dll"] = "a v2";
+    const auto plain = release.fetch();
+    int attempts = 0;
+    const Fetch flaky = [&](const ReleaseFile& file, const fs::path& part, const std::function<void(std::uint64_t)>& received) {
+        if (file.path == "labeler/a.dll" && attempts++ == 0) throw std::runtime_error("a blip");
+        plain(file, part, received);
+    };
+    check(sync(root, release.manifest("v2"), flaky, {}).outcome == Outcome::Updated && attempts == 2 && read(root / "labeler" / "a.dll") == "a v2", "one failure must be tried again");
+}
+
+void a_briefly_locked_target_moves_after_a_retry() {
+    Scratch scratch("brief");
+    const auto root = installed(scratch);
+    auto release = first();
+    release.files["labeler/a.dll"] = "a v2";
+    const HANDLE held = CreateFileW((root / "labeler" / "a.dll").c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    check(held != INVALID_HANDLE_VALUE, "could not hold a.dll open");
+    std::thread letGo([held] { Sleep(400); CloseHandle(held); });   // as a virus scanner holds a new file for a moment
+    const auto result = sync(root, release.manifest("v2"), release.fetch(), {});
+    letGo.join();
+    check(result.outcome == Outcome::Updated && read(root / "labeler" / "a.dll") == "a v2", "a lock that goes away within the wait must not fail the update: " + result.error);
+}
+
 // ---- over a real hub (Task 4): python hub/hub.py with a release registered by `boccia-hub release`
 
 std::wstring wide(const std::string& text) {
@@ -397,10 +505,14 @@ int runWith(const fs::path& appdata, std::wstring command, const fs::path& folde
     return ended ? static_cast<int>(code) : -1;
 }
 
+// The launcher refuses folders under %TEMP% (final review), so its roots are made under build-labeler (git ignores it).
 struct LauncherRun {
     fs::path root, appdata, desk;
     LauncherRun(const Scratch& scratch, const std::string& folder)
-        : root(scratch.path / folder), appdata(scratch.path / "appdata"), desk(scratch.path / "desk") {
+        : root(fs::path(BOCCIA_TEST_ROOT) / "build-labeler" / "launcher-tests" / (scratch.path.filename().string() + "-" + folder)),
+          appdata(scratch.path / "appdata"), desk(scratch.path / "desk") {
+        std::error_code ignored;
+        fs::remove_all(root, ignored);
         fs::create_directories(root);
         fs::create_directories(desk);
         fs::copy_file(BOCCIA_LAUNCHER_EXE, root / "BocciaLauncher.exe", fs::copy_options::overwrite_existing);
@@ -418,6 +530,9 @@ struct LauncherRun {
         std::snprintf(name, sizeof name, "labeler-%04d-%02d-%02d.log", now.wYear, now.wMonth, now.wDay);
         return read(root / "labeler" / "logs" / name);
     }
+    ~LauncherRun() { std::error_code ignored; fs::remove_all(root, ignored); }
+    LauncherRun(const LauncherRun&) = delete;
+    LauncherRun& operator=(const LauncherRun&) = delete;
     int ran() const {   // how many times the fake labeler started
         const auto text = read(root / "labeler" / "ran.txt");
         return static_cast<int>(std::count(text.begin(), text.end(), '\n'));
@@ -533,6 +648,37 @@ void launcher_updates_itself() {
     check(read(hub.launcher.root / "update" / "backup" / "BocciaLauncher.exe") == before, "the launcher before goes to the backup");
 }
 
+
+void launcher_refuses_a_temp_folder() {   // final review: run from inside a zip, the launcher is extracted alone into %TEMP%
+    Scratch scratch("temp");
+    const auto root = scratch.path / "Temp1_BocciaLauncher.zip";
+    fs::create_directories(root);
+    fs::copy_file(BOCCIA_LAUNCHER_EXE, root / "BocciaLauncher.exe");
+    const int code = runWith(scratch.path / "appdata", L"\"" + (root / "BocciaLauncher.exe").wstring() + L"\" --no-window --shortcut-folder \"" + (scratch.path / "desk").wstring() + L"\"", root);
+    check(code == 5 && !fs::exists(root / "labeler"), "a folder under %TEMP% must be refused (5), got " + std::to_string(code));
+}
+
+void wrong_code_still_starts_the_installed_labeler() {   // final review: a worker whose code was replaced keeps the labeler
+    LauncherHub hub("code-installed", "0 0");
+    check(hub.launcher.run() == 0, "v1");
+    hub.launcher.settings(hub.setup.hub->address(), "nope");
+    check(hub.launcher.run() == 0 && hub.launcher.ran() == 2, "an installed labeler must start though its invite code was replaced");
+}
+
+void hub_off_starts_the_installed_labeler() {
+    LauncherHub hub("off-installed", "0 0");
+    check(hub.launcher.run() == 0, "v1");
+    hub.setup.hub->stop();
+    check(hub.launcher.run() == 0 && hub.launcher.ran() == 2, "with the hub off the installed labeler must start");
+}
+
+void hub_off_without_an_install_exits_3() {
+    Scratch scratch("off-empty");
+    LauncherRun launcher(scratch, "install");
+    launcher.settings("127.0.0.1:9", "token");
+    check(launcher.run() == 3 && !fs::exists(launcher.root / "labeler"), "no hub and nothing installed ends with 3");
+}
+
 void running_labeler_is_not_updated() {
     LauncherHub hub("running", "0 5000");
     check(hub.launcher.run(L"--sync-only") == 0, "v1, not started");
@@ -553,47 +699,65 @@ void running_labeler_is_not_updated() {
 }
 
 int main() {
-    try {
-        first_install_places_every_file();
-        second_sync_downloads_nothing();
-        only_the_changed_file_comes();
-        dropped_file_goes_to_backup();
-        bad_hash_changes_nothing();
-        locked_target_rolls_back();
-        data_and_logs_stay();
-        same_content_twice_installs();
-        not_empty_folder_is_not_installable();
-        second_sync_on_the_same_root_is_busy();
-        unwritable_part_changes_nothing();
-        revert_restores_the_files_before();
-        if (!pythonAvailable()) {
-            std::cout << "SKIP: the tests over a hub need python\n";
-        } else {
-            installs_from_the_hub();
-            wrong_token_is_unauthorized();
-            no_release_is_no_release();
-            hub_off_is_unreachable();
-            interrupted_download_changes_nothing();
-            korean_root_installs();
-            CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-            launcher_installs_and_starts();
-            launcher_dev_mode_only_starts();
-            capture_beside_the_labeler_does_not_start_it();
-            launcher_refuses_a_full_folder();
-            wrong_token_exits_4();
-            crash_within_ten_seconds_reverts();
-            quick_close_is_kept();
-            first_install_makes_the_shortcut();
-            launcher_updates_itself();
-            running_labeler_is_not_updated();
-        }
-        std::cout << "PASS: sync, backup and revert: first install, nothing twice, the changed file only, dropped files, wrong hash, locked target, "
-                     "data and logs, the same content twice, empty folder rule, busy, unwritable part, revert; over a hub: install, wrong code, no release, hub off, cut download, "
-                     "Korean folder; the launcher: install, beside the labeler, capture beside it, full folder, wrong code, revert, quick close, shortcut, "
-                     "itself, running labeler\n";
-        return 0;
-    } catch (const std::exception& error) {
-        std::cout << "FAIL: " << error.what() << "\n";
-        return 1;
+    std::vector<std::string> failed;
+    int count = 0;
+    const auto run = [&](const char* name, void (*test)()) {   // every test runs; all failures are told
+        ++count;
+        try { test(); } catch (const std::exception& error) { failed.push_back(std::string(name) + ": " + error.what()); }
+    };
+#define RUN(test) run(#test, test)
+    RUN(first_install_places_every_file);
+    RUN(second_sync_downloads_nothing);
+    RUN(only_the_changed_file_comes);
+    RUN(dropped_file_goes_to_backup);
+    RUN(bad_hash_changes_nothing);
+    RUN(locked_target_rolls_back);
+    RUN(data_and_logs_stay);
+    RUN(same_content_twice_installs);
+    RUN(not_empty_folder_is_not_installable);
+    RUN(second_sync_on_the_same_root_is_busy);
+    RUN(unwritable_part_changes_nothing);
+    RUN(revert_restores_the_files_before);
+    RUN(a_list_without_the_programs_is_refused);
+    RUN(paths_into_worker_folders_are_refused);
+    RUN(two_paths_equal_but_for_case_are_refused);
+    RUN(a_folder_at_a_file_path_is_not_moved);
+    RUN(a_case_only_rename_keeps_the_file);
+    RUN(a_cut_keeps_the_checked_pieces);
+    RUN(a_fetch_that_fails_once_is_retried);
+    RUN(a_briefly_locked_target_moves_after_a_retry);
+    if (!pythonAvailable()) {
+        std::cout << "SKIP: the tests over a hub need python\n";
+    } else {
+        RUN(installs_from_the_hub);
+        RUN(wrong_token_is_unauthorized);
+        RUN(no_release_is_no_release);
+        RUN(hub_off_is_unreachable);
+        RUN(interrupted_download_changes_nothing);
+        RUN(korean_root_installs);
+        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        RUN(launcher_installs_and_starts);
+        RUN(launcher_dev_mode_only_starts);
+        RUN(capture_beside_the_labeler_does_not_start_it);
+        RUN(launcher_refuses_a_full_folder);
+        RUN(launcher_refuses_a_temp_folder);
+        RUN(wrong_token_exits_4);
+        RUN(wrong_code_still_starts_the_installed_labeler);
+        RUN(hub_off_starts_the_installed_labeler);
+        RUN(hub_off_without_an_install_exits_3);
+        RUN(crash_within_ten_seconds_reverts);
+        RUN(quick_close_is_kept);
+        RUN(first_install_makes_the_shortcut);
+        RUN(launcher_updates_itself);
+        RUN(running_labeler_is_not_updated);
     }
+#undef RUN
+    std::error_code ignored;
+    fs::remove_all(fs::path(BOCCIA_TEST_ROOT) / "build-labeler" / "launcher-tests", ignored);
+    if (failed.empty()) {
+        std::cout << "PASS: " << count << " tests of the update engine, the hub download and the launcher\n";
+        return 0;
+    }
+    for (const auto& line : failed) std::cout << "FAIL: " << line << "\n";
+    return 1;
 }

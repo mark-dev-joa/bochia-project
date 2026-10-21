@@ -110,6 +110,9 @@ def register(storage, app, root, version=None):
     files = release_files(root, app)
     if not files:
         raise ValueError(f"nothing to register in {root}")
+    missing = {"BocciaLauncher.exe", "labeler/boccia_labeler.exe"} - {path for path, _ in files}
+    if missing:   # a list without the launcher would make every launcher move itself out of its install
+        raise ValueError(f"a labeler release needs {', '.join(sorted(missing))}")
     version = labeler_version(root) if version is None else version.strip()
     ident = version_id(version)
     if not ident:
