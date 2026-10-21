@@ -150,30 +150,30 @@ std::wstring text(HWND edit) {
     return trimmed(value);
 }
 
-// 이름 · 초대 코드 · 허브 주소 · 시작. The three fields of the labeler's own worker dialog, saved to the same file.
+// 초대 코드 · 허브 주소 · 시작. The fields of the labeler's own worker dialog, saved to the same file. No name: the invite
+// code names the worker and the hub tells it (2026-10-21: a name typed apart from the invite's kept a worker out).
 struct SettingsWindow {
     Window window;
-    HWND name = nullptr, code = nullptr, address = nullptr;
+    HWND code = nullptr, address = nullptr;
     SettingsWindow(const LabelerSettings& settings, bool offScreen) {
-        open(window, 360, 246, true, offScreen);
-        control(window, L"STATIC", L"이름", 0, 20, 16, 320, 18, 0);
-        name = control(window, L"EDIT", wide(settings.worker), ES_AUTOHSCROLL | WS_TABSTOP, 20, 36, 320, 26, 10);
-        control(window, L"STATIC", L"초대 코드", 0, 20, 76, 320, 18, 0);
-        code = control(window, L"EDIT", wide(settings.token), ES_AUTOHSCROLL | WS_TABSTOP, 20, 96, 320, 26, 11);
-        control(window, L"STATIC", L"허브 주소", 0, 20, 136, 320, 18, 0);
-        address = control(window, L"EDIT", wide(settings.hubAddress), ES_AUTOHSCROLL | WS_TABSTOP, 20, 156, 320, 26, 12);
-        control(window, L"BUTTON", L"시작", BS_DEFPUSHBUTTON | WS_TABSTOP, 240, 200, 100, 30, IDOK);
+        open(window, 360, 186, true, offScreen);
+        control(window, L"STATIC", L"초대 코드", 0, 20, 16, 320, 18, 0);
+        code = control(window, L"EDIT", wide(settings.token), ES_AUTOHSCROLL | WS_TABSTOP, 20, 36, 320, 26, 11);
+        control(window, L"STATIC", L"허브 주소", 0, 20, 76, 320, 18, 0);
+        address = control(window, L"EDIT", wide(settings.hubAddress), ES_AUTOHSCROLL | WS_TABSTOP, 20, 96, 320, 26, 12);
+        control(window, L"BUTTON", L"시작", BS_DEFPUSHBUTTON | WS_TABSTOP, 240, 140, 100, 30, IDOK);
         ShowWindow(window.hwnd, offScreen ? SW_SHOWNOACTIVATE : SW_SHOW);
-        if (!offScreen) SetFocus(text(name).empty() ? name : code);   // off screen it must not take the keyboard from the worker's window
+        if (!offScreen) SetFocus(code);   // off screen it must not take the keyboard from the worker's window
     }
     ~SettingsWindow() { DestroyWindow(window.hwnd); }
     bool ask(LabelerSettings& settings) {   // false: closed
         while (loop(window)) {
             HWND empty = nullptr;
-            for (const HWND field : {name, code, address}) if (!empty && text(field).empty()) empty = field;
+            for (const HWND field : {code, address}) if (!empty && text(field).empty()) empty = field;
             if (empty) { MessageBeep(MB_ICONWARNING); SetFocus(empty); continue; }
-            settings.worker = utf8(text(name));
-            settings.token = utf8(text(code));
+            const std::string token = utf8(text(code));
+            if (token != settings.token) settings.worker.clear();   // the name was the old code's; the hub names the new one
+            settings.token = token;
             settings.hubAddress = utf8(text(address));
             return true;
         }
@@ -349,6 +349,19 @@ SyncResult syncShowing(const fs::path& root, const Manifest& manifest, const Hub
     return result;
 }
 
+// The name the hub knows for the invite code goes into the settings, over one typed before. A hub from before /me counts
+// as Ok: the name stays as it is, and the labeler takes the hub's when it registers.
+Answer takeName(const HubAddress& hub, LabelerSettings& settings) {
+    std::string worker;
+    const auto answer = fetchWorker(hub, worker);
+    if (answer == Answer::NoRelease) return Answer::Ok;
+    if (answer == Answer::Ok && worker != settings.worker) {
+        settings.worker = worker;
+        try { boccia::labeler::saveLabelerSettings(settings); } catch (const std::exception&) {}   // the labeler takes it again
+    }
+    return answer;
+}
+
 int install(const fs::path& root, const fs::path& launcher, const Options& options) {
     if (temporaryOrRemovable(root) || !installable(root, launcher)) {   // a zip's temp folder or a USB stick is no place for labels
         if (!options.noWindow) MessageBoxW(nullptr, L"빈 폴더에 넣어 주세요", TITLE, MB_OK | MB_ICONINFORMATION);
@@ -365,13 +378,14 @@ int install(const fs::path& root, const fs::path& launcher, const Options& optio
         return true;
     };
     // Without the hub's answer an installed labeler still starts, off the hub (final review: a replaced invite code).
-    const bool asked = !(settings.worker.empty() || settings.token.empty()) || ask();
+    const bool asked = !settings.token.empty() || ask();
     if (!asked && !installed) return options.noWindow ? WrongCode : Done;
     if (asked && !(installed && running(labeler))) {   // the labeler of this install is not open: its files may change
         for (;;) {
             Manifest manifest;
             const HubAddress hub{settings.hubAddress, settings.token};
-            const auto answer = fetchManifest(hub, "labeler", manifest);
+            auto answer = takeName(hub, settings);
+            if (answer == Answer::Ok) answer = fetchManifest(hub, "labeler", manifest);
             if (answer == Answer::Unauthorized) {
                 if (ask()) continue;
                 if (installed) break;
@@ -421,7 +435,6 @@ int capture(const Options& options) {
     HWND hwnd = nullptr;
     if (options.view == L"settings") {
         LabelerSettings sample;
-        sample.worker = "홍길동";
         sample.token = "k7Qp2mX9vR4tL8wZ";
         settings = std::make_unique<SettingsWindow>(sample, true);
         hwnd = settings->window.hwnd;

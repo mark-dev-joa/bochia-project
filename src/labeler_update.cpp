@@ -514,6 +514,21 @@ Answer fetchManifest(const HubAddress& hub, const std::string& app, Manifest& ou
     }
 }
 
+Answer fetchWorker(const HubAddress& hub, std::string& worker) {
+    const Get answer(hub, L"/me");
+    if (answer.status == 401) return Answer::Unauthorized;
+    if (answer.status == 403 || answer.status == 404) return Answer::NoRelease;   // a hub from before /me
+    if (answer.status != 200) return Answer::Unreachable;
+    std::string body;
+    if (!answer.read([&](const char* data, DWORD size) { body.append(data, size); })) return Answer::Unreachable;
+    try {
+        worker = Json::parse(body).value("worker", "");
+    } catch (const std::exception&) {
+        return Answer::NoRelease;
+    }
+    return worker.empty() ? Answer::NoRelease : Answer::Ok;
+}
+
 Fetch hubFetch(const HubAddress& hub) {
     return [hub](const ReleaseFile& file, const fs::path& part, const std::function<void(std::uint64_t)>& received) {
         const Get answer(hub, L"/releases/files/" + widen(file.sha256));

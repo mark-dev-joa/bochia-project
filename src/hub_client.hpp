@@ -53,6 +53,7 @@ public:
     State state() const;
     std::string lastError() const;
     std::chrono::steady_clock::time_point lastSeen() const;   // the last answer from the hub
+    std::string worker() const;                   // the name the hub gave at the last registration (the invite code names the worker), else the settings'
     void setSettings(Settings settings);          // a new address/token/name: reconnects
 private:
     struct Core;

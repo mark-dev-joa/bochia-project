@@ -28,7 +28,8 @@ std::string trimmed(const char* text) {
 }
 }
 
-// --hub --worker --token: a hidden check joins with these instead of the PC's settings; nothing is saved.
+// --hub [--worker] --token: a hidden check joins with these instead of the PC's settings; nothing is saved. Without
+// --worker the hub names it, as it names a worker who gave only the invite code.
 void Application::hubForCheck(const std::string& address, const std::string& worker, const std::string& token, int waitSeconds) {
     settings_.hubAddress = address; settings_.worker = worker; settings_.token = token;
     hubWait_ = std::chrono::seconds(std::max(0, waitSeconds));
@@ -36,13 +37,14 @@ void Application::hubForCheck(const std::string& address, const std::string& wor
 }
 
 void Application::startHub() {
-    if (settings_.worker.empty() || settings_.hubAddress.empty()) { setLogSink(nullptr); hub_.reset(); return; }
+    if (settings_.token.empty() || settings_.hubAddress.empty()) { setLogSink(nullptr); hub_.reset(); return; }
     hub::Settings made;
     made.address = settings_.hubAddress; made.token = settings_.token; made.worker = settings_.worker;
     made.pc = hub::hostName(); made.account = hub::accountName(); made.app = "labeler"; made.version = boccia::versionString();
     hubStarted_ = std::chrono::steady_clock::now();
     // The mark the backfill reads: lines after it are this worker's, lines after another worker's mark are not (hub_client.cpp).
-    logLine("작업자 · " + made.worker + "@" + made.pc + " · 버전 " + made.version);
+    // Without a name yet, the hub's comes when it registers us, and the mark with it (hubTick).
+    if (!made.worker.empty()) logLine("작업자 · " + made.worker + "@" + made.pc + " · 버전 " + made.version);
     if (hub_) { hub_->setSettings(made); return; }
     wchar_t location[32768]{};
     GetEnvironmentVariableW(L"LOCALAPPDATA", location, 32768);
@@ -59,8 +61,8 @@ bool Application::hubSettled() const {
     return since >= hubWait_ && (hub_->state() != hub::Client::State::Offline || since > std::chrono::seconds(5));
 }
 
-// Hidden check of the worker dialog (2026-10-20 user report: after the name, the other fields could not be reached).
-// Clicks go through ImGui's own input queue of this hidden window, never to a window on the screen.
+// Hidden check of the worker dialog (2026-10-20 user report: after the first field, the others could not be reached; the
+// name field went on 2026-10-21). Clicks go through ImGui's own input queue of this hidden window, never to the screen.
 bool Application::workerDialogCheckStep(int step) {
     auto& io = ImGui::GetIO();
     const auto click = [&](int field) {
@@ -71,17 +73,12 @@ bool Application::workerDialogCheckStep(int step) {
     case 0: openWorkerDialog(); return true;
     case 1: case 2: case 3: return true;   // the dialog appears and its first field takes the keyboard
     case 4:
-        if (ImGui::GetActiveID() != workerFieldIds_[0]) throw std::runtime_error("worker dialog: the name field must have the keyboard when the dialog opens");
+        if (ImGui::GetActiveID() != workerFieldIds_[0]) throw std::runtime_error("worker dialog: 초대 코드 must have the keyboard when the dialog opens");
         click(1); return true;
     case 5: io.AddMouseButtonEvent(0, false); return true;
     case 6: case 7: return true;
     case 8:
-        if (ImGui::GetActiveID() != workerFieldIds_[1]) throw std::runtime_error("worker dialog: a click on 초대 코드 must keep the keyboard there");
-        click(2); return true;
-    case 9: io.AddMouseButtonEvent(0, false); return true;
-    case 10: case 11: return true;
-    case 12:
-        if (ImGui::GetActiveID() != workerFieldIds_[2]) throw std::runtime_error("worker dialog: a click on 허브 주소 must keep the keyboard there");
+        if (ImGui::GetActiveID() != workerFieldIds_[1]) throw std::runtime_error("worker dialog: a click on 허브 주소 must keep the keyboard there");
         workerDialog_ = false;
         return false;
     default: return false;
@@ -89,7 +86,6 @@ bool Application::workerDialogCheckStep(int step) {
 }
 
 void Application::openWorkerDialog() {
-    fill(workerName_, sizeof workerName_, settings_.worker);
     fill(workerToken_, sizeof workerToken_, settings_.token);
     fill(hubAddress_, sizeof hubAddress_, settings_.hubAddress);
     workerDialog_ = true;
@@ -97,16 +93,18 @@ void Application::openWorkerDialog() {
 
 void Application::saveWorker() {
     auto settings = loadLabelerSettings();   // the file as it is now, so the 실행 장치 stays
-    settings.worker = trimmed(workerName_); settings.token = trimmed(workerToken_); settings.hubAddress = trimmed(hubAddress_);
+    settings.token = trimmed(workerToken_); settings.hubAddress = trimmed(hubAddress_);
+    settings.worker = settings.token == settings_.token ? settings_.worker : std::string();   // a new code: the hub names its worker
     if (settings.hubAddress.empty()) settings.hubAddress = LabelerSettings{}.hubAddress;
     try { saveLabelerSettings(settings); } catch (const std::exception& error) { error_ = error.what(); return; }
     settings_.worker = settings.worker; settings_.token = settings.token; settings_.hubAddress = settings.hubAddress;
-    logLine(settings.worker.empty() ? std::string("작업자 설정 · 없음") : "작업자 설정 · " + settings.worker + " · " + settings.hubAddress);
+    logLine(settings.token.empty() ? std::string("작업자 설정 · 없음") : "작업자 설정 · " + settings.hubAddress);
     startHub();
     workerDialog_ = false;
 }
 
-// The worker dialog: the name the hub shows, the invite code it gave and where it is. Opens by itself on a PC without a name.
+// The worker dialog: the invite code the hub gave, which names the worker (2026-10-21: no name field, a name typed apart
+// from the invite's kept a worker out), and where the hub is. Opens by itself on a PC without a code.
 void Application::workerPopup() {
     if (workerDialog_ && !ImGui::IsPopupOpen("작업자")) ImGui::OpenPopup("작업자");
     bool close = false;
@@ -114,17 +112,13 @@ void Application::workerPopup() {
         if (!workerDialog_ || close) { workerDialog_ = false; ImGui::CloseCurrentPopup(); }
         const float full = ImGui::GetContentRegionAvail().x;
         const auto remember = [this](int field) { workerFieldIds_[field] = ImGui::GetItemID(); workerFieldMin_[field] = ImGui::GetItemRectMin(); workerFieldMax_[field] = ImGui::GetItemRectMax(); };
-        theme::fieldLabel("이름");
-        theme::textField("##workerName", workerName_, sizeof workerName_, full, ImGui::IsWindowAppearing());   // the keyboard once, when the dialog opens
-        remember(0);
-        ImGui::Dummy({full, 10});
         theme::fieldLabel("초대 코드");
-        theme::textField("##workerToken", workerToken_, sizeof workerToken_, full);
-        remember(1);
+        theme::textField("##workerToken", workerToken_, sizeof workerToken_, full, ImGui::IsWindowAppearing());   // the keyboard once, when the dialog opens
+        remember(0);
         ImGui::Dummy({full, 10});
         theme::fieldLabel("허브 주소");
         theme::textField("##hubAddress", hubAddress_, sizeof hubAddress_, full);
-        remember(2);
+        remember(1);
         if (hub_ && hub_->state() == hub::Client::State::Unauthorized) {
             ImGui::Dummy({full, 8});
             theme::write(ImGui::GetWindowDrawList(), ImGui::GetCursorScreenPos(), theme::warn, "초대 코드 확인", theme::caption);
@@ -193,6 +187,17 @@ void Application::hubTick() {
     const auto now = std::chrono::steady_clock::now();
     if (now - hubTicked_ < std::chrono::milliseconds(500)) return;
     hubTicked_ = now;
+    // The invite code names the worker (2026-10-21): once the hub has registered us, its name is the one the labels carry
+    // (reviewed_by), the progress counts and the backfill's mark tells.
+    if (const auto named = hub_->worker(); !named.empty() && named != settings_.worker) {
+        settings_.worker = named;
+        logLine("작업자 · " + named + "@" + hub::hostName() + " · 버전 " + boccia::versionString());
+        if (config_.rememberUi) {   // a hidden check saves nothing of this PC's
+            try { auto stored = loadLabelerSettings(); if (stored.token == settings_.token) { stored.worker = named; saveLabelerSettings(stored); } }
+            catch (const std::exception&) {}   // kept for this run; the next registration names it again
+        }
+        hubProgressRevision_ = -1;   // this worker's numbers again
+    }
     const std::string page = page_ == Page::Data ? "data" : page_ == Page::Export ? "export" : "review";
     if (projectOpened() && catalog_.is_object()) {   // the progress numbers: again when the labels changed, else every 10 s (the 10-minute window moves)
         const int revision = catalog_.contains("summary") && catalog_["summary"].is_object() ? catalog_["summary"].value("revision", -1) : -1;

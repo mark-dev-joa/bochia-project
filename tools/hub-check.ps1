@@ -1,5 +1,6 @@
 ﻿# Stage-1 end-to-end check of the hub (design/hub/PLAN-1.md Task 6): a hub on a scratch store, two hidden labelers that
 # join as 가 and 나, then the CLI: workers (both joined), send notify, send log, logs, events. Prints PASS or throws.
+# 나 gives only its invite code and takes its name from the hub (2026-10-21); 가 sends its name as labelers did before.
 #   powershell -File tools/hub-check.ps1 [-Workspace <project folder>] [-Labeler <boccia_labeler.exe>]
 # Without -Workspace the labelers sit on the start screen; with one they open its overview.
 param(
@@ -57,7 +58,8 @@ try {
     }
     $view = if ($Workspace) { @('--workspace', ('"' + $Workspace + '"'), '--view', 'overview') } else { @('--view', 'welcome') }
     foreach ($name in '가', '나') {
-        $arguments = @('--smoke-hidden', '--timeout', '90', '--hub', $address, '--worker', $name, '--token', $tokens[$name], '--hub-wait', '25') + $view
+        $named = if ($name -eq '가') { @('--worker', $name) } else { @() }
+        $arguments = @('--smoke-hidden', '--timeout', '90', '--hub', $address) + $named + @('--token', $tokens[$name], '--hub-wait', '25') + $view
         $labelers += Start-Process -FilePath $Labeler -ArgumentList $arguments -PassThru
     }
     $table = WaitFor -Seconds 30 -What 'two labelers joining' -Check {

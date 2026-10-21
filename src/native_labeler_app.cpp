@@ -31,7 +31,7 @@ Application::Application(Configuration config): config_(std::move(config)), poll
         connect();if(!recovery.empty())error_=recovery;
     }
     if(config_.rememberUi){try{wchar_t location[32768]{};GetEnvironmentVariableW(L"LOCALAPPDATA",location,32768);std::ifstream input(std::filesystem::path(location)/"Boccia/labeler-projects.json",std::ios::binary);const auto recent=Json::parse(input);if(recent.is_array())recentProjects_=recent;}catch(...){}}
-    if(config_.rememberUi){loadDevice();if(!settings_.worker.empty())startHub();else openWorkerDialog();}   // the hidden checks keep the CPU and join no hub
+    if(config_.rememberUi){loadDevice();if(!settings_.token.empty())startHub();else openWorkerDialog();}   // the hidden checks keep the CPU and join no hub
     if(startScreen&&std::filesystem::is_regular_file(legacyProject)){const auto path=utf8(legacyProject);bool found=false;for(const auto& item:recentProjects_)found|=item.value("path","")==path;if(!found)recentProjects_.push_back({{"path",path},{"name","기존 라벨 작업"},{"legacy",true}});}
 }
 Application::~Application() {

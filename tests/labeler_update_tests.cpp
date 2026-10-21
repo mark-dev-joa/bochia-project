@@ -418,6 +418,15 @@ void wrong_token_is_unauthorized() {
     check(fetchManifest({setup.hub->address(), "nope"}, "labeler", manifest) == Answer::Unauthorized, "a wrong invite code must be Unauthorized");
 }
 
+void the_hub_names_the_invite_code() {   // 2026-10-21: the worker gives only the code, the hub tells the name
+    Scratch scratch("me");
+    HubSetup setup(scratch);
+    setup.start();
+    std::string worker;
+    check(fetchWorker(setup.address(), worker) == Answer::Ok && worker == "점검", "the hub must name the invite code");
+    check(fetchWorker({setup.hub->address(), "nope"}, worker) == Answer::Unauthorized, "a wrong invite code must be Unauthorized");
+}
+
 void no_release_is_no_release() {
     Scratch scratch("none");
     HubSetup setup(scratch);
@@ -517,8 +526,12 @@ struct LauncherRun {
         fs::create_directories(desk);
         fs::copy_file(BOCCIA_LAUNCHER_EXE, root / "BocciaLauncher.exe", fs::copy_options::overwrite_existing);
     }
-    void settings(const std::string& address, const std::string& token) const {
-        write(appdata / "Boccia" / "labeler-settings.json", "{\"hub\": {\"address\": \"" + address + "\", \"worker\": \"점검\", \"token\": \"" + token + "\"}}");
+    void settings(const std::string& address, const std::string& token, const std::string& worker = "점검") const {   // "": no name
+        write(appdata / "Boccia" / "labeler-settings.json", "{\"hub\": {\"address\": \"" + address + "\", " +
+              (worker.empty() ? std::string() : "\"worker\": \"" + worker + "\", ") + "\"token\": \"" + token + "\"}}");
+    }
+    std::string worker() const {   // the name in the settings as the launcher left them
+        return nlohmann::json::parse(read(appdata / "Boccia" / "labeler-settings.json"))["hub"].value("worker", "");
     }
     int run(const std::wstring& extra = L"") const {
         return runWith(appdata, L"\"" + (root / "BocciaLauncher.exe").wstring() + L"\" --no-window --shortcut-folder \"" + desk.wstring() + L"\" " + extra, root);
@@ -599,6 +612,17 @@ void launcher_refuses_a_full_folder() {
     LauncherRun launcher(scratch, "full");
     write(launcher.root / "note.txt", "mine");
     check(launcher.run() == 5 && !fs::exists(launcher.root / "labeler"), "a folder with other files must be refused (5)");
+}
+
+// 2026-10-21: a worker typed a name apart from the invite's and the hub kept the labeler out; the worker now gives only the
+// invite code and the hub's name goes into the settings, over a name typed before
+void the_launcher_takes_the_name_from_the_hub() {
+    LauncherHub hub("name", "0 0");
+    hub.launcher.settings(hub.setup.hub->address(), hub.setup.token, "");
+    check(hub.launcher.run() == 0 && hub.launcher.ran() == 1, "an invite code without a name must install and start");
+    check(hub.launcher.worker() == "점검", "the hub's name must be in the settings");
+    hub.launcher.settings(hub.setup.hub->address(), hub.setup.token, "엉뚱");
+    check(hub.launcher.run() == 0 && hub.launcher.worker() == "점검", "a name apart from the invite's must give way to it");
 }
 
 void wrong_token_exits_4() {
@@ -731,6 +755,7 @@ int main() {
     } else {
         RUN(installs_from_the_hub);
         RUN(wrong_token_is_unauthorized);
+        RUN(the_hub_names_the_invite_code);
         RUN(no_release_is_no_release);
         RUN(hub_off_is_unreachable);
         RUN(interrupted_download_changes_nothing);
@@ -741,6 +766,7 @@ int main() {
         RUN(capture_beside_the_labeler_does_not_start_it);
         RUN(launcher_refuses_a_full_folder);
         RUN(launcher_refuses_a_temp_folder);
+        RUN(the_launcher_takes_the_name_from_the_hub);
         RUN(wrong_token_exits_4);
         RUN(wrong_code_still_starts_the_installed_labeler);
         RUN(hub_off_starts_the_installed_labeler);

@@ -42,5 +42,7 @@ std::string installedVersion(const std::filesystem::path& root);
 struct HubAddress { std::string address, token; };   // "host:port", the invite code
 enum class Answer { Ok, Unreachable, Unauthorized, NoRelease };
 Answer fetchManifest(const HubAddress& hub, const std::string& app, Manifest& out);   // a list it cannot read counts as NoRelease
+// GET /me: the name the hub knows for the invite code, which names the worker (2026-10-21). A hub without /me: NoRelease.
+Answer fetchWorker(const HubAddress& hub, std::string& worker);
 Fetch hubFetch(const HubAddress& hub);   // streams the file to the part; throws on another answer than 200 or a cut
 }

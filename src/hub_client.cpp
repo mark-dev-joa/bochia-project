@@ -352,15 +352,22 @@ struct Client::Core {
                         {"version", current.version}, {"session", instance}, {"device", extra.device}, {"summary", extra.summary}};
         reply = session.request(current.address, "POST", "/register", wire(body), authHeaders(current));
         if (reply.status != 200) { fail("register", reply); if (reply.status == 401 || reply.status == 403) state = State::Unauthorized; return; }
-        std::string since;
-        try { since = Json::parse(reply.body).value("since", ""); } catch (const std::exception&) { fail("register", reply); return; }
+        std::string since, named;
+        try { const auto answer = Json::parse(reply.body); since = answer.value("since", ""); named = answer.value("worker", ""); }
+        catch (const std::exception&) { fail("register", reply); return; }
+        Settings mine = current;   // the invite code names the worker (2026-10-21): the hub's name from now on, for the backfill too
+        if (!named.empty()) mine.worker = named;
         seen = Clock::now();
-        { std::lock_guard guard(lock); error.clear(); statusDirty = !status.is_null(); }   // a new hub, or a restarted one, gets the status again
+        {
+            std::lock_guard guard(lock);
+            error.clear(); statusDirty = !status.is_null();   // a new hub, or a restarted one, gets the status again
+            if (!named.empty() && settings.token == current.token && settings.address == current.address) settings.worker = named;
+        }
         state = State::Connected;
         wake.notify_all();   // the poller starts
-        if (!backfill(session, current, since)) return;
-        sendOutbox(session, current);
-        if (state == State::Connected) flush(session, current);
+        if (!backfill(session, mine, since)) return;
+        sendOutbox(session, mine);
+        if (state == State::Connected) flush(session, mine);
     }
 };
 
@@ -504,6 +511,7 @@ void Client::finish(const Command& command, bool ok, const std::string& text) {
 Client::State Client::state() const { return core_->state; }
 std::string Client::lastError() const { std::lock_guard guard(core_->lock); return core_->error; }
 Clock::time_point Client::lastSeen() const { return core_->seen; }
+std::string Client::worker() const { std::lock_guard guard(core_->lock); return core_->settings.worker; }
 
 void Client::setSettings(Settings settings) {
     { std::lock_guard guard(core_->lock); core_->settings = std::move(settings); core_->sessionId = newSession(); core_->settingsChanged = true; core_->state = State::Offline; }

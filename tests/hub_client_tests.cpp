@@ -178,6 +178,24 @@ int main() { try {
         check(waitUntil([&] { const auto found = worker(fresh.address(), id); return !found.is_null() && found["status"].value("page", "") == "tools"; }, 3), "a new registration must send the status again without a change");
         std::cout << "other workers' lines skipped, status resent on re-registration\n";
     }
+    {   // 2026-10-21: the invite code names the worker; a client that knows no name takes the hub's, and its backfill counts
+        // the lines after that name's mark as its own
+        writeFile(logPath2, stamp(1, "2030-01-03") + "  작업자 · 다른사람@" + pc + " · 버전 0\n" + stamp(2, "2030-01-03") + "  남의 줄\n"
+                          + stamp(3, "2030-01-03") + "  작업자 · 테스트@" + pc + " · 버전 0\n" + stamp(4, "2030-01-03") + "  내 줄\n");
+        HubProcess hub(temp / "hub5");
+        const std::string token = api(hub.address(), "POST", "/api/invites", Json{{"worker", "테스트"}})["token"];
+        auto unnamed = settings(hub.address(), token);
+        unnamed.worker.clear();
+        Client client(unnamed, outbox, [&] { return logPath2; }, registration);
+        check(waitUntil([&] { return client.state() == Client::State::Connected; }, 3), "a client without a name must get in with its invite code");
+        check(client.worker() == "테스트", "the client must take its name from the hub");
+        check(!worker(hub.address(), id).is_null(), "the hub must list it under the invite's name");
+        std::this_thread::sleep_for(1s);
+        std::vector<std::string> texts;
+        for (const auto& event : api(hub.address(), "GET", idPath + "/events")) texts.push_back(event["text"]);
+        check(texts == std::vector<std::string>{"작업자 · 테스트@" + pc + " · 버전 0", "내 줄"}, "the backfill must count the lines after the hub's name's mark");
+        std::cout << "a client without a name takes the invite's name\n";
+    }
     fs::remove_all(temp);
     std::cout << "PASS: knock, register, status, events with log backfill, commands, outbox, invalid UTF-8 and shutdown\n";
     return 0;

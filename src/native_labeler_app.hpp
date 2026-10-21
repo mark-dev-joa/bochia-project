@@ -223,10 +223,10 @@ private:
     std::chrono::seconds hubWait_{0};                // --hub-wait: a hidden run stays at least this long, so a check can send it commands
     bool workerDialog_ = false;
     std::string hubNotice_;
-    char workerName_[128] = "", workerToken_[128] = "", hubAddress_[256] = "";
-    std::array<ImGuiID, 3> workerFieldIds_{};       // the dialog's three fields as drawn last, for workerDialogCheckStep
-    std::array<ImVec2, 3> workerFieldMin_{}, workerFieldMax_{};
-    void startHub();                                 // the client from settings_, or its new settings; none without a worker name
+    char workerToken_[128] = "", hubAddress_[256] = "";
+    std::array<ImGuiID, 2> workerFieldIds_{};       // the dialog's two fields as drawn last, for workerDialogCheckStep
+    std::array<ImVec2, 2> workerFieldMin_{}, workerFieldMax_{};
+    void startHub();                                 // the client from settings_, or its new settings; none without an invite code
     void hubTick();                                  // at the end of tick(): the status, the registration and the commands
     void openWorkerDialog();
     void workerPopup();
@@ -245,7 +245,7 @@ public:
     bool workerDialogCheckStep(int step);            // hidden check: a click on each later field keeps the keyboard there; false when done
     bool sceneBarIdCheckStep(int step);              // hidden check: no two items of the scene bar share an ImGui ID; false when done
     bool applyPreviousCheckStep();                   // hidden check: the button carries the nearest confirmed labels, then the ones just confirmed
-    void hubForCheck(const std::string& address, const std::string& worker, const std::string& token, int waitSeconds = 0);   // --hub --worker --token: joins with these instead of the settings
+    void hubForCheck(const std::string& address, const std::string& worker, const std::string& token, int waitSeconds = 0);   // --hub [--worker] --token: joins with these instead of the settings
     bool hubSettled() const;                         // no hub, or the hub has answered, or 5 s have passed, and --hub-wait is over: a hidden check may end
     void importStateForCapture(const std::string& state);       // the import dialog while it checks or copies, for a capture
 private:
