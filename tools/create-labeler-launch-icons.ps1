@@ -8,9 +8,18 @@ $legacyLauncherName = (-join ([char[]]@(0xB77C,0xBCA8,0xB7EC,0x20,0xC2E4,0xD589)
 $build = Join-Path $root 'build-labeler/Release/boccia_labeler_launcher.exe'
 if (-not (Test-Path -LiteralPath $build)) { throw 'Build boccia_labeler_launcher first.' }
 $placed = Join-Path $target $launcherName
-# The launcher waits while the labeler runs, so its file is locked then; an unchanged launcher is left as it is.
+$aside = Join-Path $target 'BocciaLauncher-previous.exe'
+if (Test-Path -LiteralPath $aside) { try { Remove-Item -LiteralPath $aside -Force } catch { } }
+# The launcher waits while the labeler runs, so its file is locked then; an unchanged launcher is left as it is, and a
+# changed one moves the running file aside (it can be renamed, not overwritten) and keeps running until it is closed.
+# The hub registration leaves *-previous.exe out (hub/release.py).
 if (-not ((Test-Path -LiteralPath $placed) -and ((Get-FileHash -LiteralPath $build).Hash -eq (Get-FileHash -LiteralPath $placed).Hash))) {
-    Copy-Item -LiteralPath $build -Destination $placed -Force
+    try { Copy-Item -LiteralPath $build -Destination $placed -Force }
+    catch {
+        Move-Item -LiteralPath $placed -Destination $aside -Force
+        Copy-Item -LiteralPath $build -Destination $placed -Force
+        Write-Host 'The launcher is running; it keeps the old file until it is closed.'
+    }
 }
 foreach ($earlier in @('Boccia Labeler.exe', $legacyLauncherName)) {   # this launcher under its earlier names
     $path = Join-Path $target $earlier

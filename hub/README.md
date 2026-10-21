@@ -92,6 +92,8 @@ boccia-hub.cmd release labeler D:\works\bochia\bin\release --storage "D:\Boccia 
 
 ## 동작
 
+- 런처(`design/hub/LAUNCHER.md`)는 초대 코드만으로 `GET /releases/labeler`(지금 버전의 파일 목록)와 `GET /releases/files/<sha256>`
+  (파일, 1 MiB씩 흘려보냄)를 받습니다. `/register`는 필요 없습니다. 코드가 없거나 틀리면 401, 등록 전이거나 모르는 파일이면 404.
 - 앱은 10초마다 `/ping`을 두드리고, 허브가 답하면 `/register`로 붙습니다. 코드가 틀리면(401/403) 설정을 바꿀 때까지 다시 시도하지 않습니다.
 - 붙으면 로그 파일의 마지막 2,000줄 중 허브가 아직 못 받은 줄부터 보냅니다. 앱은 붙을 때마다 `작업자 · 이름@PC · 버전 …` 줄을 로그에 적고, 다른 이름의 그 줄 뒤에 있는 줄은 보내지 않습니다(같은 PC에서 이름을 바꿔도 남의 활동이 섞이지 않음). 로그 줄에 UTF-8이 아닌 바이트가 있으면 U+FFFD로 바꿔 보냅니다. 상태는 바뀔 때만(붙을 때마다 한 번 다시), 활동은 생기는 대로, 파일은 보관함(`%LOCALAPPDATA%\Boccia\hub-outbox`)에 두었다가 올립니다.
 - 명령은 `GET /commands?wait=25`로 기다렸다 받고, 결과를 `POST /commands/<id>/result`로 돌려줍니다. 같은 작업자가 새로 붙으면 옛 접속의 대기는 바로 끝납니다.

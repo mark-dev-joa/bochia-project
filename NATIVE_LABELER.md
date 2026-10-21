@@ -93,6 +93,28 @@
 - 점검: `powershell -File tools/hub-check.ps1`, `build-labeler\Release\hub_client_tests.exe`,
   `python -m unittest hub.tests.test_hub hub.tests.test_cli`.
 
+## 작업자 PC에 설치 (2026-10-21, `design/hub/LAUNCHER.md`)
+
+작업자에게는 `bin\release\labeler\BocciaLauncher.exe` 하나만 줍니다. 같은 파일이 라벨러 옆에서는 지금처럼 라벨러를 띄우기만 하고,
+그 밖의 폴더에서는 허브에서 라벨러를 받아 깝니다.
+
+1. 작업자가 빈 폴더(예: `C:\Boccia`)에 런처를 넣고 켭니다. 다른 파일이 있으면 `빈 폴더에 넣어 주세요`만 뜹니다.
+2. 처음에는 이름 · 초대 코드 · 허브 주소(기본값이 채워져 있음)를 묻고, 라벨러와 같은 설정 파일에 저장합니다.
+3. 허브의 지금 버전을 받아 `labeler\`, `models\`, `cuda\`에 깝니다(처음 약 2.6 GB, 진행 창은 받을 것이 있을 때만). 바탕 화면에
+   `Boccia Labeler` 바로가기를 만들고 라벨러를 띄웁니다.
+4. 다음부터는 켤 때마다 허브와 비교해 바뀐 파일만 받습니다. 허브가 꺼져 있으면 깔린 버전을 그대로 띄우고, 라벨러가 이미 떠 있으면
+   받지 않습니다. 초대 코드가 틀리면 설정 창이 다시 뜹니다.
+5. 새 버전이 10초 안에 오류로 끝나면 바꾼 파일을 `update\backup\`에서 되돌리고, 그 버전은 다시 받지 않으며, 라벨러 로그에
+   `업데이트 되돌림 · <버전>`을 남깁니다(허브 활동에 보임).
+
+받은 파일은 SHA-256이 허브 목록과 같을 때만 제자리에 놓고, 다 받은 뒤에 한꺼번에 바꿉니다. 작업자의 `labeler\data`, 로그, 설정은
+건드리지 않습니다. 이 PC에서는 `tools\collect_release.ps1`이 배포 끝에 그 폴더를 허브 저장소(`-HubStorage`, 기본 `D:\Boccia Hub`)에
+한 버전으로 등록합니다. 허브 서버는 새 `hub.py`로 다시 켜야 `/releases`를 내줍니다.
+
+런처 옵션(점검용): `--no-window`(창 없이, 결과는 종료 코드 0 · 3 허브 없음 · 4 초대 코드 · 5 빈 폴더 아님 · 6 다른 런처 · 7 실패),
+`--sync-only`(받기만), `--shortcut-folder <폴더>`, `--capture <png> --view settings|progress|unreachable`. 점검은
+`labeler_update_tests.exe`(갱신 엔진, 허브를 거친 받기, 런처)입니다.
+
 ## 원형 검출 (2026-10-14)
 
 검수 화면 장면 줄의 **원형 검출**을 누르면 팝업이 뜹니다(`design/labeler-v3/shots/circles.png`, `circles-done.png`).

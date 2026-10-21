@@ -5,6 +5,7 @@
 # tools get their own folder under bin/release, such as bin/release/calibration.
 # A program that is running keeps its file open; that file is moved aside as boccia_labeler-previous.exe so the
 # new build can take its place, and the running window keeps working until it is closed.
+param([string] $HubStorage = 'D:\Boccia Hub')   # where the hub keeps the labeler versions launchers take (design/hub/LAUNCHER.md)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $build = Join-Path $root 'build-labeler/Release'
@@ -39,3 +40,11 @@ foreach ($name in 'efficientsam_ti_encoder.onnx', 'efficientsam_ti_decoder.onnx'
 }
 Get-ChildItem -LiteralPath $target -File -Include '*.exe', '*.dll' | ForEach-Object { '{0,-30} {1:yyyy-MM-dd HH:mm}  {2,6:N1} MB' -f $_.Name, $_.LastWriteTime, ($_.Length / 1MB) }
 Get-ChildItem -LiteralPath (Join-Path $target 'models/efficientsam') -File | ForEach-Object { '{0,-30} {1:yyyy-MM-dd HH:mm}  {2,6:N1} MB' -f ('models/efficientsam/' + $_.Name), $_.LastWriteTime, ($_.Length / 1MB) }
+# The release becomes the labeler version the hub sends to launchers (design/hub/LAUNCHER.md): python and the hub
+# storage are on this PC, the hub itself need not run. A failure leaves the deploy as it is.
+$python = Get-Command python -ErrorAction SilentlyContinue
+if (-not $python) { Write-Warning 'Python not found: this release was not registered with the hub.' }
+else {
+    & $python.Source (Join-Path $root 'hub/cli.py') release labeler (Split-Path -Parent $target) --storage $HubStorage
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'This release was not registered with the hub.' }
+}
