@@ -1,6 +1,9 @@
 // The launcher's update engine (design/hub/PLAN-LAUNCHER.md Tasks 3-5): sync, backup and revert on a scratch folder.
 #include "labeler_update.hpp"
+#include "hub_process.hpp"
 #include <windows.h>
+#include <chrono>
+#include <memory>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -218,6 +221,130 @@ void revert_restores_the_files_before() {
     check(sync(root, release.manifest("v2"), release.fetch(), {}).outcome == Outcome::BadVersion && read(root / "labeler" / "a.dll") == "a v1", "a reverted version is not taken again");
     check(revertLastUpdate(root).empty(), "nothing more to revert");
 }
+
+// ---- over a real hub (Task 4): python hub/hub.py with a release registered by `boccia-hub release`
+
+std::wstring wide(const std::string& text) {
+    const int size = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    std::wstring out(static_cast<size_t>(size), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), size);
+    return out;
+}
+int run(std::wstring command) {
+    STARTUPINFOW startup{}; startup.cb = sizeof startup;
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process)) return -1;
+    WaitForSingleObject(process.hProcess, 300000);
+    DWORD code = 1;
+    GetExitCodeProcess(process.hProcess, &code);
+    CloseHandle(process.hThread); CloseHandle(process.hProcess);
+    return static_cast<int>(code);
+}
+
+// A hub storage with one worker's invite code, its releases registered from trees beside it.
+struct HubSetup {
+    const Scratch& scratch;
+    fs::path storage;
+    std::string token = "launcher-test-token";
+    std::unique_ptr<HubProcess> hub;
+    explicit HubSetup(const Scratch& owner) : scratch(owner), storage(owner.path / "hub") {
+        write(storage / "tokens.json", "{\"" + sha256Hex(token) + "\": \"점검\"}");
+    }
+    void start() { hub = std::make_unique<HubProcess>(storage); }
+    void publish(const Release& release, const std::string& version) {
+        const auto tree = scratch.path / ("tree-" + version);
+        for (const auto& [path, bytes] : release.files) write(path == "BocciaLauncher.exe" ? tree / "labeler" / "BocciaLauncher.exe" : below(tree, path), bytes);
+        const std::wstring command = L"python \"" + fs::path(BOCCIA_TEST_ROOT).wstring() + L"\\hub\\cli.py\" release labeler \"" + tree.wstring() +
+                                     L"\" --storage \"" + storage.wstring() + L"\" --version " + wide(version);
+        check(run(command) == 0, "boccia-hub release failed for " + version);
+    }
+    HubAddress address() const { return {hub->address(), token}; }
+};
+
+Manifest listed(const HubSetup& setup) {
+    Manifest manifest;
+    check(fetchManifest(setup.address(), "labeler", manifest) == Answer::Ok, "the hub must list a release");
+    return manifest;
+}
+
+void installs_from_the_hub() {
+    Scratch scratch("hub");
+    HubSetup setup(scratch);
+    setup.publish(first(), "v1");
+    setup.start();
+    const auto root = scratch.path / "root";
+    write(root / "BocciaLauncher.exe", "launcher");
+    const auto manifest = listed(setup);
+    check(manifest.version == "v1" && manifest.files.size() == 5, "v1's list from the hub");
+    const auto result = sync(root, manifest, hubFetch(setup.address()), {});
+    check(result.outcome == Outcome::Updated, "install from the hub: " + result.error);
+    for (const auto& [path, bytes] : first().files) check(read(below(root, path)) == bytes, "wrong bytes from the hub in " + path);
+    check(installedVersion(root) == "v1", "v1 from the hub");
+}
+
+void wrong_token_is_unauthorized() {
+    Scratch scratch("token");
+    HubSetup setup(scratch);
+    setup.publish(first(), "v1");
+    setup.start();
+    Manifest manifest;
+    check(fetchManifest({setup.hub->address(), "nope"}, "labeler", manifest) == Answer::Unauthorized, "a wrong invite code must be Unauthorized");
+}
+
+void no_release_is_no_release() {
+    Scratch scratch("none");
+    HubSetup setup(scratch);
+    setup.start();
+    Manifest manifest;
+    check(fetchManifest(setup.address(), "labeler", manifest) == Answer::NoRelease, "a hub without a release must say NoRelease");
+}
+
+void hub_off_is_unreachable() {
+    Scratch scratch("off");
+    HubSetup setup(scratch);
+    setup.start();
+    const auto address = setup.address();
+    setup.hub->stop();
+    const auto started = std::chrono::steady_clock::now();
+    Manifest manifest;
+    check(fetchManifest(address, "labeler", manifest) == Answer::Unreachable, "a stopped hub must be Unreachable");
+    check(std::chrono::steady_clock::now() - started < std::chrono::seconds(6), "Unreachable must come within 6 s");
+}
+
+void interrupted_download_changes_nothing() {
+    Scratch scratch("cut");
+    HubSetup setup(scratch);
+    setup.publish(first(), "v1");
+    setup.start();
+    const auto root = scratch.path / "root";
+    write(root / "BocciaLauncher.exe", "launcher");
+    check(sync(root, listed(setup), hubFetch(setup.address()), {}).outcome == Outcome::Updated, "v1 from the hub");
+    auto bigger = first();
+    std::string big(64u << 20, '\0');
+    for (size_t i = 0; i < big.size(); ++i) big[i] = static_cast<char>(i * 7 + (i >> 13));
+    bigger.files["cuda/big.dll"] = big;
+    setup.publish(bigger, "v2");
+    bool stopped = false;
+    const auto result = sync(root, listed(setup), hubFetch(setup.address()), [&](std::uint64_t done, std::uint64_t) {
+        if (!stopped && done >= (8u << 20)) { setup.hub->stop(); stopped = true; }   // the hub goes away mid-file
+    });
+    check(stopped && result.outcome == Outcome::Failed, "a download cut off must fail");
+    check(!fs::exists(root / "cuda" / "big.dll") && installedVersion(root) == "v1" && !partsLeft(root), "a cut download must change nothing");
+    setup.start();
+    const auto again = sync(root, listed(setup), hubFetch(setup.address()), {});
+    check(again.outcome == Outcome::Updated && fileSha256(root / "cuda" / "big.dll") == sha256Hex(big), "the next start takes it whole: " + again.error);
+}
+
+void korean_root_installs() {
+    Scratch scratch("korean");
+    HubSetup setup(scratch);
+    setup.publish(first(), "v1");
+    setup.start();
+    const auto root = scratch.path / fs::path(u8"보치아 라벨러");
+    write(root / "BocciaLauncher.exe", "launcher");
+    const auto result = sync(root, listed(setup), hubFetch(setup.address()), {});
+    check(result.outcome == Outcome::Updated && read(root / "labeler" / "a.dll") == "a v1", "a Korean folder name must install: " + result.error);
+}
 }
 
 int main() {
@@ -233,8 +360,19 @@ int main() {
         second_sync_on_the_same_root_is_busy();
         unwritable_part_changes_nothing();
         revert_restores_the_files_before();
+        if (!pythonAvailable()) {
+            std::cout << "SKIP: the tests over a hub need python\n";
+        } else {
+            installs_from_the_hub();
+            wrong_token_is_unauthorized();
+            no_release_is_no_release();
+            hub_off_is_unreachable();
+            interrupted_download_changes_nothing();
+            korean_root_installs();
+        }
         std::cout << "PASS: sync, backup and revert: first install, nothing twice, the changed file only, dropped files, wrong hash, locked target, "
-                     "data and logs, empty folder rule, busy, unwritable part, revert\n";
+                     "data and logs, empty folder rule, busy, unwritable part, revert; over a hub: install, wrong code, no release, hub off, cut download, "
+                     "Korean folder\n";
         return 0;
     } catch (const std::exception& error) {
         std::cout << "FAIL: " << error.what() << "\n";

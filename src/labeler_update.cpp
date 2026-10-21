@@ -1,6 +1,7 @@
 #include "labeler_update.hpp"
 #include <windows.h>
 #include <bcrypt.h>
+#include <winhttp.h>
 #include <algorithm>
 #include <array>
 #include <cwchar>
@@ -363,4 +364,99 @@ std::string revertLastUpdate(const fs::path& root) {
 }
 
 std::string installedVersion(const fs::path& root) { return readState(root).value("version", ""); }
+
+namespace {
+std::wstring widen(const std::string& text) {
+    const int size = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    std::wstring out(static_cast<size_t>(size), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), size);
+    return out;
+}
+struct Internet {   // a WinHTTP handle
+    HINTERNET handle = nullptr;
+    Internet() = default;
+    explicit Internet(HINTERNET made) : handle(made) {}
+    ~Internet() { if (handle) WinHttpCloseHandle(handle); }
+    Internet(const Internet&) = delete;
+    Internet& operator=(const Internet&) = delete;
+};
+// One GET with the invite code, up to the answer's headers. status 0: the hub is not there (or the address is not one).
+struct Get {
+    std::unique_ptr<Internet> session, connection, request;
+    DWORD status = 0;
+    Get(const HubAddress& hub, const std::wstring& path) {
+        const auto colon = hub.address.rfind(':');
+        INTERNET_PORT port = 8790;
+        try {
+            if (colon != std::string::npos) port = static_cast<INTERNET_PORT>(std::stoi(hub.address.substr(colon + 1)));
+        } catch (const std::exception&) { return; }
+        const std::wstring host = widen(colon == std::string::npos ? hub.address : hub.address.substr(0, colon));
+        session = std::make_unique<Internet>(WinHttpOpen(L"BocciaLauncher/1", WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+        if (!session->handle) return;
+        WinHttpSetTimeouts(session->handle, 5000, 5000, 30000, 30000);   // a hub that is not there answers within seconds
+        connection = std::make_unique<Internet>(WinHttpConnect(session->handle, host.c_str(), port, 0));
+        if (!connection->handle) return;
+        request = std::make_unique<Internet>(WinHttpOpenRequest(connection->handle, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0));
+        if (!request->handle) return;
+        const std::wstring header = L"Authorization: Bearer " + widen(hub.token);
+        if (!WinHttpSendRequest(request->handle, header.c_str(), static_cast<DWORD>(-1L), WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+            !WinHttpReceiveResponse(request->handle, nullptr))
+            return;
+        DWORD code = 0, size = sizeof code;
+        if (WinHttpQueryHeaders(request->handle, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &code, &size, WINHTTP_NO_HEADER_INDEX))
+            status = code;
+    }
+    // The body in pieces; false when the connection broke off.
+    bool read(const std::function<void(const char*, DWORD)>& piece) const {
+        std::vector<char> buffer(CHUNK);
+        for (;;) {
+            DWORD got = 0;
+            if (!WinHttpReadData(request->handle, buffer.data(), static_cast<DWORD>(buffer.size()), &got)) return false;
+            if (!got) return true;
+            piece(buffer.data(), got);
+        }
+    }
+    std::uint64_t length() const {   // Content-Length, 0 when not given
+        wchar_t text[32]{};
+        DWORD size = sizeof text;
+        if (!WinHttpQueryHeaders(request->handle, WINHTTP_QUERY_CONTENT_LENGTH, WINHTTP_HEADER_NAME_BY_INDEX, text, &size, WINHTTP_NO_HEADER_INDEX)) return 0;
+        return std::wcstoull(text, nullptr, 10);
+    }
+};
+}
+
+Answer fetchManifest(const HubAddress& hub, const std::string& app, Manifest& out) {
+    const Get answer(hub, L"/releases/" + widen(app));
+    if (answer.status == 401) return Answer::Unauthorized;
+    if (answer.status == 404) return Answer::NoRelease;
+    if (answer.status != 200) return Answer::Unreachable;
+    std::string body;
+    if (!answer.read([&](const char* data, DWORD size) { body.append(data, size); })) return Answer::Unreachable;
+    try {
+        out = parseManifest(Json::parse(body));
+        return Answer::Ok;
+    } catch (const std::exception&) {
+        return Answer::NoRelease;
+    }
+}
+
+Fetch hubFetch(const HubAddress& hub) {
+    return [hub](const ReleaseFile& file, const fs::path& part, const std::function<void(std::uint64_t)>& received) {
+        const Get answer(hub, L"/releases/files/" + widen(file.sha256));
+        if (answer.status != 200)
+            throw std::runtime_error(answer.status ? "the hub answered " + std::to_string(answer.status) + " for " + file.path : "the hub is not there");
+        const HANDLE output = CreateFileW(part.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (output == INVALID_HANDLE_VALUE) throw std::runtime_error("cannot write " + toUtf8(part));
+        const std::unique_ptr<void, decltype(&CloseHandle)> closer(output, &CloseHandle);
+        std::uint64_t got = 0;
+        const bool whole = answer.read([&](const char* data, DWORD size) {
+            DWORD written = 0;
+            if (!WriteFile(output, data, size, &written, nullptr) || written != size) throw std::runtime_error("cannot write " + toUtf8(part));
+            got += size;
+            received(size);
+        });
+        const auto expected = answer.length();
+        if (!whole || (expected && got != expected)) throw std::runtime_error("the download of " + file.path + " broke off");
+    };
+}
 }

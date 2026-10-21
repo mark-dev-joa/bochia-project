@@ -2,6 +2,7 @@
 // log backfill, commands and the outbox (design/hub/PLAN-1.md Task 4, final review fixes). Prints SKIP when python is
 // not installed.
 #include "hub_client.hpp"
+#include "hub_process.hpp"
 #include <windows.h>
 #include <chrono>
 #include <cstdio>
@@ -31,66 +32,6 @@ bool waitUntil(const std::function<bool()>& ready, double seconds) {
 double secondsSince(Clock::time_point from) { return std::chrono::duration<double>(Clock::now() - from).count(); }
 void writeFile(const fs::path& path, const std::string& text) { fs::create_directories(path.parent_path()); std::ofstream(path, std::ios::binary) << text; }
 std::string stamp(int i, const char* day = "2030-01-01") { char text[40]; std::snprintf(text, sizeof text, "%s 00:00:%02d.%03d", day, i / 1000, i % 1000); return text; }
-
-// python --version succeeds: python is installed (not the Store stub).
-bool pythonAvailable() {
-    STARTUPINFOW startup{}; startup.cb = sizeof startup;
-    PROCESS_INFORMATION process{};
-    std::wstring command = L"python --version";
-    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process)) return false;
-    WaitForSingleObject(process.hProcess, 15000);
-    DWORD code = 1;
-    GetExitCodeProcess(process.hProcess, &code);
-    CloseHandle(process.hThread); CloseHandle(process.hProcess);
-    return code == 0;
-}
-
-// A hub of its own: python hub/hub.py serve on 127.0.0.1, its port read from the first output line, killed by stop().
-struct HubProcess {
-    PROCESS_INFORMATION process{};
-    HANDLE output = nullptr;
-    std::thread drain;
-    std::mutex lock;
-    std::string printed;   // under lock: what the hub wrote, for a failure message
-    int port = 0;
-    bool running = false;
-    explicit HubProcess(const fs::path& storage, int wantedPort = 0) {
-        SECURITY_ATTRIBUTES inherit{sizeof inherit, nullptr, TRUE};
-        HANDLE input = nullptr;
-        if (!CreatePipe(&output, &input, &inherit, 0)) return;
-        SetHandleInformation(output, HANDLE_FLAG_INHERIT, 0);
-        STARTUPINFOW startup{};
-        startup.cb = sizeof startup; startup.dwFlags = STARTF_USESTDHANDLES; startup.hStdOutput = input; startup.hStdError = input;
-        std::wstring command = L"python \"" + fs::path(BOCCIA_TEST_ROOT).wstring() + L"\\hub\\hub.py\" serve --port " + std::to_wstring(wantedPort)
-            + L" --storage \"" + storage.wstring() + L"\" --bind 127.0.0.1 --print-port";
-        running = CreateProcessW(nullptr, command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process) != 0;
-        CloseHandle(input);
-        if (!running) return;
-        std::promise<std::string> first;
-        auto firstLine = first.get_future();
-        drain = std::thread([this, first = std::move(first)]() mutable {   // reads everything the hub prints so it never blocks on a full pipe
-            std::string line; bool reported = false; char byte; DWORD read = 0;
-            while (ReadFile(output, &byte, 1, &read, nullptr) && read) {
-                { std::lock_guard guard(lock); if (printed.size() < 4000) printed += byte; }
-                if (reported) continue;
-                if (byte == '\n') { first.set_value(line); reported = true; } else line += byte;
-            }
-            if (!reported) first.set_value("");
-        });
-        if (firstLine.wait_for(15s) == std::future_status::ready) {
-            const std::string line = firstLine.get();
-            if (line.rfind("port ", 0) == 0) port = std::stoi(line.substr(5));
-        }
-        if (!port) { std::this_thread::sleep_for(300ms); std::lock_guard guard(lock); throw std::runtime_error("hub did not start:\n" + printed); }
-    }
-    ~HubProcess() { stop(); if (drain.joinable()) drain.join(); if (output) CloseHandle(output); }
-    void stop() {
-        if (!running) return;
-        TerminateProcess(process.hProcess, 0); WaitForSingleObject(process.hProcess, 5000);
-        CloseHandle(process.hThread); CloseHandle(process.hProcess); running = false;
-    }
-    std::string address() const { return "127.0.0.1:" + std::to_string(port); }
-};
 
 Session control;   // the test's own control-API calls
 Json api(const std::string& address, const char* method, const std::string& path, const Json& body = nullptr) {

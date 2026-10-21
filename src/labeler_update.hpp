@@ -32,4 +32,11 @@ bool pendingCheck(const std::filesystem::path& root);        // the last sync re
 void confirmStart(const std::filesystem::path& root);
 std::string revertLastUpdate(const std::filesystem::path& root);   // the version taken back, "" when there is nothing to take back
 std::string installedVersion(const std::filesystem::path& root);
+
+// The hub (design/hub/LAUNCHER.md): /releases/<app> lists the current version, /releases/files/<sha256> holds each file;
+// both want the worker's invite code and nothing else.
+struct HubAddress { std::string address, token; };   // "host:port", the invite code
+enum class Answer { Ok, Unreachable, Unauthorized, NoRelease };
+Answer fetchManifest(const HubAddress& hub, const std::string& app, Manifest& out);   // a list it cannot read counts as NoRelease
+Fetch hubFetch(const HubAddress& hub);   // streams the file to the part; throws on another answer than 200 or a cut
 }
