@@ -23,6 +23,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
+try:
+    from . import release          # imported as the hub package (tests)
+except ImportError:                # a script (python hub/hub.py serve) or loaded by path (boccia-hub serve): the file beside
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location("boccia_hub_release", Path(__file__).with_name("release.py"))
+    release = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(release)
+
 CONNECTED_SECONDS = 15
 BODY_LIMIT = 50 * 1024 * 1024
 LONGPOLL_MAX = 60
@@ -283,6 +291,14 @@ class Hub:
             entry["left"] = now()
             self.wake.notify_all()      # its command wait ends now
         self.say(f"{worker_id} 종료")
+
+    def token_owner(self, hash_):
+        """The worker an invite code belongs to; what the launcher needs to take a release (no /register)."""
+        with self.lock:
+            owner = self.tokens.get(hash_)
+        if owner is None:
+            raise HubError(401, "unknown token")
+        return owner
 
     def touch(self, worker_id):
         with self.lock:
@@ -565,6 +581,19 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ["ping"] and method == "GET":
             return self._json({"hub": "boccia", "time": now()})
         hash_ = self._token_hash()
+        if parts[:1] == ["releases"] and method == "GET":   # the launcher (design/hub/LAUNCHER.md): an invite code, no registration
+            hub.token_owner(hash_)
+            if len(parts) == 2:
+                manifest = release.current(hub.storage, parts[1])
+                if manifest is None:
+                    raise HubError(404, "no release")
+                return self._json(manifest)
+            if len(parts) == 3 and parts[1] == "files":
+                path = release.blob(hub.storage, parts[2])
+                if path is None:
+                    raise HubError(404, "no such file")
+                return self._stream(path)
+            raise HubError(404, "no such route")
         if parts == ["register"] and method == "POST":
             return self._json(hub.register(hash_, self._parse(body)))
         worker_id = hub.resolve(hash_, unquote(self.headers.get("X-Boccia-Pc", "")).strip())   # the PC name travels percent-encoded
@@ -685,6 +714,16 @@ class Handler(BaseHTTPRequestHandler):
     def _empty(self):
         self.send_response(204)
         self.end_headers()
+
+    def _stream(self, path):
+        """A release file in 1 MiB pieces: some CUDA DLLs are hundreds of MB."""
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(path.stat().st_size))
+        self.end_headers()
+        with open(path, "rb") as reader:
+            while chunk := reader.read(1 << 20):
+                self.wfile.write(chunk)
 
     def _file(self, path, no_store=False):
         data = path.read_bytes()

@@ -6,8 +6,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
+import urllib.request
 from pathlib import Path
 
+from hub.hub import Hub
 from hub.release import blob, current, register, release_files, version_id
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -105,6 +108,71 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("labeler v1 · 파일 5개", result.stdout)
         self.assertEqual(current(self.storage, "labeler")["id"], "v1")
+
+
+class ReleaseServeTest(unittest.TestCase):
+    """What the launcher asks the hub for: the current version's list and the files, with an invite code only."""
+    def setUp(self):
+        self.temp = Path(tempfile.mkdtemp(prefix="boccia-release-serve-"))
+        self.root = self.temp / "release"
+        tree(self.root, FILES)
+        self.hub = Hub(self.temp / "storage")
+        self.server = self.hub.serve(["127.0.0.1"], 0)
+        self.token = self.hub.invite("점검")
+
+    def tearDown(self):
+        self.hub.shutdown()
+        shutil.rmtree(self.temp, ignore_errors=True)
+
+    def get(self, path, token=None):
+        request = urllib.request.Request(f"http://127.0.0.1:{self.server.server_port}{path}")
+        if token:
+            request.add_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return response.status, response.read(), response.headers
+        except urllib.error.HTTPError as error:
+            return error.code, error.read(), error.headers
+
+    def registered(self, version="v1"):
+        return register(self.hub.storage, "labeler", self.root, version)["manifest"]
+
+    def test_release_needs_a_token(self):
+        self.registered()
+        self.assertEqual(self.get("/releases/labeler")[0], 401)
+        self.assertEqual(self.get("/releases/labeler", "nope")[0], 401)
+
+    def test_no_register_needed(self):
+        manifest = self.registered()
+        status, body, _ = self.get("/releases/labeler", self.token)
+        self.assertEqual(status, 200)
+        answer = json.loads(body)
+        self.assertEqual((answer["id"], answer["files"]), (version_id("v1"), manifest["files"]))
+
+    def test_no_release_is_404(self):
+        self.assertEqual(self.get("/releases/labeler", self.token)[0], 404)
+        self.registered()
+        self.assertEqual(self.get("/releases/tracker", self.token)[0], 404)
+
+    def test_release_file_bytes(self):
+        entry = next(f for f in self.registered()["files"] if f["path"] == "labeler/a.dll")
+        status, body, headers = self.get(f"/releases/files/{entry['sha256']}", self.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(hashlib.sha256(body).hexdigest(), entry["sha256"])
+        self.assertEqual(headers["Content-Length"], str(entry["size"]))
+
+    def test_unknown_file_is_404(self):
+        self.registered()
+        for name in ("0" * 64, "abc"):
+            self.assertEqual(self.get(f"/releases/files/{name}", self.token)[0], 404)
+
+    def test_big_file_streams(self):
+        big = bytes(range(256)) * (24 * 1024 * 4)   # 24 MiB
+        (self.root / "cuda" / "big.dll").write_bytes(big)
+        entry = next(f for f in self.registered()["files"] if f["path"] == "cuda/big.dll")
+        status, body, _ = self.get(f"/releases/files/{entry['sha256']}", self.token)
+        self.assertEqual((status, len(body)), (200, len(big)))
+        self.assertEqual(hashlib.sha256(body).hexdigest(), hashlib.sha256(big).hexdigest())
 
 
 if __name__ == "__main__":
