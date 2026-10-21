@@ -2,6 +2,9 @@
 #include "labeler_update.hpp"
 #include "hub_process.hpp"
 #include <windows.h>
+#include <shlobj.h>
+#include <algorithm>
+#include <cstdio>
 #include <chrono>
 #include <memory>
 #include <filesystem>
@@ -345,6 +348,192 @@ void korean_root_installs() {
     const auto result = sync(root, listed(setup), hubFetch(setup.address()), {});
     check(result.outcome == Outcome::Updated && read(root / "labeler" / "a.dll") == "a v1", "a Korean folder name must install: " + result.error);
 }
+
+// ---- the launcher itself (Task 5): the built BocciaLauncher.exe run with --no-window in a scratch folder; its settings come
+// from a scratch LOCALAPPDATA and its shortcut goes to a scratch folder, so nothing of this PC's own is touched
+
+// The release the launcher takes: the built launcher at the top, fake_labeler.exe as the labeler.
+Release launcherRelease(const std::string& exit) {
+    return {{{"BocciaLauncher.exe", read(BOCCIA_LAUNCHER_EXE)}, {"labeler/boccia_labeler.exe", read(BOCCIA_FAKE_LABELER_EXE)},
+             {"labeler/fake-exit.txt", exit}, {"labeler/a.dll", "a v1"}, {"models/boccia/m.onnx", "model"}, {"cuda/c.dll", "cuda"}}};
+}
+
+std::wstring environment(const wchar_t* name) {
+    std::wstring value(32767, L'\0');
+    value.resize(GetEnvironmentVariableW(name, value.data(), static_cast<DWORD>(value.size())));
+    return value;
+}
+
+// Runs a program with LOCALAPPDATA pointing at `appdata`; its exit code, -1 when it did not start or did not end in time.
+int runWith(const fs::path& appdata, std::wstring command, const fs::path& folder) {
+    const std::wstring saved = environment(L"LOCALAPPDATA");
+    SetEnvironmentVariableW(L"LOCALAPPDATA", appdata.c_str());
+    STARTUPINFOW startup{}; startup.cb = sizeof startup;
+    PROCESS_INFORMATION process{};
+    const bool started = CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, folder.c_str(), &startup, &process) != 0;
+    SetEnvironmentVariableW(L"LOCALAPPDATA", saved.c_str());
+    if (!started) return -1;
+    const bool ended = WaitForSingleObject(process.hProcess, 120000) == WAIT_OBJECT_0;
+    DWORD code = 1;
+    GetExitCodeProcess(process.hProcess, &code);
+    if (!ended) TerminateProcess(process.hProcess, 1);
+    CloseHandle(process.hThread); CloseHandle(process.hProcess);
+    return ended ? static_cast<int>(code) : -1;
+}
+
+struct LauncherRun {
+    fs::path root, appdata, desk;
+    LauncherRun(const Scratch& scratch, const std::string& folder)
+        : root(scratch.path / folder), appdata(scratch.path / "appdata"), desk(scratch.path / "desk") {
+        fs::create_directories(root);
+        fs::create_directories(desk);
+        fs::copy_file(BOCCIA_LAUNCHER_EXE, root / "BocciaLauncher.exe", fs::copy_options::overwrite_existing);
+    }
+    void settings(const std::string& address, const std::string& token) const {
+        write(appdata / "Boccia" / "labeler-settings.json", "{\"hub\": {\"address\": \"" + address + "\", \"worker\": \"점검\", \"token\": \"" + token + "\"}}");
+    }
+    int run(const std::wstring& extra = L"") const {
+        return runWith(appdata, L"\"" + (root / "BocciaLauncher.exe").wstring() + L"\" --no-window --shortcut-folder \"" + desk.wstring() + L"\" " + extra, root);
+    }
+    std::string log() const {
+        SYSTEMTIME now;
+        GetLocalTime(&now);
+        char name[40];
+        std::snprintf(name, sizeof name, "labeler-%04d-%02d-%02d.log", now.wYear, now.wMonth, now.wDay);
+        return read(root / "labeler" / "logs" / name);
+    }
+    int ran() const {   // how many times the fake labeler started
+        const auto text = read(root / "labeler" / "ran.txt");
+        return static_cast<int>(std::count(text.begin(), text.end(), '\n'));
+    }
+};
+
+struct LauncherHub {   // a hub with v1 of the launcher release, and a launcher folder whose settings point at it
+    Scratch scratch;
+    HubSetup setup;
+    LauncherRun launcher;
+    LauncherHub(const std::string& name, const std::string& exit) : scratch(name), setup(scratch), launcher(scratch, "install") {
+        setup.publish(launcherRelease(exit), "v1");
+        setup.start();
+        launcher.settings(setup.hub->address(), setup.token);
+    }
+};
+
+fs::path shortcutTarget(const fs::path& link) {
+    IShellLinkW* shell = nullptr;
+    IPersistFile* file = nullptr;
+    wchar_t target[MAX_PATH]{};
+    if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shell)))) {
+        if (SUCCEEDED(shell->QueryInterface(IID_PPV_ARGS(&file))) && SUCCEEDED(file->Load(link.c_str(), STGM_READ)))
+            shell->GetPath(target, MAX_PATH, nullptr, 0);
+        if (file) file->Release();
+        shell->Release();
+    }
+    return target;
+}
+
+void launcher_installs_and_starts() {
+    LauncherHub hub("launch", "0 0");
+    check(hub.launcher.run() == 0, "the launcher must install and start");
+    check(read(hub.launcher.root / "labeler" / "a.dll") == "a v1" && read(hub.launcher.root / "cuda" / "c.dll") == "cuda", "the release must be in place");
+    check(hub.launcher.ran() == 1, "the labeler must have started once");
+}
+
+void launcher_dev_mode_only_starts() {
+    Scratch scratch("dev");
+    const auto folder = scratch.path / "labeler";
+    fs::create_directories(folder);
+    fs::copy_file(BOCCIA_LAUNCHER_EXE, folder / "BocciaLauncher.exe");
+    fs::copy_file(BOCCIA_FAKE_LABELER_EXE, folder / "boccia_labeler.exe");
+    check(runWith(scratch.path / "appdata", L"\"" + (folder / "BocciaLauncher.exe").wstring() + L"\"", folder) == 0, "beside the labeler it only starts it");
+    check(fs::exists(folder / "ran.txt") && !fs::exists(folder / "update"), "no settings, no hub, nothing installed");
+}
+
+// 2026-10-21: --capture beside the labeler started the labeler with the launcher's capture options (a labeler window
+// opened); the launcher's own windows are drawn wherever it is.
+void capture_beside_the_labeler_does_not_start_it() {
+    Scratch scratch("capture");
+    const auto folder = scratch.path / "labeler";
+    fs::create_directories(folder);
+    fs::copy_file(BOCCIA_LAUNCHER_EXE, folder / "BocciaLauncher.exe");
+    fs::copy_file(BOCCIA_FAKE_LABELER_EXE, folder / "boccia_labeler.exe");
+    const auto png = scratch.path / "unreachable.png";
+    check(runWith(scratch.path / "appdata", L"\"" + (folder / "BocciaLauncher.exe").wstring() + L"\" --capture \"" + png.wstring() + L"\" --view unreachable", folder) == 0,
+          "the capture must end with 0");
+    check(fs::exists(png) && fs::file_size(png) > 0 && !fs::exists(folder / "ran.txt"), "the launcher's window drawn, the labeler not started");
+}
+
+void launcher_refuses_a_full_folder() {
+    Scratch scratch("full");
+    LauncherRun launcher(scratch, "full");
+    write(launcher.root / "note.txt", "mine");
+    check(launcher.run() == 5 && !fs::exists(launcher.root / "labeler"), "a folder with other files must be refused (5)");
+}
+
+void wrong_token_exits_4() {
+    LauncherHub hub("code", "0 0");
+    hub.launcher.settings(hub.setup.hub->address(), "nope");
+    check(hub.launcher.run() == 4 && !fs::exists(hub.launcher.root / "labeler"), "a wrong invite code must end with 4");
+}
+
+void crash_within_ten_seconds_reverts() {
+    LauncherHub hub("crash", "0 0");
+    check(hub.launcher.run() == 0, "v1");
+    auto v2 = launcherRelease("3 500");
+    v2.files["labeler/a.dll"] = "a v2";
+    hub.setup.publish(v2, "v2");
+    check(hub.launcher.run() == 0, "after the revert v1 starts again");
+    check(hub.launcher.log().find("업데이트 되돌림 · v2") != std::string::npos, "the revert must be in the labeler's log");
+    check(installedVersion(hub.launcher.root) == "v1" && read(hub.launcher.root / "labeler" / "a.dll") == "a v1", "v1's files must be back");
+    check(hub.launcher.ran() == 3, "v1, v2 dying, v1 again");
+    check(hub.launcher.run() == 0 && installedVersion(hub.launcher.root) == "v1", "the next start keeps v1");
+}
+
+void quick_close_is_kept() {
+    LauncherHub hub("quick", "0 0");
+    check(hub.launcher.run() == 0, "v1");
+    auto v2 = launcherRelease("0 200");
+    v2.files["labeler/a.dll"] = "a v2";
+    hub.setup.publish(v2, "v2");
+    check(hub.launcher.run() == 0 && installedVersion(hub.launcher.root) == "v2" && !pendingCheck(hub.launcher.root), "a quick close with 0 keeps v2");
+}
+
+void first_install_makes_the_shortcut() {
+    LauncherHub hub("shortcut", "0 0");
+    check(hub.launcher.run() == 0, "v1");
+    std::error_code error;
+    check(fs::equivalent(shortcutTarget(hub.launcher.desk / "Boccia Labeler.lnk"), hub.launcher.root / "BocciaLauncher.exe", error), "the shortcut must point at the launcher");
+}
+
+void launcher_updates_itself() {
+    LauncherHub hub("itself", "0 0");
+    check(hub.launcher.run() == 0, "v1");
+    const auto before = read(BOCCIA_LAUNCHER_EXE);
+    auto v2 = launcherRelease("0 0");
+    v2.files["BocciaLauncher.exe"] = before + std::string(1, '\0');
+    hub.setup.publish(v2, "v2");
+    check(hub.launcher.run() == 0, "v2");
+    check(read(hub.launcher.root / "BocciaLauncher.exe") == v2.files["BocciaLauncher.exe"], "the launcher must be v2's");
+    check(read(hub.launcher.root / "update" / "backup" / "BocciaLauncher.exe") == before, "the launcher before goes to the backup");
+}
+
+void running_labeler_is_not_updated() {
+    LauncherHub hub("running", "0 5000");
+    check(hub.launcher.run(L"--sync-only") == 0, "v1, not started");
+    STARTUPINFOW startup{}; startup.cb = sizeof startup;
+    PROCESS_INFORMATION process{};
+    std::wstring command = L"\"" + (hub.launcher.root / "labeler" / "boccia_labeler.exe").wstring() + L"\"";
+    check(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, (hub.launcher.root / "labeler").c_str(), &startup, &process) != 0,
+          "could not start the labeler");
+    auto v2 = launcherRelease("0 5000");
+    v2.files["labeler/a.dll"] = "a v2";
+    hub.setup.publish(v2, "v2");
+    const int code = hub.launcher.run(L"--sync-only");
+    TerminateProcess(process.hProcess, 0);
+    WaitForSingleObject(process.hProcess, 5000);
+    CloseHandle(process.hThread); CloseHandle(process.hProcess);
+    check(code == 0 && installedVersion(hub.launcher.root) == "v1" && read(hub.launcher.root / "labeler" / "a.dll") == "a v1", "a running labeler is not updated");
+}
 }
 
 int main() {
@@ -369,10 +558,22 @@ int main() {
             hub_off_is_unreachable();
             interrupted_download_changes_nothing();
             korean_root_installs();
+            CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            launcher_installs_and_starts();
+            launcher_dev_mode_only_starts();
+            capture_beside_the_labeler_does_not_start_it();
+            launcher_refuses_a_full_folder();
+            wrong_token_exits_4();
+            crash_within_ten_seconds_reverts();
+            quick_close_is_kept();
+            first_install_makes_the_shortcut();
+            launcher_updates_itself();
+            running_labeler_is_not_updated();
         }
         std::cout << "PASS: sync, backup and revert: first install, nothing twice, the changed file only, dropped files, wrong hash, locked target, "
                      "data and logs, empty folder rule, busy, unwritable part, revert; over a hub: install, wrong code, no release, hub off, cut download, "
-                     "Korean folder\n";
+                     "Korean folder; the launcher: install, beside the labeler, capture beside it, full folder, wrong code, revert, quick close, shortcut, "
+                     "itself, running labeler\n";
         return 0;
     } catch (const std::exception& error) {
         std::cout << "FAIL: " << error.what() << "\n";

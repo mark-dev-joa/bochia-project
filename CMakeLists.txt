@@ -147,6 +147,16 @@ if(MSVC)
   target_compile_options(hub_client_tests PRIVATE /utf-8 /W4)
 endif()
 add_test(NAME hub_client COMMAND hub_client_tests)
+# BocciaLauncher.exe (design/hub/LAUNCHER.md): beside the labeler it starts it; in a folder of its own it installs and
+# updates the labeler from the hub. Static CRT: it runs before anything else is on the PC.
+add_executable(boccia_labeler_launcher WIN32 src/labeler_launcher_main.cpp src/labeler_settings.cpp assets/icons/labeler_icon.rc)
+target_include_directories(boccia_labeler_launcher PRIVATE assets/icons)
+target_link_libraries(boccia_labeler_launcher PRIVATE labeler_update shell32 user32 gdi32 comctl32 ole32 uuid windowscodecs)
+target_compile_definitions(boccia_labeler_launcher PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+if(MSVC)
+  target_compile_options(boccia_labeler_launcher PRIVATE /utf-8 /W4)
+  set_property(TARGET boccia_labeler_launcher PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 # The launcher's update engine (design/hub/LAUNCHER.md): static CRT and system DLLs only, so the launcher starts on a PC
 # that has nothing of the labeler yet.
 add_library(labeler_update STATIC src/labeler_update.cpp)
@@ -163,6 +173,15 @@ if(MSVC)
   endforeach()
 endif()
 add_test(NAME labeler_update COMMAND labeler_update_tests)
+# Stands in for boccia_labeler.exe in the launcher tests.
+add_executable(fake_labeler WIN32 tests/fake_labeler.cpp)
+target_compile_definitions(labeler_update_tests PRIVATE BOCCIA_LAUNCHER_EXE="$<TARGET_FILE:boccia_labeler_launcher>" BOCCIA_FAKE_LABELER_EXE="$<TARGET_FILE:fake_labeler>")
+target_link_libraries(labeler_update_tests PRIVATE ole32 uuid)
+add_dependencies(labeler_update_tests boccia_labeler_launcher fake_labeler)
+if(MSVC)
+  target_compile_options(fake_labeler PRIVATE /utf-8 /W4)
+  set_property(TARGET fake_labeler PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 # Boccia Hub.exe: starts the hub (python hub/hub.py) when it is off and shows its screen in a WebView2 window (design/hub/PLAN-2.md).
 add_library(hub_launch STATIC src/hub_launch.cpp)
 target_link_libraries(hub_launch PUBLIC hub_client shell32 ole32 advapi32)

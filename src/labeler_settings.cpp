@@ -1,11 +1,11 @@
 #include "labeler_settings.hpp"
-#include "labeler_util.hpp"
 #include <nlohmann/json.hpp>
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 #include <fstream>
+#include <stdexcept>
 
 namespace boccia::labeler {
 namespace fs = std::filesystem;
@@ -18,6 +18,22 @@ Json readSettings() {
         if (input) { Json stored = Json::parse(input); if (stored.is_object()) return stored; }
     } catch (const std::exception&) {}
     return Json::object();
+}
+// A temporary file beside it, then a rename: a reader sees the old file or the new one. Written here rather than with
+// labeler_util's atomicJson so the launcher, built without the engine, saves the same file (design/hub/LAUNCHER.md).
+void writeAtomically(const fs::path& target, const std::string& text) {
+    auto temporary = target;
+    temporary += L"." + std::to_wstring(GetCurrentProcessId()) + L".tmp";
+    {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        output << text;
+        if (!output) throw std::runtime_error("could not save the labeler settings");
+    }
+    if (!MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        std::error_code ignored;
+        fs::remove(temporary, ignored);
+        throw std::runtime_error("could not save the labeler settings");
+    }
 }
 }
 
@@ -45,6 +61,6 @@ void saveLabelerSettings(const LabelerSettings& settings) {
     stored["device"] = settings.gpu ? "gpu" : "cpu";
     stored["hub"] = Json{{"address", settings.hubAddress}, {"worker", settings.worker}, {"token", settings.token}};
     fs::create_directories(settingsFile().parent_path());
-    atomicJson(settingsFile(), stored, true);
+    writeAtomically(settingsFile(), stored.dump(2) + "\n");
 }
 }
