@@ -7,6 +7,7 @@
 #include <cwchar>
 #include <cwctype>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <set>
 #include <stdexcept>
@@ -212,6 +213,7 @@ SyncResult sync(const fs::path& root, const Manifest& manifest, const Fetch& fet
         struct Item { const ReleaseFile* file; fs::path target, part; };
         std::vector<Item> wanted;
         std::set<std::string> listed;
+        std::map<std::string, int> copies;   // per content: each path its own part, the content fetched once
         std::uint64_t total = 0;
         for (const auto& file : manifest.files) {
             listed.insert(file.path);
@@ -225,8 +227,9 @@ SyncResult sync(const fs::path& root, const Manifest& manifest, const Fetch& fet
                 if (have.empty()) have = fileSha256(target);
                 if (have == file.sha256) { files[file.path] = {{"size", size}, {"time", time}, {"sha256", have}}; continue; }
             }
-            wanted.push_back({&file, target, root / "update" / (file.sha256 + ".part")});
-            total += file.size;
+            const int copy = copies[file.sha256]++;
+            wanted.push_back({&file, target, root / "update" / (file.sha256 + (copy ? "." + std::to_string(copy) : "") + ".part")});
+            if (!copy) total += file.size;
         }
         std::vector<std::string> removed;
         for (auto it = known.begin(); it != known.end(); ++it)
@@ -243,15 +246,21 @@ SyncResult sync(const fs::path& root, const Manifest& manifest, const Fetch& fet
         }
         // Everything first: nothing in place changes until every differing file is here and right.
         std::uint64_t done = 0;
+        std::map<std::string, fs::path> fetched;   // content -> its checked part
         for (const auto& item : wanted) {
             fs::remove(item.part, ignored);   // a piece left by a cut; a folder in its place stays, and the write fails
             parts.push_back(item.part);
+            if (const auto same = fetched.find(item.file->sha256); same != fetched.end()) {   // the same bytes at another path
+                if (!CopyFileW(same->second.c_str(), item.part.c_str(), FALSE)) throw std::runtime_error("cannot copy " + item.file->path);
+                continue;
+            }
             fetch(*item.file, item.part, [&](std::uint64_t bytes) {
                 done += bytes;
                 result.downloaded += bytes;
                 if (progress) progress(done, total);
             });
             if (!fs::is_regular_file(item.part) || fileSha256(item.part) != item.file->sha256) throw std::runtime_error("wrong content for " + item.file->path);
+            fetched[item.file->sha256] = item.part;
         }
         // The swap: each old file to update\backup, the new one in; a failure puts back everything moved, last first.
         const auto backup = backupFolder(root);

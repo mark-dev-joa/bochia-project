@@ -168,6 +168,22 @@ void data_and_logs_stay() {
     check(!fs::exists(root / "update" / "backup" / "labeler" / "data") && !fs::exists(root / "update" / "backup" / "labeler" / "logs"), "nor go to the backup");
 }
 
+// 2026-10-21 end-to-end run: two licenses of the real release hold the same bytes; both shared one part file, and the
+// second fetch removed the first piece, so the install failed at the swap.
+void same_content_twice_installs() {
+    Scratch scratch("twice");
+    const auto root = scratch.path / "root";
+    write(root / "BocciaLauncher.exe", "launcher");
+    auto release = first();
+    release.files["labeler/licenses/x.txt"] = "same license";
+    release.files["labeler/licenses/y/x.txt"] = "same license";
+    const auto result = sync(root, release.manifest("v1"), release.fetch(), {});
+    check(result.outcome == Outcome::Updated, "the same content at two paths must install: " + result.error);
+    check(read(root / "labeler" / "licenses" / "x.txt") == "same license" && read(root / "labeler" / "licenses" / "y" / "x.txt") == "same license",
+          "both paths must hold it");
+    check(result.downloaded == std::string("exe v1a v1modelcudasame license").size(), "the same content comes once");
+}
+
 void not_empty_folder_is_not_installable() {
     Scratch scratch("empty");
     const auto full = scratch.path / "full", quiet = scratch.path / "quiet";
@@ -545,6 +561,7 @@ int main() {
         bad_hash_changes_nothing();
         locked_target_rolls_back();
         data_and_logs_stay();
+        same_content_twice_installs();
         not_empty_folder_is_not_installable();
         second_sync_on_the_same_root_is_busy();
         unwritable_part_changes_nothing();
@@ -571,7 +588,7 @@ int main() {
             running_labeler_is_not_updated();
         }
         std::cout << "PASS: sync, backup and revert: first install, nothing twice, the changed file only, dropped files, wrong hash, locked target, "
-                     "data and logs, empty folder rule, busy, unwritable part, revert; over a hub: install, wrong code, no release, hub off, cut download, "
+                     "data and logs, the same content twice, empty folder rule, busy, unwritable part, revert; over a hub: install, wrong code, no release, hub off, cut download, "
                      "Korean folder; the launcher: install, beside the labeler, capture beside it, full folder, wrong code, revert, quick close, shortcut, "
                      "itself, running labeler\n";
         return 0;
