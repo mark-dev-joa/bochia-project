@@ -2,6 +2,7 @@
 import argparse
 import importlib.util
 import json
+import subprocess
 import sys
 import time
 import unicodedata
@@ -144,6 +145,20 @@ def logs(api, text):
     sys.stdout.flush()
 
 
+def release(app, root, storage, version):
+    """Registers a release folder as the version the hub sends (design/hub/LAUNCHER.md); the hub need not run."""
+    spec = importlib.util.spec_from_file_location("boccia_hub_release", Path(__file__).with_name("release.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    try:
+        result = module.register(Path(storage), app, Path(root), version)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        raise Exit(1, f"등록 실패 · {error}") from None
+    manifest = result["manifest"]
+    total = sum(entry["size"] for entry in manifest["files"])
+    print(f"{app} {manifest['version']} · 파일 {len(manifest['files'])}개 · {total / 1024 ** 3:.1f} GB · 새로 {result['added_bytes'] / 1024 ** 2:.1f} MB")
+
+
 def serve(argv):
     spec = importlib.util.spec_from_file_location("boccia_hub_server", Path(__file__).with_name("hub.py"))
     module = importlib.util.module_from_spec(spec)
@@ -175,6 +190,11 @@ def main(argv=None):
     sub.add_argument("--wait", type=int, default=10)
     commands.add_parser("invite").add_argument("worker")
     commands.add_parser("logs").add_argument("worker")
+    sub = commands.add_parser("release", help="register a release folder as the version the hub sends (no hub needed)")
+    sub.add_argument("app")
+    sub.add_argument("root")
+    sub.add_argument("--storage", default=r"D:\Boccia Hub")
+    sub.add_argument("--version")
     args = parser.parse_args(argv)
     api = Api(args.hub)
     try:
@@ -192,6 +212,8 @@ def main(argv=None):
             invite(api, args.worker)
         elif args.command == "logs":
             logs(api, args.worker)
+        elif args.command == "release":
+            release(args.app, args.root, args.storage, args.version)
     except Exit as exit_:
         if str(exit_):
             print(exit_)

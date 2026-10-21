@@ -22,7 +22,7 @@ function Copy-Changed([string]$from, [string]$to) {
     }
 }
 Copy-Changed $exe (Join-Path $target 'Boccia Hub.exe')
-foreach ($name in '__init__.py', 'hub.py', 'cli.py') { Copy-Changed (Join-Path $root "hub/$name") (Join-Path $target "hub/$name") }
+foreach ($name in '__init__.py', 'hub.py', 'cli.py', 'release.py') { Copy-Changed (Join-Path $root "hub/$name") (Join-Path $target "hub/$name") }
 foreach ($name in 'index.html', 'app.js', 'style.css') { Copy-Changed (Join-Path $root "hub/ui/$name") (Join-Path $target "hub/ui/$name") }
 Copy-Changed (Join-Path $root 'assets/fonts/NotoSansKR.ttf') (Join-Path $target 'hub/ui/fonts/NotoSansKR.ttf')
 Copy-Changed (Join-Path $root 'assets/fonts/NotoSansKR-OFL.txt') (Join-Path $target 'licenses/NotoSansKR-OFL.txt')

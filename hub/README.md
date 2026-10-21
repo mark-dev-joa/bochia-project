@@ -75,7 +75,20 @@ status\<id>.json        마지막 상태
 events\<id>\<날짜>.jsonl 활동 (시각, 받은 시각, 문장; 같은 줄은 한 번만)
 log\<id>\               올라온 로그 파일
 screen\<id>\            화면 캡처 (2단계)
+releases\files\<sha256> 라벨러 배포 파일의 내용, 같은 내용은 한 번만
+releases\labeler\       버전마다 <id>.json(파일 경로 · 크기 · SHA-256), index.json(current와 등록한 버전들)
 ```
+
+## 라벨러 버전 등록 (`design/hub/LAUNCHER.md`)
+
+```
+boccia-hub.cmd release labeler D:\works\bochia\bin\release --storage "D:\Boccia Hub"
+```
+
+배포 폴더(`labeler\`, `models\`, `cuda\`)를 한 버전으로 등록하고 그 버전을 작업자에게 보낼 버전(`current`)으로 정합니다. 허브가 꺼져
+있어도 저장소에 바로 씁니다. 버전 이름은 `labeler\boccia_labeler.exe --version`이고 `--version`으로 바꿀 수 있습니다.
+`labeler\data`, `labeler\logs`, `*-previous.exe`는 빠지고, `labeler\BocciaLauncher.exe`는 맨 위 `BocciaLauncher.exe`로 들어갑니다.
+바뀌지 않은 파일은 다시 읽지 않습니다(`releases\hash-cache.json`). 출력: `labeler <버전> · 파일 N개 · x.x GB · 새로 y.y MB`.
 
 ## 동작
 
